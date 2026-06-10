@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cooper — Realtime Voice Agent: Capabilities &amp; Hardening Report</title>
+<style>
+  :root{
+    --bg:#0b1020; --bg2:#0e1530; --panel:#121a36; --panel2:#0f1730;
+    --ink:#e9edf7; --muted:#9aa6c4; --line:rgba(255,255,255,.08);
+    --brand:#5b8cff; --brand2:#7c5cff; --accent:#27d3a2;
+    --high:#ef4444; --med:#f97316; --amber:#f5c451; --low:#3b82f6; --good:#27d3a2;
+    --radius:16px; --maxw:1180px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; font-family:var(--font); color:var(--ink); line-height:1.6;
+    background:
+      radial-gradient(1100px 600px at 12% -8%, rgba(91,140,255,.16), transparent 60%),
+      radial-gradient(900px 520px at 96% 0%, rgba(124,92,255,.14), transparent 60%),
+      linear-gradient(180deg, var(--bg), var(--bg2));
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--brand); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 22px}
+
+  /* NAV */
+  .nav{
+    position:sticky; top:0; z-index:50;
+    background:rgba(11,16,32,.82); backdrop-filter:saturate(140%) blur(12px);
+    border-bottom:1px solid var(--line);
+  }
+  .nav .wrap{display:flex; align-items:center; gap:16px; height:62px; flex-wrap:wrap}
+  .brand{display:flex; align-items:center; gap:11px; font-weight:800; letter-spacing:.2px; white-space:nowrap}
+  .brand .dot{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand),var(--brand2));
+    display:grid;place-items:center;box-shadow:0 6px 18px rgba(91,140,255,.45)}
+  .brand small{display:block;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.4px}
+  .navlinks{display:flex; gap:4px; margin-left:auto; flex-wrap:wrap}
+  .navlinks a{color:var(--muted); font-size:13px; font-weight:600; padding:7px 11px; border-radius:9px}
+  .navlinks a:hover{color:var(--ink); background:rgba(255,255,255,.06); text-decoration:none}
+
+  /* HERO */
+  header.hero{padding:64px 0 26px}
+  .eyebrow{display:inline-block; font-size:12px; font-weight:700; letter-spacing:1.6px; text-transform:uppercase;
+    color:var(--accent); background:rgba(39,211,162,.1); border:1px solid rgba(39,211,162,.28);
+    padding:5px 12px; border-radius:999px}
+  h1{font-size:clamp(30px,5vw,52px); line-height:1.08; margin:18px 0 10px; letter-spacing:-.5px;
+    background:linear-gradient(180deg,#fff,#c8d2ee); -webkit-background-clip:text; background-clip:text; color:transparent}
+  .sub{color:var(--muted); font-size:clamp(15px,2vw,19px); max-width:760px}
+  .meta{display:flex; gap:10px; flex-wrap:wrap; margin-top:22px}
+  .pill{font-size:12.5px; color:var(--muted); border:1px solid var(--line); background:rgba(255,255,255,.03);
+    padding:6px 12px; border-radius:999px}
+  .pill b{color:var(--ink)}
+
+  /* SECTIONS */
+  section{padding:46px 0; border-top:1px solid var(--line)}
+  .sec-head{display:flex; align-items:baseline; gap:14px; margin-bottom:6px; flex-wrap:wrap}
+  .sec-num{font-family:var(--mono); font-size:13px; color:var(--brand); font-weight:700}
+  h2{font-size:clamp(22px,3.2vw,32px); margin:0; letter-spacing:-.3px}
+  .lead{color:var(--muted); max-width:840px; margin:10px 0 26px; font-size:16px}
+
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--line); border-radius:var(--radius); padding:22px}
+  .grid{display:grid; gap:16px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:860px){.g2,.g3{grid-template-columns:1fr}}
+
+  .feat h3{margin:2px 0 6px; font-size:16px}
+  .feat p{margin:0; color:var(--muted); font-size:14px}
+  .ficon{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;margin-bottom:10px;
+    background:rgba(91,140,255,.14); border:1px solid rgba(91,140,255,.28)}
+  .feat{transition:transform .15s ease, border-color .15s ease}
+  .feat:hover{transform:translateY(-3px); border-color:rgba(91,140,255,.4)}
+
+  code,.mono{font-family:var(--mono); font-size:.88em}
+  code{background:rgba(255,255,255,.06); padding:1px 6px; border-radius:6px; color:#cfe0ff}
+
+  /* architecture */
+  .arch{display:grid; gap:14px}
+  .layer{border:1px solid var(--line); border-radius:14px; padding:16px; background:rgba(255,255,255,.02)}
+  .layer h4{margin:0 0 10px; font-size:13px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted)}
+  .nodes{display:flex; gap:10px; flex-wrap:wrap}
+  .node{flex:1 1 180px; border:1px solid var(--line); border-radius:11px; padding:12px 14px;
+    background:linear-gradient(180deg,rgba(91,140,255,.08),rgba(124,92,255,.05))}
+  .node b{display:block; font-size:14px}
+  .node span{font-size:12.5px; color:var(--muted)}
+  .node .loc{font-family:var(--mono); font-size:11px; color:#8fb0ff}
+  .flowlbl{text-align:center; color:var(--muted); font-size:12.5px; padding:2px 0}
+  .flowlbl::before{content:"\25BC"; color:var(--brand); margin-right:8px}
+
+  /* good list */
+  .good{display:flex; gap:13px; align-items:flex-start}
+  .good .chk{flex:none; width:26px;height:26px;border-radius:8px; display:grid;place-items:center;
+    background:rgba(39,211,162,.14); border:1px solid rgba(39,211,162,.32); color:var(--good); font-weight:800}
+  .good h3{margin:0 0 3px; font-size:15px}
+  .good p{margin:0; color:var(--muted); font-size:13.5px}
+  .good .loc{font-family:var(--mono); font-size:11px; color:#8fb0ff}
+
+  /* severity cards */
+  .sev{border-left:5px solid var(--line); position:relative}
+  .sev.high{border-left-color:var(--high)}
+  .sev.med{border-left-color:var(--med)}
+  .sev.amber{border-left-color:var(--amber)}
+  .sev.low{border-left-color:var(--low)}
+  .sevtop{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px}
+  .badge{font-size:11px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; padding:4px 10px; border-radius:999px}
+  .badge.high{background:rgba(239,68,68,.16); color:#ff8a8a; border:1px solid rgba(239,68,68,.4)}
+  .badge.med{background:rgba(249,115,22,.16); color:#ffb27a; border:1px solid rgba(249,115,22,.4)}
+  .badge.amber{background:rgba(245,196,81,.16); color:#ffdf99; border:1px solid rgba(245,196,81,.42)}
+  .badge.low{background:rgba(59,130,246,.16); color:#9cc0ff; border:1px solid rgba(59,130,246,.42)}
+  .sev h3{margin:0; font-size:16px}
+  .sev .desc{color:var(--muted); font-size:14px; margin:8px 0 12px}
+  .sev .loc{font-family:var(--mono); font-size:11.5px; color:#8fb0ff; display:block; margin-bottom:10px}
+  .fix{font-size:13.5px; background:rgba(39,211,162,.06); border:1px solid rgba(39,211,162,.2);
+    border-radius:10px; padding:10px 12px}
+  .fix b{color:var(--accent)}
+
+  /* table */
+  .tablewrap{overflow-x:auto; border:1px solid var(--line); border-radius:14px}
+  table{border-collapse:collapse; width:100%; min-width:660px; font-size:14px}
+  th,td{text-align:left; padding:13px 15px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{font-size:12px; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); background:rgba(255,255,255,.03)}
+  tr:last-child td{border-bottom:none}
+  .score{font-weight:800; font-family:var(--mono); white-space:nowrap}
+  .rate{display:inline-flex; gap:3px; align-items:center}
+  .pip{width:11px;height:11px;border-radius:3px; background:rgba(255,255,255,.12)}
+  .pip.on.g{background:var(--good)} .pip.on.a{background:var(--amber)} .pip.on.r{background:var(--high)} .pip.on.o{background:var(--med)}
+
+  /* roadmap */
+  .phase{position:relative}
+  .phase .tag{font-size:11px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; color:var(--brand)}
+  .phase h3{margin:6px 0 10px; font-size:18px}
+  .phase ul{margin:0; padding-left:18px; color:var(--muted); font-size:14px}
+  .phase li{margin-bottom:7px}
+  .phase.p1{border-top:3px solid var(--high)}
+  .phase.p2{border-top:3px solid var(--med)}
+  .phase.p3{border-top:3px solid var(--low)}
+
+  footer{padding:40px 0 60px; color:var(--muted); font-size:13px; border-top:1px solid var(--line)}
+  .legend{display:flex; gap:16px; flex-wrap:wrap; margin:18px 0 0; font-size:12.5px; color:var(--muted)}
+  .legend span{display:inline-flex; align-items:center; gap:7px}
+  .sw{width:13px;height:13px;border-radius:4px;display:inline-block}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <div class="brand">
+      <span class="dot">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+      </span>
+      <span>Cooper<small>AIRES Realtime Voice Agent</small></span>
+    </div>
+    <div class="navlinks">
+      <a href="#overview">Overview</a>
+      <a href="#how">How it works</a>
+      <a href="#good">What's good</a>
+      <a href="#hardening">Hardening</a>
+      <a href="#scorecard">Scorecard</a>
+      <a href="#roadmap">Roadmap</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow">Capabilities &amp; Hardening Report</span>
+    <h1>Cooper — Realtime Voice Agent</h1>
+    <p class="sub">A local-first React&nbsp;19 + Express progressive web app: an AIRES executive voice assistant that joins live meetings over the OpenAI Realtime v2 API (WebRTC) and turns each call into polished Markdown and HTML artifacts via the OpenAI Responses API.</p>
+    <div class="meta">
+      <span class="pill"><b>Single user</b> · one shared password</span>
+      <span class="pill"><b>Server-relay</b> key never reaches the client</span>
+      <span class="pill"><b>Silent by default</b> · wake-word activated</span>
+      <span class="pill"><b>Stack:</b> React 19 · Vite 6 · Express 4.21</span>
+      <span class="pill"><b>Grounded in</b> server.js (1110 LOC) · main.jsx (1707 LOC)</span>
+    </div>
+  </div>
+</header>
+
+<!-- 1. OVERVIEW -->
+<section id="overview">
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">01</span><h2>Overview</h2></div>
+    <p class="lead">Cooper is a single-Node-process system for one user ("Michael", CTO/CPO). The browser PWA is the only client; the Express server is the only backend, doubling as the SPA host (Vite middleware in dev, static <code>dist/</code> in prod) and as a credential-shielding relay to OpenAI. It listens silently during meetings, speaks only when called on or woken by a wake word, then generates artifacts from a fixed set of prompt-chain recipes. All durable state lives in one local JSON file; artifacts are written to local disk.</p>
+
+    <div class="grid g3">
+      <div class="card feat">
+        <div class="ficon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9cc0ff" stroke-width="2" stroke-linecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>
+        <h3>Live meeting audio</h3>
+        <p>OpenAI Realtime v2 over WebRTC. Mic capture via <code>getUserMedia</code>, remote voice <code>cedar</code>, server-VAD turn detection, far-field noise reduction.</p>
+      </div>
+      <div class="card feat">
+        <div class="ficon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9cc0ff" stroke-width="2" stroke-linecap="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M19 5a9 9 0 0 1 0 14"/></svg></div>
+        <h3>Silent by default</h3>
+        <p><code>create_response:false</code> means Cooper never auto-replies to VAD turns. It speaks only on "Call Cooper", a typed prompt, or the wake-word regex.</p>
+      </div>
+      <div class="card feat">
+        <div class="ficon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9cc0ff" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+        <h3>Artifact recipes</h3>
+        <p>6 fixed multi-step chains: post-call kit, execution plan, follow-up, code sketch, PRD, and a standalone HTML prototype — Markdown or HTML output.</p>
+      </div>
+      <div class="card feat">
+        <div class="ficon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9cc0ff" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+        <h3>Live transcript &amp; wake word</h3>
+        <p>Per-turn transcript capture with <code>gpt-4o-mini-transcribe</code>; a regex on completed turns triggers a response when "cooper" is heard.</p>
+      </div>
+      <div class="card feat">
+        <div class="ficon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9cc0ff" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>
+        <h3>Safe artifact rendering</h3>
+        <p>Markdown via markdown-it + DOMPurify; Mermaid lazy-rendered; HTML prototypes in a sandboxed <code>&lt;iframe&gt;</code> without <code>allow-same-origin</code>.</p>
+      </div>
+      <div class="card feat">
+        <div class="ficon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9cc0ff" stroke-width="2" stroke-linecap="round"><path d="M22 12A10 10 0 1 1 12 2"/><path d="M22 4 12 14.01l-3-3"/></svg></div>
+        <h3>Crash-recoverable jobs</h3>
+        <p>Single in-process worker with pacing, retry/backoff, and boot-time recovery of stuck <code>running</code> jobs back to <code>queued</code>.</p>
+      </div>
+      <div class="card feat">
+        <div class="ficon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9cc0ff" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20"/></svg></div>
+        <h3>Installable PWA</h3>
+        <p>Web manifest + cache-first service worker + app icon. Runs and installs as a standalone progressive web app.</p>
+      </div>
+      <div class="card feat">
+        <div class="ficon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9cc0ff" stroke-width="2" stroke-linecap="round"><path d="M4 4h16v12H5.17L4 17.17z"/></svg></div>
+        <h3>Live updates over SSE</h3>
+        <p>Every datastore write broadcasts <code>state.updated</code> over Server-Sent Events; clients refetch state and fire completion notifications.</p>
+      </div>
+      <div class="card feat">
+        <div class="ficon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9cc0ff" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+        <h3>Calendar tool (client stub)</h3>
+        <p><code>check_calendar(date,time)</code> is registered as a Realtime tool but executes locally against a hardcoded sample calendar — no real backend.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. HOW IT WORKS -->
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">02</span><h2>How it works</h2></div>
+    <p class="lead">Two distinct paths. The <b>call path</b> establishes a WebRTC session with OpenAI Realtime through a server SDP relay and streams live audio + events. The <b>post-call job loop</b> turns an ended call's transcript into a generated artifact through a single, paced, retry-aware in-process worker.</p>
+
+    <h3 style="margin:0 0 12px; font-size:18px">Call path — live audio over WebRTC</h3>
+    <div class="card arch">
+      <div class="layer">
+        <h4>Browser PWA · src/main.jsx</h4>
+        <div class="nodes">
+          <div class="node"><b>React App</b><span>auth gate · saved-call library · work view</span></div>
+          <div class="node"><b>RTCPeerConnection</b><span>getUserMedia mic · ontrack &#8594; Audio() playback</span></div>
+          <div class="node"><b>Data channel "oai-events"</b><span>session.update · transcripts · function calls</span><span class="loc">main.jsx:73-120, 420-518</span></div>
+        </div>
+      </div>
+      <div class="flowlbl">SDP offer POSTed to /session · answer applied via setRemoteDescription</div>
+      <div class="layer">
+        <h4>Express relay · server.js</h4>
+        <div class="nodes">
+          <div class="node"><b>Auth middleware</b><span>password set + valid HMAC session cookie</span><span class="loc">server.js:74-93</span></div>
+          <div class="node"><b>POST /session</b><span>builds multipart (sdp + session), relays with Bearer key</span><span class="loc">server.js:200-243</span></div>
+          <div class="node"><b>baseSession</b><span>gpt-realtime-2 · cedar voice · server_vad · create_response:false</span><span class="loc">server.js:116-141</span></div>
+        </div>
+      </div>
+      <div class="flowlbl">Authorization: Bearer OPENAI_API_KEY (server-side only — never sent to client)</div>
+      <div class="layer">
+        <h4>OpenAI Realtime v2</h4>
+        <div class="nodes">
+          <div class="node"><b>/v1/realtime/calls</b><span>returns answer SDP + Location &#8594; X-OpenAI-Call-Location</span></div>
+          <div class="node"><b>Live media + events</b><span>audio track + speech / transcription / response events over the data channel</span></div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin:26px 0 12px; font-size:18px">Post-call job loop — artifact generation</h3>
+    <div class="card">
+      <svg viewBox="0 0 960 200" width="100%" role="img" aria-label="Job loop flow" style="display:block">
+        <defs>
+          <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 Z" fill="#5b8cff"/>
+          </marker>
+          <linearGradient id="bx" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#1a2546"/><stop offset="1" stop-color="#121a36"/>
+          </linearGradient>
+        </defs>
+        <style>
+          .b{fill:url(#bx); stroke:rgba(255,255,255,.16)}
+          .t{fill:#e9edf7; font:600 13px sans-serif}
+          .s{fill:#9aa6c4; font:11px sans-serif}
+          .ln{stroke:#5b8cff; stroke-width:2; fill:none; marker-end:url(#arr)}
+          .lbl{fill:#9aa6c4; font:10.5px sans-serif}
+        </style>
+        <!-- row 1 -->
+        <rect class="b" x="6"   y="20" width="150" height="58" rx="11"/>
+        <text class="t" x="20" y="44">Artifact request</text>
+        <text class="s" x="20" y="62">POST …/artifacts &#8594; 202</text>
+        <line class="ln" x1="156" y1="49" x2="196" y2="49"/>
+        <rect class="b" x="200" y="20" width="150" height="58" rx="11"/>
+        <text class="t" x="214" y="44">enqueueJob</text>
+        <text class="s" x="214" y="62">queued · stepCount</text>
+        <line class="ln" x1="350" y1="49" x2="390" y2="49"/>
+        <rect class="b" x="394" y="20" width="160" height="58" rx="11"/>
+        <text class="t" x="408" y="44">processQueue</text>
+        <text class="s" x="408" y="62">single worker · pacing</text>
+        <line class="ln" x1="554" y1="49" x2="594" y2="49"/>
+        <rect class="b" x="598" y="20" width="150" height="58" rx="11"/>
+        <text class="t" x="612" y="44">runJob</text>
+        <text class="s" x="612" y="62">status: running</text>
+        <line class="ln" x1="748" y1="49" x2="788" y2="49"/>
+        <rect class="b" x="792" y="20" width="160" height="58" rx="11"/>
+        <text class="t" x="806" y="44">buildWorkPrompt</text>
+        <text class="s" x="806" y="62">draft + step + transcript</text>
+        <!-- down from buildWorkPrompt -->
+        <line class="ln" x1="872" y1="78" x2="872" y2="118"/>
+        <!-- row 2 (right to left) -->
+        <rect class="b" x="792" y="120" width="160" height="58" rx="11"/>
+        <text class="t" x="806" y="144">createResponse</text>
+        <text class="s" x="806" y="162">POST /v1/responses</text>
+        <text class="lbl" x="884" y="100">step</text>
+        <line class="ln" x1="792" y1="149" x2="752" y2="149"/>
+        <rect class="b" x="598" y="120" width="150" height="58" rx="11"/>
+        <text class="t" x="612" y="144">append &#8594; draft</text>
+        <text class="s" x="612" y="162">stepIndex++ · loop</text>
+        <line class="ln" x1="598" y1="149" x2="558" y2="149"/>
+        <rect class="b" x="394" y="120" width="160" height="58" rx="11"/>
+        <text class="t" x="408" y="144">completeArtifact</text>
+        <text class="s" x="408" y="162">write &lt;id&gt;.md|html</text>
+        <line class="ln" x1="394" y1="149" x2="354" y2="149"/>
+        <rect class="b" x="200" y="120" width="150" height="58" rx="11"/>
+        <text class="t" x="214" y="144">job completed</text>
+        <text class="s" x="214" y="162">SSE + Notification</text>
+      </svg>
+      <p style="margin:14px 0 0; color:var(--muted); font-size:13.5px">
+        Pacing: <code>lastGenerationAt + jobDelayMs</code> (15s default) between model calls. Retry: <code>408/409/429/5xx</code> &#8594; <code>RetryableJobError</code> honoring <code>Retry-After</code>, re-queued up to <code>maxAttempts</code> (3); else <code>failed</code> with a manual retry button. Boot recovery resets stuck <code>running</code> jobs to <code>queued</code> (<span class="mono">server.js:1063-1090</span>). HTML output is extracted from the final draft, else a fallback document is used.
+      </p>
+    </div>
+
+    <div class="grid g3" style="margin-top:16px">
+      <div class="card"><b style="font-size:14px">Persistence</b><p style="color:var(--muted); font-size:13.5px; margin:6px 0 0">One JSON file <code>data/cooper.json</code> <span class="mono">{calls, artifacts, jobs}</span>, written through a serialized in-process <code>writeQueue</code> — no cross-process locking; whole-file rewrite per change.</p></div>
+      <div class="card"><b style="font-size:14px">Models</b><p style="color:var(--muted); font-size:13.5px; margin:6px 0 0">Realtime <code>gpt-realtime-2</code> (effort low); work model <code>gpt-5.4</code> (effort medium, <code>max_output_tokens</code> 6500) with attempt-indexed fallback.</p></div>
+      <div class="card"><b style="font-size:14px">Auth</b><p style="color:var(--muted); font-size:13.5px; margin:6px 0 0">Constant-time password compare &#8594; HMAC-SHA256 signed cookie <code>cooper_session</code> (HttpOnly · SameSite=Lax · TTL Max-Age).</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3. WHAT'S GOOD -->
+<section id="good">
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">03</span><h2>What's good</h2></div>
+    <p class="lead">Cooper gets the high-leverage decisions right. These instincts should be preserved through any refactor.</p>
+
+    <div class="grid g2">
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>Server-side key relay</h3><p>The server relays both the Realtime mint and the Responses API with a server-side Bearer header. <code>OPENAI_API_KEY</code> never reaches the browser. <span class="loc">server.js:200-243, 658-703</span></p></div></div>
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>Constant-time auth compare</h3><p><code>safeCompare</code> length-checks then <code>timingSafeEqual</code>s the password — no timing oracle on login. <span class="loc">server.js:984-991</span></p></div></div>
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>Signed HttpOnly cookies</h3><p>Sessions are HMAC-SHA256 signed and verified before the expiry check; the cookie is HttpOnly + SameSite=Lax + scoped Path + TTL Max-Age. <span class="loc">server.js:954-982, 1012-1020</span></p></div></div>
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>Iframe sandbox without allow-same-origin</h3><p>HTML prototypes render in a sandboxed iframe that deliberately omits <code>allow-same-origin</code> — generated scripts cannot touch the app origin, cookies, or storage. <span class="loc">main.jsx:1442</span></p></div></div>
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>DOMPurify-sanitized Markdown</h3><p>markdown-it output passes through <code>DOMPurify.sanitize</code> before injection into the DOM. <span class="loc">main.jsx:1588</span></p></div></div>
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>Silent-by-default UX</h3><p><code>create_response:false</code> in <code>baseSession</code> means the assistant never auto-responds to ambient VAD turns — it speaks only when called on. <span class="loc">server.js:116-141</span></p></div></div>
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>Crash-recoverable job loop</h3><p>On boot, any job stuck in <code>running</code> is reset to <code>queued</code> with a recovered log, and the worker is re-kicked. <span class="loc">server.js:1063-1091</span></p></div></div>
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>Write serialization</h3><p>All datastore writes are serialized through the <code>writeQueue</code> promise chain, avoiding intra-process write interleaving. <span class="loc">server.js:781-791</span></p></div></div>
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>Artifact path-traversal mitigated</h3><p><code>artifactFileName</code> takes the basename via <code>.pop()</code>, stripping directory components before any disk read. <span class="loc">server.js:873-878</span></p></div></div>
+      <div class="card good"><div class="chk">&#10003;</div><div><h3>Installable PWA</h3><p>Web manifest + cache-first service worker + icon make Cooper installable and resilient to flaky connectivity for shell assets. <span class="loc">public/manifest.webmanifest · public/sw.js</span></p></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. HARDENING -->
+<section id="hardening">
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">04</span><h2>Where it needs hardening</h2></div>
+    <p class="lead">Severities are calibrated to what Cooper actually is — a single-user, local-first tool, not a public multi-tenant SaaS. No critical or remotely-exploitable-without-credentials vulnerability was found. Residual risk concentrates in authentication hardening and data-at-rest gaps.</p>
+
+    <div class="legend">
+      <span><span class="sw" style="background:var(--high)"></span> High</span>
+      <span><span class="sw" style="background:var(--med)"></span> Medium</span>
+      <span><span class="sw" style="background:var(--amber)"></span> Medium/Low (annoyance)</span>
+      <span><span class="sw" style="background:var(--low)"></span> Low</span>
+    </div>
+
+    <div class="grid g2" style="margin-top:18px">
+      <div class="card sev high">
+        <div class="sevtop"><h3>No login rate limiting</h3><span class="badge high">High</span></div>
+        <p class="desc">The single shared password is the entire perimeter and the login handler has no counter, delay, or lockout. Anyone who can reach the port can attempt unlimited guesses — strength collapses to password entropy &#215; guess rate.</p>
+        <span class="loc">POST /api/auth/login · server.js:40-61</span>
+        <div class="fix"><b>Fix:</b> Add per-IP failed-attempt throttling with exponential backoff and temporary lockout; add a global attempt budget as a backstop; enforce a minimum password length/entropy at startup.</div>
+      </div>
+
+      <div class="card sev high">
+        <div class="sevtop"><h3>Session secret defaults to the app password</h3><span class="badge high">High &#8594; Med</span></div>
+        <p class="desc">When <code>COOPER_SESSION_SECRET</code> is unset, the HMAC signing key <em>is</em> the password. No key separation: a password leak becomes an offline session-forgery capability, and rotating the password silently invalidates every session.</p>
+        <span class="loc">server.js:23 · used by signPayload 980-982</span>
+        <div class="fix"><b>Fix:</b> Require an explicit, independent, high-entropy <code>COOPER_SESSION_SECRET</code>. Fail closed at startup (or warn loudly) if it falls back to the password.</div>
+      </div>
+
+      <div class="card sev med">
+        <div class="sevtop"><h3>Secure cookie flag only in production</h3><span class="badge med">Medium</span></div>
+        <p class="desc">The cookie carries HttpOnly + SameSite=Lax always, but <code>Secure</code> is gated on <code>NODE_ENV==="production"</code>. In the default dev posture the cookie is transmittable over plain HTTP and can be sniffed if exposed over non-TLS, non-localhost transport.</p>
+        <span class="loc">secure:isProduction · server.js:56, 67, 1017</span>
+        <div class="fix"><b>Fix:</b> Set <code>Secure</code> based on actual HTTPS (<code>req.secure</code> / <code>X-Forwarded-Proto</code>) rather than <code>NODE_ENV</code>; document HTTPS-only for any non-localhost exposure.</div>
+      </div>
+
+      <div class="card sev med">
+        <div class="sevtop"><h3>No CSRF protection on mutating routes</h3><span class="badge med">Medium</span></div>
+        <p class="desc">Auth is by ambient cookie with no CSRF token, required custom header, or Origin/Referer check on state-changing POST/PATCH routes. <code>SameSite=Lax</code> blocks the classic form-POST and image-tag vectors, so residual exposure is narrow — hence Medium.</p>
+        <span class="loc">server.js:280-422 (calls / transcript / end / artifacts / retry)</span>
+        <div class="fix"><b>Fix:</b> Require a custom header (forcing a preflight) or validate <code>Origin</code>/<code>Referer</code> against an allowlist on mutating routes; or use a double-submit CSRF token.</div>
+      </div>
+
+      <div class="card sev med">
+        <div class="sevtop"><h3>Prompt injection via transcript + custom prompt</h3><span class="badge med">Medium</span></div>
+        <p class="desc"><code>buildWorkPrompt</code> concatenates the full untrusted transcript and Michael's free-text custom prompt into the Responses prompt. Crafted utterances could steer artifact content. Bounded by the iframe sandbox and no tool execution on the Responses path — harm is misleading content, not code execution.</p>
+        <span class="loc">server.js:705-745 · render main.jsx:1442, 1588</span>
+        <div class="fix"><b>Fix:</b> Delimit and label untrusted transcript / custom-prompt blocks as data, not instructions; keep the sandbox and DOMPurify; continue treating all model output as untrusted at the render boundary.</div>
+      </div>
+
+      <div class="card sev med">
+        <div class="sevtop"><h3>Plaintext meeting data at rest</h3><span class="badge med">Medium</span></div>
+        <p class="desc">Every transcript turn and generated artifact is persisted unencrypted under <code>data/</code> with no retention or expiry controls — data accumulates indefinitely. For a local executive assistant this is the central confidentiality concern; the threat requires host/filesystem access.</p>
+        <span class="loc">data/cooper.json (updateDb 781-791) · data/artifacts/ (completeArtifact 613-656)</span>
+        <div class="fix"><b>Fix:</b> Encrypt sensitive fields/files at rest (or formally require host full-disk encryption), add a retention/purge mechanism, and document the on-disk data footprint.</div>
+      </div>
+
+      <div class="card sev amber">
+        <div class="sevtop"><h3>html_prototype iframe allows scripts/popups/modals</h3><span class="badge amber">Med &#8594; Low</span></div>
+        <p class="desc">The prototype iframe grants <code>allow-scripts</code> + <code>allow-popups</code> + <code>allow-modals</code>. Generated HTML can script, open popups, and show modals — an annoyance / redirect surface. Origin-isolated (no <code>allow-same-origin</code>), so cookies and the app origin stay safe.</p>
+        <span class="loc">main.jsx:1442</span>
+        <div class="fix"><b>Fix:</b> Tighten the sandbox tokens — drop <code>allow-popups</code> / <code>allow-modals</code> unless required; consider a sandbox CSP.</div>
+      </div>
+
+      <div class="card sev low">
+        <div class="sevtop"><h3>Single JSON file — durability &amp; scale</h3><span class="badge low">Low (Reliability)</span></div>
+        <p class="desc">All state is one JSON file with whole-file rewrites and no cross-process locking, no durability or backups. It works for a single user but offers no concurrency story and no recovery beyond the running &#8594; queued job reset.</p>
+        <span class="loc">readDbRaw 770-779 · writeQueue 781-791</span>
+        <div class="fix"><b>Fix:</b> Migrate to an embedded transactional store (e.g. SQLite) for atomic writes and crash safety; add periodic backups and a documented retention policy.</div>
+      </div>
+
+      <div class="card sev low">
+        <div class="sevtop"><h3>Single-process worker — no horizontal scale</h3><span class="badge low">Low (Reliability)</span></div>
+        <p class="desc">One in-process job worker means no horizontal scale; a process death mid-write can lose a job (partially mitigated by boot recovery). Artifacts sit on local disk with no object storage.</p>
+        <span class="loc">processQueue 479-514 · runJob 516-611</span>
+        <div class="fix"><b>Fix:</b> Externalize the queue and artifact storage if scale is ever needed; until then, accept for single-user and rely on the existing recovery path.</div>
+      </div>
+
+      <div class="card sev low">
+        <div class="sevtop"><h3>No observability</h3><span class="badge low">Low</span></div>
+        <p class="desc">No request logging, metrics, tracing, or health endpoint; only verbose console errors. There is no audit trail (single shared credential), and SSE broadcasts to all connected clients with no per-session scoping.</p>
+        <span class="loc">server-wide · GET /api/events 250-263</span>
+        <div class="fix"><b>Fix:</b> Add structured request logging and a <code>/healthz</code>; scrub internal detail from client-facing errors; scope SSE per-session if multi-user is ever introduced.</div>
+      </div>
+
+      <div class="card sev low">
+        <div class="sevtop"><h3>No automated tests</h3><span class="badge low">Low &#8594; High (debt)</span></div>
+        <p class="desc">There are no tests anywhere in the repo, no CI, and no linter config. The auth, retry/backoff, prompt-assembly, and crash-recovery logic — exactly the parts where regressions are most dangerous — are entirely unguarded.</p>
+        <span class="loc">repo-wide (no test/ · no CI workflow)</span>
+        <div class="fix"><b>Fix:</b> Add unit tests for <code>safeCompare</code> / session signing, the retry classifier, <code>buildWorkPrompt</code>, and crash recovery; add a CI gate (lint + test) on every push.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5. SCORECARD -->
+<section id="scorecard">
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">05</span><h2>Production readiness scorecard</h2></div>
+    <p class="lead">Ratings reflect realistic posture for the single-user, local-first target. Bars are out of 5.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Dimension</th><th>Rating</th><th>Justification</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>Security</b></td>
+            <td><span class="score">3.5/5</span><br><span class="rate"><span class="pip on g"></span><span class="pip on g"></span><span class="pip on g"></span><span class="pip on a"></span><span class="pip"></span></span></td>
+            <td>Excellent instincts — server key relay, constant-time compare, signed HttpOnly cookies, sandboxed iframe, DOMPurify. Held back by no login rate limiting and the session-secret default.</td>
+          </tr>
+          <tr>
+            <td><b>Reliability</b></td>
+            <td><span class="score">3/5</span><br><span class="rate"><span class="pip on g"></span><span class="pip on g"></span><span class="pip on a"></span><span class="pip"></span><span class="pip"></span></span></td>
+            <td>Write serialization, paced retry/backoff, and boot-time crash recovery are real strengths. A single JSON file with whole-file rewrites and no backups is the ceiling.</td>
+          </tr>
+          <tr>
+            <td><b>Scalability</b></td>
+            <td><span class="score">1.5/5</span><br><span class="rate"><span class="pip on o"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span></span></td>
+            <td>Single Node process, single in-process worker, JSON file, local-disk artifacts, unscoped SSE fan-out. Correct for one user; no horizontal-scale path as built.</td>
+          </tr>
+          <tr>
+            <td><b>Observability</b></td>
+            <td><span class="score">1/5</span><br><span class="rate"><span class="pip on r"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span></span></td>
+            <td>No structured logging, metrics, tracing, health endpoint, or audit trail — only console errors. Job logs are captured (last 40), which is the one bright spot.</td>
+          </tr>
+          <tr>
+            <td><b>Testing</b></td>
+            <td><span class="score">0/5</span><br><span class="rate"><span class="pip on r"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span><span class="pip"></span></span></td>
+            <td>No tests, no CI, no linter config anywhere in the repo. The riskiest logic (auth, retries, prompt assembly, recovery) is completely unguarded.</td>
+          </tr>
+          <tr>
+            <td><b>UX / Accessibility</b></td>
+            <td><span class="score">3.5/5</span><br><span class="rate"><span class="pip on g"></span><span class="pip on g"></span><span class="pip on g"></span><span class="pip on a"></span><span class="pip"></span></span></td>
+            <td>Thoughtful product UX: silent-by-default, wake-word, live transcript, SSE-driven live updates, completion notifications, manual retry, installable PWA. Accessibility not formally evaluated.</td>
+          </tr>
+          <tr>
+            <td><b>Documentation</b></td>
+            <td><span class="score">3/5</span><br><span class="rate"><span class="pip on g"></span><span class="pip on g"></span><span class="pip on a"></span><span class="pip"></span><span class="pip"></span></span></td>
+            <td>README covers setup/run and the OpenAI docs used; this report set adds technical and security depth. No inline API docs, runbook, or operator data-handling guidance yet.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- 6. ROADMAP -->
+<section id="roadmap">
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">06</span><h2>Roadmap</h2></div>
+    <p class="lead">Phased hardening, ordered by leverage. Phase 1 is cheap and high-value; Phases 2–3 are defense-in-depth and durability investments to revisit if Cooper grows beyond a single local user.</p>
+
+    <div class="grid g3">
+      <div class="card phase p1">
+        <span class="tag">Phase 1 — Must fix</span>
+        <h3>Close the auth gaps</h3>
+        <ul>
+          <li>Add per-IP login throttling + backoff + lockout (closes the brute-force path).</li>
+          <li>Require an explicit, independent <code>COOPER_SESSION_SECRET</code>; fail closed on fallback.</li>
+          <li>Set the <code>Secure</code> cookie flag on actual HTTPS, not <code>NODE_ENV</code>.</li>
+          <li>Add a minimal test suite + CI gate for auth, retry classification, and crash recovery.</li>
+        </ul>
+      </div>
+      <div class="card phase p2">
+        <span class="tag">Phase 2 — Should fix</span>
+        <h3>Defense in depth &amp; data hygiene</h3>
+        <ul>
+          <li>Origin/Referer (or custom-header) check on all mutating routes.</li>
+          <li>Encrypt meeting data at rest (or require host full-disk encryption) + add retention/purge.</li>
+          <li>Delimit untrusted transcript / custom-prompt blocks in <code>buildWorkPrompt</code>.</li>
+          <li>Add structured request logging, a <code>/healthz</code>, and scrubbed client-facing errors.</li>
+        </ul>
+      </div>
+      <div class="card phase p3">
+        <span class="tag">Phase 3 — Scale &amp; polish</span>
+        <h3>Durability &amp; growth readiness</h3>
+        <ul>
+          <li>Migrate the JSON store to an embedded transactional DB (e.g. SQLite); add backups.</li>
+          <li>Tighten the prototype iframe sandbox tokens; pin the DOMPurify config.</li>
+          <li>If multi-user is ever needed: per-user accounts, audit logging, per-session SSE scoping.</li>
+          <li>Externalize the queue + artifact storage to enable horizontal scale.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><b style="color:var(--ink)">Cooper — Realtime Voice Agent: Capabilities &amp; Hardening Report.</b> Grounded in the verified source brief and confirmed against <code>server.js</code> (1110 LOC) and <code>src/main.jsx</code> (1707 LOC). Scope is the single-user, local-first application as built. There is no Arcade integration, no OAuth, no multi-tenant system, no external database, and no document ingestion in this codebase — such features were deliberately excluded as nonexistent.</p>
+  </div>
+</footer>
+
+</body>
+</html>
