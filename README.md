@@ -23,9 +23,14 @@ Optional settings:
 COOPER_SESSION_TTL_HOURS=168
 COOPER_WORK_MODEL=gpt-5.4
 COOPER_FALLBACK_WORK_MODEL=
+# Fast model for the real-time canvas lane (diagrams, prototypes, wireframes). Defaults to COOPER_WORK_MODEL when unset.
+COOPER_FAST_MODEL=
 COOPER_JOB_DELAY_MS=15000
 COOPER_JOB_MAX_ATTEMPTS=3
 COOPER_JOB_MAX_OUTPUT_TOKENS=6500
+# Knowledge base inline threshold (characters). Entries at or below this size are injected directly into
+# the live Realtime session; larger entries are indexed into an OpenAI vector store and retrieved on demand.
+COOPER_KB_INLINE_MAX_CHARS=6000
 ```
 
 ## Run
@@ -48,6 +53,12 @@ Open `http://localhost:3000`.
 - Post-call suggestions for work: post-call kit, execution plan, PRD, HTML prototype, follow-up summary, and code sketch.
 - Rate-limited server-side job loop that calls `/v1/responses` one step at a time, retries transient/rate-limit failures, and writes artifacts to `data/artifacts`.
 - HTML prototype artifacts are standalone inline HTML/CSS/JS and render in a sandboxed Work preview with Mobile and Desktop viewport toggles.
+- Live shared canvas: Cooper can draw mermaid diagrams (`create_diagram`), high-fidelity HTML prototypes (`create_prototype`), and low-fidelity grayscale wireframes (`create_wireframe`) on a fast background lane while talking.
+  - Each canvas tool accepts `speed` (`"fast"` | `"quality"`, default `fast`). `quality` runs a slower multi-step refine on the paced post-call lane with `COOPER_WORK_MODEL`; `fast` uses the real-time lane with `COOPER_FAST_MODEL`.
+  - Iterate in place with `update_canvas_item(item_id, instruction, speed?)` or the per-tab Edit affordance, which `POST`s `/api/calls/:id/canvas/:itemId/update { instruction, speed? }` to regenerate an item from its current content plus the change while keeping the same tab and id.
+  - Each canvas tab can be downloaded (mermaid `.mmd`, html/wireframe `.html`, plus rendered SVG export for diagrams).
+  - Crash recovery: in-flight canvas jobs are requeued onto their original lane after a restart, and any item stuck `generating` with no active job is marked `failed`.
+- Hybrid knowledge base per call: paste or upload context before or during a call. Small entries are injected straight into the live Realtime session; large entries are indexed into an OpenAI vector store and retrieved on demand via the `search_knowledge` tool. Any vector-store error gracefully degrades to injected prompt-mode context, so the feature never hard-fails.
 - Live execution feedback through `/api/events` plus persisted per-job activity logs.
 - Browser/PWA notifications when Cooper finishes queued work, plus manual retry for failed jobs.
 - PWA manifest and service worker for installable mobile/browser use.

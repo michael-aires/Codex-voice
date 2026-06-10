@@ -11,9 +11,11 @@ import {
   CheckCircle2,
   Copy,
   Clock,
+  Download,
   FileText,
   Files,
   Library,
+  Pencil,
   LockKeyhole,
   LogIn,
   LogOut,
@@ -30,6 +32,7 @@ import {
   Smartphone,
   Wand2
 } from "lucide-react";
+import { canvasItemDownload } from "./lib/canvas.js";
 import "./styles.css";
 
 let mermaidLoader = null;
@@ -70,6 +73,118 @@ const toolDefinition = {
   }
 };
 
+const speedParam = {
+  type: "string",
+  enum: ["fast", "quality"],
+  description:
+    "Generation mode. 'fast' (default) returns in a few seconds for live conversation. 'quality' runs a slower multi-step refinement for production-grade output - use it only when Michael says take your time or make it production-grade."
+};
+
+const createDiagramTool = {
+  type: "function",
+  name: "create_diagram",
+  description: "Draw a diagram on the shared canvas for Michael to see. Use for architectures, workflows, flows, sequences.",
+  parameters: {
+    type: "object",
+    properties: {
+      title: {
+        type: "string",
+        description: "Short title for the diagram."
+      },
+      description: {
+        type: "string",
+        description: "What the diagram should show: the system, workflow, flow, or sequence to render."
+      },
+      diagram_type: {
+        type: "string",
+        description: "Optional diagram style: flowchart, sequence, class, state, er, or mindmap."
+      },
+      speed: speedParam
+    },
+    required: ["title", "description"]
+  }
+};
+
+const createPrototypeTool = {
+  type: "function",
+  name: "create_prototype",
+  description: "Build an HTML UI prototype on the shared canvas.",
+  parameters: {
+    type: "object",
+    properties: {
+      title: {
+        type: "string",
+        description: "Short title for the prototype."
+      },
+      brief: {
+        type: "string",
+        description: "What the prototype should be: the screen, UI, or interaction to build."
+      },
+      speed: speedParam
+    },
+    required: ["title", "brief"]
+  }
+};
+
+const createWireframeTool = {
+  type: "function",
+  name: "create_wireframe",
+  description: "Build a low-fidelity HTML wireframe (grayscale, boxy, placeholder content) on the shared canvas to sketch layout structure.",
+  parameters: {
+    type: "object",
+    properties: {
+      title: {
+        type: "string",
+        description: "Short title for the wireframe."
+      },
+      brief: {
+        type: "string",
+        description: "What the wireframe should show: the screen or layout structure to sketch."
+      },
+      speed: speedParam
+    },
+    required: ["title", "brief"]
+  }
+};
+
+const updateCanvasItemTool = {
+  type: "function",
+  name: "update_canvas_item",
+  description:
+    "Iterate on an existing canvas item in place. Use when Michael asks to change, refine, or fix a diagram, prototype, or wireframe already on the canvas. Regenerates the same item from its current content plus the requested change.",
+  parameters: {
+    type: "object",
+    properties: {
+      item_id: {
+        type: "string",
+        description: "The id of the existing canvas item to update."
+      },
+      instruction: {
+        type: "string",
+        description: "The change to apply, e.g. 'add an error state', 'use a dark theme', 'split the auth service into two nodes'."
+      },
+      speed: speedParam
+    },
+    required: ["item_id", "instruction"]
+  }
+};
+
+const searchKnowledgeTool = {
+  type: "function",
+  name: "search_knowledge",
+  description: "Search the knowledge base (context Michael has added) for relevant information before answering.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description: "What to look up in the knowledge base."
+      }
+    },
+    required: ["query"]
+  }
+};
+
 const sessionUpdate = {
   type: "session.update",
   session: {
@@ -92,6 +207,10 @@ Be calm, direct, commercially aware, technically grounded, and brief.
 
 # Tools
 Use check_calendar(date, time) for availability or scheduling questions. Ask for a missing date or time before calling the tool.
+While talking, you can put visuals on the shared canvas Michael is looking at. Call create_diagram(title, description, diagram_type?, speed?) to draw a diagram (architecture, workflow, flow, sequence), create_prototype(title, brief, speed?) to build a polished HTML UI prototype, and create_wireframe(title, brief, speed?) to sketch a fast low-fidelity layout wireframe. These run in the background and appear on the canvas after a few seconds, so call the tool, briefly say it is coming, and keep the conversation going. Do not wait silently for the result.
+Each canvas tool takes an optional speed: default "fast" for the live flow (a few seconds), or "quality" when Michael says take your time, make it production-grade, or polish it - quality runs a slower multi-step refinement and takes longer, so set expectations.
+You can iterate on what is already on the canvas: call update_canvas_item(item_id, instruction, speed?) to apply a change to an existing item in place (e.g. "add an error state", "use a dark theme"). It regenerates the same item, preserving its id and type. Reference the item Michael is talking about by its id.
+You have a knowledge base of context Michael has added (pasted notes, uploaded documents). Call search_knowledge(query) to look things up there before answering when a question might be covered by that context. Michael can add new context at any time, and short notes are injected directly into our conversation.
 `,
     reasoning: { effort: "low" },
     audio: {
@@ -114,7 +233,7 @@ Use check_calendar(date, time) for availability or scheduling questions. Ask for
         voice: "cedar"
       }
     },
-    tools: [toolDefinition],
+    tools: [toolDefinition, createDiagramTool, createPrototypeTool, createWireframeTool, updateCanvasItemTool, searchKnowledgeTool],
     tool_choice: "auto"
   }
 };
@@ -139,17 +258,21 @@ function App() {
   const [prompt, setPrompt] = React.useState("");
   const [events, setEvents] = React.useState([]);
   const [transcripts, setTranscripts] = React.useState([]);
+  const [knowledgeEntries, setKnowledgeEntries] = React.useState([]);
+  const injectedKnowledgeRef = React.useRef(new Set());
   const pcRef = React.useRef(null);
   const dcRef = React.useRef(null);
   const audioRef = React.useRef(null);
   const streamRef = React.useRef(null);
   const activeCallRef = React.useRef(null);
+  const selectedCallIdRef = React.useRef(null);
   const callStartedAtRef = React.useRef(null);
   const transcriptsRef = React.useRef([]);
   const outputTranscriptBuffersRef = React.useRef(new Map());
   const textTranscriptBuffersRef = React.useRef(new Map());
   const persistedResponseIdsRef = React.useRef(new Set());
   const knownCompletedJobsRef = React.useRef(new Set());
+  const canvasReadyAnnouncedRef = React.useRef(new Set());
   const didLoadStateRef = React.useRef(false);
 
   React.useEffect(() => {
@@ -171,12 +294,24 @@ function App() {
     };
   }, []);
 
+  const knowledgeCallId = (connected || connecting ? activeCallRef.current?.id : null) || selectedCallId || null;
+
+  React.useEffect(() => {
+    selectedCallIdRef.current = selectedCallId;
+  }, [selectedCallId]);
+
   React.useEffect(() => {
     if (!authenticated || !entered) return;
     refreshState();
     const id = window.setInterval(refreshState, 4000);
     return () => window.clearInterval(id);
   }, [authenticated, entered]);
+
+  React.useEffect(() => {
+    if (!authenticated || !entered) return;
+    refreshKnowledge(knowledgeCallId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, entered, knowledgeCallId]);
 
   React.useEffect(() => {
     if (!authenticated || !selectedArtifactId) {
@@ -208,8 +343,191 @@ function App() {
     source.addEventListener("state.updated", () => {
       refreshState();
     });
+    source.addEventListener("canvas.item.created", (event) => {
+      const item = parseSseData(event.data);
+      if (item) applyCanvasItem(item);
+    });
+    source.addEventListener("canvas.item.updated", (event) => {
+      const item = parseSseData(event.data);
+      if (item) applyCanvasItem(item);
+    });
+    source.addEventListener("knowledge.updated", (event) => {
+      const payload = parseSseData(event.data);
+      const targetId = activeCallRef.current?.id || selectedCallIdRef.current;
+      if (!payload || !payload.callId || payload.callId === targetId) {
+        refreshKnowledge(targetId);
+      }
+    });
     return () => source.close();
   }, [authenticated, entered]);
+
+  function applyCanvasItem(item) {
+    if (!item || !item.callId || !item.id) return;
+    const alreadyReady = canvasReadyAnnouncedRef.current.has(item.id);
+
+    setState((current) => {
+      const calls = (current.calls || []).map((call) => {
+        if (call.id !== item.callId) return call;
+        const items = Array.isArray(call.canvasItems) ? call.canvasItems : [];
+        const index = items.findIndex((existing) => existing.id === item.id);
+        const nextItems = index >= 0
+          ? items.map((existing, i) => (i === index ? { ...existing, ...item } : existing))
+          : [...items, item];
+        return { ...call, canvasItems: nextItems };
+      });
+      return { ...current, calls };
+    });
+
+    if (item.status === "ready" && !alreadyReady) {
+      canvasReadyAnnouncedRef.current.add(item.id);
+      announceCanvasReady(item);
+    }
+  }
+
+  function announceCanvasReady(item) {
+    const title = String(item.title || "Canvas item").trim();
+    addEvent("Canvas", `${title} is ready.`);
+
+    if (connected && dcRef.current?.readyState === "open") {
+      sendEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: `[Canvas] ${title} is ready` }]
+        }
+      });
+      sendEvent({
+        type: "response.create",
+        response: {
+          instructions: `Briefly tell Michael the ${title} is ready on the canvas.`
+        }
+      });
+    }
+
+    if (getNotificationPermission() === "granted") {
+      try {
+        new Notification("Canvas ready", {
+          body: `${title} is ready on the canvas.`,
+          icon: "/icons/cooper.svg",
+          badge: "/icons/cooper.svg",
+          tag: `cooper-canvas-${item.id}`
+        });
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
+  async function refreshKnowledge(callId) {
+    const id = callId || activeCallRef.current?.id || selectedCallIdRef.current;
+    if (!id) {
+      setKnowledgeEntries([]);
+      return;
+    }
+    try {
+      const response = await fetch(`/api/calls/${id}/knowledge`, { credentials: "same-origin" });
+      if (response.status === 401) {
+        setAuthenticated(false);
+        return;
+      }
+      if (!response.ok) throw new Error("Knowledge refresh failed.");
+      const payload = await response.json();
+      setKnowledgeEntries(Array.isArray(payload.entries) ? payload.entries : []);
+    } catch {
+      // best-effort
+    }
+  }
+
+  function injectKnowledgeEntry(entry) {
+    if (!entry || entry.mode !== "prompt") return;
+    if (!connected || dcRef.current?.readyState !== "open") return;
+    if (injectedKnowledgeRef.current.has(entry.id)) return;
+    const text = String(entry.text || "").trim();
+    if (!text) return;
+    sendEvent({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: `[Context: ${entry.name || "note"}]\n${text}` }]
+      }
+    });
+    injectedKnowledgeRef.current.add(entry.id);
+    addEvent("Context", `Injected "${entry.name || "note"}" into the session.`);
+  }
+
+  async function injectExistingPromptEntries(callId) {
+    if (!callId) return;
+    try {
+      const response = await fetch(`/api/calls/${callId}/knowledge?full=1`, { credentials: "same-origin" });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const entries = Array.isArray(payload.entries) ? payload.entries : [];
+      for (const entry of entries) {
+        if (entry.mode === "prompt" && entry.text) injectKnowledgeEntry(entry);
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  async function addKnowledge({ name, text, mode }) {
+    const id = activeCallRef.current?.id || selectedCallIdRef.current;
+    let targetId = id;
+    if (!targetId) {
+      try {
+        const call = await createCall();
+        targetId = call?.id;
+        if (call?.id) setSelectedCallId(call.id);
+      } catch {
+        addEvent("Context", "Could not create a call to hold context.");
+        return;
+      }
+    }
+    if (!targetId) return;
+
+    const body = { name, text };
+    if (mode && mode !== "auto") body.mode = mode;
+
+    try {
+      const response = await fetch(`/api/calls/${targetId}/knowledge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Could not add context.");
+      }
+      const payload = await response.json();
+      const entry = payload.entry;
+      addEvent("Context", `Added "${entry?.name || name || "note"}" (${entry?.mode || "?"}).`);
+      if (entry && entry.mode === "prompt") {
+        injectKnowledgeEntry({ ...entry, text: entry.text ?? text });
+      }
+      await refreshKnowledge(targetId);
+    } catch (error) {
+      addEvent("Context", error.message || "Could not add context.");
+    }
+  }
+
+  async function deleteKnowledge(entryId) {
+    const id = activeCallRef.current?.id || selectedCallIdRef.current;
+    if (!id || !entryId) return;
+    try {
+      const response = await fetch(`/api/calls/${id}/knowledge/${entryId}`, {
+        method: "DELETE",
+        credentials: "same-origin"
+      });
+      if (!response.ok) throw new Error("Could not delete context.");
+      injectedKnowledgeRef.current.delete(entryId);
+      await refreshKnowledge(id);
+    } catch (error) {
+      addEvent("Context", error.message || "Could not delete context.");
+    }
+  }
 
   async function refreshState() {
     try {
@@ -272,8 +590,11 @@ function App() {
     setArtifactContent("");
     setEvents([]);
     setTranscripts([]);
+    setKnowledgeEntries([]);
+    injectedKnowledgeRef.current = new Set();
     didLoadStateRef.current = false;
     knownCompletedJobsRef.current = new Set();
+    canvasReadyAnnouncedRef.current = new Set();
   }
 
   function enterApp() {
@@ -369,8 +690,6 @@ function App() {
   }
 
   function handleFunctionCall(call) {
-    if (call.name !== "check_calendar") return;
-
     let args = {};
     try {
       args = JSON.parse(call.arguments || "{}");
@@ -378,17 +697,276 @@ function App() {
       args = {};
     }
 
-    const result = checkCalendar(args.date, args.time);
+    if (call.name === "check_calendar") {
+      const result = checkCalendar(args.date, args.time);
+      sendEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: call.call_id,
+          output: JSON.stringify(result)
+        }
+      });
+      sendEvent({ type: "response.create" });
+      addEvent("Tool", `check_calendar(${args.date || "?"}, ${args.time || "?"})`);
+      return;
+    }
+
+    if (call.name === "create_diagram") {
+      startCanvasItem(call, {
+        type: "mermaid",
+        title: args.title,
+        brief: args.diagram_type ? `${args.description}\n\nPreferred diagram type: ${args.diagram_type}.` : args.description,
+        speed: normalizeSpeed(args.speed)
+      });
+      return;
+    }
+
+    if (call.name === "create_prototype") {
+      startCanvasItem(call, {
+        type: "html",
+        title: args.title,
+        brief: args.brief,
+        speed: normalizeSpeed(args.speed)
+      });
+      return;
+    }
+
+    if (call.name === "create_wireframe") {
+      startCanvasItem(call, {
+        type: "wireframe",
+        title: args.title,
+        brief: args.brief,
+        speed: normalizeSpeed(args.speed)
+      });
+      return;
+    }
+
+    if (call.name === "update_canvas_item") {
+      updateCanvasItem(call, {
+        itemId: args.item_id,
+        instruction: args.instruction,
+        speed: normalizeSpeed(args.speed)
+      });
+      return;
+    }
+
+    if (call.name === "search_knowledge") {
+      searchKnowledge(call, args.query);
+      return;
+    }
+  }
+
+  async function searchKnowledge(call, query) {
+    const activeCallId = activeCallRef.current?.id;
+    const safeQuery = String(query || "").trim();
+
+    if (!activeCallId) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: "No active call, cannot search the knowledge base right now.",
+        results: []
+      });
+      return;
+    }
+
+    if (!safeQuery) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: "Missing a search query.",
+        results: []
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/calls/${activeCallId}/knowledge/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ query: safeQuery })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Knowledge search failed.");
+      }
+      const payload = await response.json();
+      const results = Array.isArray(payload.results) ? payload.results : [];
+      replyFunctionOutput(call.call_id, {
+        status: "ok",
+        query: safeQuery,
+        results
+      });
+      addEvent("Knowledge", `search_knowledge("${safeQuery}") - ${results.length} result(s)`);
+    } catch (error) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: error.message || "Knowledge search failed.",
+        results: []
+      });
+      addEvent("Knowledge", error.message || "Knowledge search failed.");
+    }
+  }
+
+  function replyFunctionOutput(callId, output) {
     sendEvent({
       type: "conversation.item.create",
       item: {
         type: "function_call_output",
-        call_id: call.call_id,
-        output: JSON.stringify(result)
+        call_id: callId,
+        output: JSON.stringify(output)
       }
     });
     sendEvent({ type: "response.create" });
-    addEvent("Tool", `check_calendar(${args.date || "?"}, ${args.time || "?"})`);
+  }
+
+  async function startCanvasItem(call, { type, title, brief, speed = "fast" }) {
+    const activeCallId = activeCallRef.current?.id;
+    const safeTitle = String(title || "").trim() || canvasDefaultTitle(type);
+    const safeSpeed = normalizeSpeed(speed);
+
+    if (!activeCallId) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: "No active call, cannot use the canvas right now."
+      });
+      addEvent("Canvas", "Tool call with no active call.");
+      return;
+    }
+
+    if (!String(brief || "").trim()) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: "Missing a description for the canvas item."
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/calls/${activeCallId}/canvas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ type, title: safeTitle, brief, speed: safeSpeed })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Could not start the canvas item.");
+      }
+      replyFunctionOutput(call.call_id, {
+        status: "started",
+        message:
+          safeSpeed === "quality"
+            ? `Started ${safeTitle} in quality mode - it runs a slower refinement and will appear on the canvas shortly.`
+            : `Started ${safeTitle} - it will appear on the canvas in a few seconds.`
+      });
+      addEvent("Canvas", `${canvasDefaultTitle(type)}: ${safeTitle}${safeSpeed === "quality" ? " (quality)" : ""}`);
+    } catch (error) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: error.message || "Could not start the canvas item."
+      });
+      addEvent("Canvas", error.message || "Canvas start failed.");
+    }
+  }
+
+  async function updateCanvasItem(call, { itemId, instruction, speed = "fast" }) {
+    const activeCallId = activeCallRef.current?.id;
+    const safeInstruction = String(instruction || "").trim();
+    const safeSpeed = normalizeSpeed(speed);
+
+    if (!activeCallId) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: "No active call, cannot update the canvas right now."
+      });
+      return;
+    }
+
+    if (!itemId) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: "Missing the id of the canvas item to update."
+      });
+      return;
+    }
+
+    if (!safeInstruction) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: "Missing an instruction describing the change to apply."
+      });
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/calls/${activeCallId}/canvas/${itemId}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ instruction: safeInstruction, speed: safeSpeed })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Could not update the canvas item.");
+      }
+      replyFunctionOutput(call.call_id, {
+        status: "started",
+        message: "Updating the item now - the change will appear on the canvas shortly."
+      });
+      addEvent("Canvas", `Update: ${safeInstruction.slice(0, 60)}`);
+    } catch (error) {
+      replyFunctionOutput(call.call_id, {
+        status: "error",
+        message: error.message || "Could not update the canvas item."
+      });
+      addEvent("Canvas", error.message || "Canvas update failed.");
+    }
+  }
+
+  async function startCanvasManual(callId, { type, title, brief, speed = "fast" }) {
+    if (!callId) return;
+    const safeTitle = String(title || "").trim() || canvasDefaultTitle(type);
+    const safeSpeed = normalizeSpeed(speed);
+    try {
+      const response = await fetch(`/api/calls/${callId}/canvas`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ type, title: safeTitle, brief, speed: safeSpeed })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Could not start the canvas item.");
+      }
+      await refreshState();
+      addEvent("Canvas", `${canvasDefaultTitle(type)}: ${safeTitle}${safeSpeed === "quality" ? " (quality)" : ""}`);
+    } catch (error) {
+      addEvent("Canvas", error.message || "Canvas start failed.");
+    }
+  }
+
+  async function updateCanvasManual(callId, itemId, { instruction, speed = "fast" }) {
+    if (!callId || !itemId) return;
+    const safeInstruction = String(instruction || "").trim();
+    if (!safeInstruction) return;
+    const safeSpeed = normalizeSpeed(speed);
+    try {
+      const response = await fetch(`/api/calls/${callId}/canvas/${itemId}/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ instruction: safeInstruction, speed: safeSpeed })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "Could not update the canvas item.");
+      }
+      await refreshState();
+      addEvent("Canvas", `Update: ${safeInstruction.slice(0, 60)}`);
+    } catch (error) {
+      addEvent("Canvas", error.message || "Canvas update failed.");
+    }
   }
 
   function requestCooper(text = "") {
@@ -528,12 +1106,15 @@ function App() {
     outputTranscriptBuffersRef.current = new Map();
     textTranscriptBuffersRef.current = new Map();
     persistedResponseIdsRef.current = new Set();
+    injectedKnowledgeRef.current = new Set();
     setView("call");
 
     try {
       const call = await createCall();
       activeCallRef.current = call;
+      selectedCallIdRef.current = call?.id || selectedCallIdRef.current;
       callStartedAtRef.current = Date.now();
+      refreshKnowledge(call?.id);
 
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
@@ -563,6 +1144,8 @@ function App() {
         setConnecting(false);
         setStatus("Configuring");
         sendEvent(sessionUpdate);
+        injectedKnowledgeRef.current = new Set();
+        injectExistingPromptEntries(activeCallRef.current?.id);
       };
       dc.onmessage = (message) => {
         try {
@@ -779,6 +1362,8 @@ function App() {
     await refreshState();
   }
 
+  const activeCallId = activeCallRef.current?.id;
+  const activeCanvasCall = state.calls.find((call) => call.id === activeCallId) || null;
   const selectedCall = state.calls.find((call) => call.id === selectedCallId) || state.calls[0] || null;
   const selectedArtifact = state.artifacts.find((artifact) => artifact.id === selectedArtifactId) || state.artifacts[0] || null;
   const latestCall = state.calls.find((call) => call.status === "ended") || state.calls[0] || null;
@@ -813,6 +1398,12 @@ function App() {
         onEndCall={() => endCall()}
         onCallCooper={() => requestCooper()}
         onBack={() => setView("home")}
+        canvasCall={activeCanvasCall}
+        onGenerateCanvas={startCanvasManual}
+        onUpdateCanvas={updateCanvasManual}
+        knowledgeEntries={knowledgeEntries}
+        onAddKnowledge={addKnowledge}
+        onDeleteKnowledge={deleteKnowledge}
       />
     );
   }
@@ -858,6 +1449,9 @@ function App() {
           onGenerate={generateArtifact}
           onEnableNotifications={enableNotifications}
           onRetryJob={retryJob}
+          knowledgeEntries={knowledgeEntries}
+          onAddKnowledge={addKnowledge}
+          onDeleteKnowledge={deleteKnowledge}
         />
       )}
 
@@ -870,6 +1464,8 @@ function App() {
           onSelectCall={setSelectedCallId}
           onGenerate={generateArtifact}
           onRetryJob={retryJob}
+          onGenerateCanvas={startCanvasManual}
+          onUpdateCanvas={updateCanvasManual}
         />
       )}
 
@@ -958,7 +1554,10 @@ function HomeView({
   onOpenWork,
   onGenerate,
   onEnableNotifications,
-  onRetryJob
+  onRetryJob,
+  knowledgeEntries,
+  onAddKnowledge,
+  onDeleteKnowledge
 }) {
   return (
     <section className="home-grid">
@@ -1038,6 +1637,12 @@ function HomeView({
         <JobList jobs={jobs.slice(0, 5)} onRetry={onRetryJob} />
         <ActivityStream jobs={jobs} />
       </section>
+
+      <KnowledgePanel
+        entries={knowledgeEntries}
+        onAdd={onAddKnowledge}
+        onDelete={onDeleteKnowledge}
+      />
     </section>
   );
 }
@@ -1056,9 +1661,21 @@ function CallScreen({
   onConnect,
   onEndCall,
   onCallCooper,
-  onBack
+  onBack,
+  canvasCall,
+  onGenerateCanvas,
+  onUpdateCanvas,
+  knowledgeEntries,
+  onAddKnowledge,
+  onDeleteKnowledge
 }) {
   const mode = speaking ? "speaking" : hearing ? "hearing" : connected ? "listening" : "idle";
+  const [canvasOpen, setCanvasOpen] = React.useState(false);
+  const canvasCount = canvasCall?.canvasItems?.length || 0;
+
+  React.useEffect(() => {
+    if (canvasCount > 0) setCanvasOpen(true);
+  }, [canvasCount]);
 
   return (
     <main className={`call-screen ${mode}`}>
@@ -1070,10 +1687,39 @@ function CallScreen({
           <Radio size={18} />
           <span>{status}</span>
         </div>
-        <button className="icon-button inverted danger-text" onClick={onEndCall} aria-label="End call">
-          <PhoneOff size={20} />
-        </button>
+        <div className="call-topbar-actions">
+          <button
+            className={canvasOpen ? "icon-button inverted active" : "icon-button inverted"}
+            onClick={() => setCanvasOpen((open) => !open)}
+            aria-label="Toggle canvas"
+            aria-pressed={canvasOpen}
+          >
+            <MonitorSmartphone size={20} />
+            {canvasCount > 0 && <span className="canvas-count">{canvasCount}</span>}
+          </button>
+          <button className="icon-button inverted danger-text" onClick={onEndCall} aria-label="End call">
+            <PhoneOff size={20} />
+          </button>
+        </div>
       </header>
+
+      {canvasOpen && (
+        <aside className="canvas-drawer">
+          <div className="canvas-drawer-head">
+            <strong>Shared Canvas</strong>
+            <button className="icon-button inverted" onClick={() => setCanvasOpen(false)} aria-label="Close canvas">
+              <ArrowLeft size={18} />
+            </button>
+          </div>
+          <CanvasPanel call={canvasCall} onGenerate={onGenerateCanvas} onUpdate={onUpdateCanvas} variant="drawer" />
+          <KnowledgePanel
+            entries={knowledgeEntries}
+            onAdd={onAddKnowledge}
+            onDelete={onDeleteKnowledge}
+            variant="drawer"
+          />
+        </aside>
+      )}
 
       <section className="wave-stage">
         <div className="call-label">Cooper</div>
@@ -1139,7 +1785,7 @@ function CallScreen({
   );
 }
 
-function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onGenerate, onRetryJob }) {
+function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onGenerate, onRetryJob, onGenerateCanvas, onUpdateCanvas }) {
   const callArtifacts = artifacts.filter((artifact) => artifact.callId === selectedCall?.id);
   const callJobs = jobs.filter((job) => job.callId === selectedCall?.id);
 
@@ -1209,6 +1855,8 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onGen
                 <ArtifactMiniList artifacts={callArtifacts} jobs={callJobs} onRetry={onRetryJob} />
               </section>
             </div>
+
+            <CanvasPanel call={selectedCall} onGenerate={onGenerateCanvas} onUpdate={onUpdateCanvas} />
           </>
         ) : (
           <p className="muted">No call selected.</p>
@@ -1449,6 +2097,550 @@ function HtmlPrototypeDocument({ mode, onModeChange, html, title }) {
   );
 }
 
+function KnowledgePanel({ entries, onAdd, onDelete, variant = "panel" }) {
+  const [name, setName] = React.useState("");
+  const [text, setText] = React.useState("");
+  const [mode, setMode] = React.useState("auto");
+  const [busy, setBusy] = React.useState(false);
+  const fileInputRef = React.useRef(null);
+
+  async function handleFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      setText(content);
+      if (!name.trim()) setName(file.name);
+    } catch {
+      // ignore read failures
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    const body = String(text || "").trim();
+    if (!body || busy) return;
+    setBusy(true);
+    try {
+      await onAdd({ name: name.trim() || "Context", text: body, mode });
+      setName("");
+      setText("");
+      setMode("auto");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const sorted = React.useMemo(() => {
+    const list = Array.isArray(entries) ? [...entries] : [];
+    return list.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  }, [entries]);
+
+  return (
+    <section className={variant === "drawer" ? "knowledge-panel drawer" : "knowledge-panel"}>
+      <div className="knowledge-head">
+        <h2>Knowledge</h2>
+        <span className="muted">{sorted.length} item{sorted.length === 1 ? "" : "s"}</span>
+      </div>
+
+      <form className="knowledge-form" onSubmit={submit}>
+        <input
+          className="knowledge-name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="Context name (e.g. Q3 roadmap)"
+          aria-label="Context name"
+        />
+        <textarea
+          className="knowledge-text"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          placeholder="Paste context, notes, or a document for Cooper to use."
+          aria-label="Context content"
+          rows={4}
+        />
+        <div className="knowledge-controls">
+          <label className="knowledge-file">
+            <FileText size={16} />
+            <span>Upload</span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.md,.markdown,.csv,.json,text/plain"
+              onChange={handleFile}
+              hidden
+            />
+          </label>
+          <select
+            className="knowledge-mode"
+            value={mode}
+            onChange={(event) => setMode(event.target.value)}
+            aria-label="Ingest mode"
+          >
+            <option value="auto">Auto</option>
+            <option value="prompt">Inject now</option>
+            <option value="indexed">Index for retrieval</option>
+          </select>
+          <button type="submit" className="knowledge-add" disabled={!text.trim() || busy}>
+            <Sparkles size={16} />
+            <span>{busy ? "Adding" : "Add context"}</span>
+          </button>
+        </div>
+      </form>
+
+      <div className="knowledge-list">
+        {sorted.map((entry) => (
+          <article className="knowledge-row" key={entry.id}>
+            <div className="knowledge-row-main">
+              <strong>{entry.name || "Context"}</strong>
+              <div className="knowledge-meta">
+                <span className={`knowledge-badge ${entry.mode === "indexed" ? "indexed" : "injected"}`}>
+                  {entry.mode === "indexed" ? "indexed" : "injected"}
+                </span>
+                <span className="muted">{entry.chars || 0} chars</span>
+                {entry.status && entry.status !== "ready" && (
+                  <span className="knowledge-status">{entry.status}</span>
+                )}
+              </div>
+              {entry.error && <small className="knowledge-error">{entry.error}</small>}
+            </div>
+            <button
+              className="knowledge-delete"
+              onClick={() => onDelete(entry.id)}
+              aria-label={`Delete ${entry.name || "context"}`}
+            >
+              <AlertTriangle size={15} />
+            </button>
+          </article>
+        ))}
+        {!sorted.length && <p className="muted">No context added yet.</p>}
+      </div>
+    </section>
+  );
+}
+
+function CanvasPanel({ call, onGenerate, onUpdate, variant = "panel" }) {
+  const items = React.useMemo(() => {
+    const list = Array.isArray(call?.canvasItems) ? [...call.canvasItems] : [];
+    return list.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+  }, [call?.canvasItems]);
+
+  const [activeId, setActiveId] = React.useState(null);
+  const [composerType, setComposerType] = React.useState("mermaid");
+  const [composerText, setComposerText] = React.useState("");
+  const [composerSpeed, setComposerSpeed] = React.useState("fast");
+  const [readyMessage, setReadyMessage] = React.useState("");
+  const tabRefs = React.useRef(new Map());
+  const announcedRef = React.useRef(new Set());
+
+  const activeItem = items.find((item) => item.id === activeId) || items[items.length - 1] || null;
+
+  React.useEffect(() => {
+    if (!items.length) {
+      if (activeId !== null) setActiveId(null);
+      return;
+    }
+    if (!items.some((item) => item.id === activeId)) {
+      setActiveId(items[items.length - 1].id);
+    }
+  }, [items, activeId]);
+
+  // Local aria-live announcement when an item finishes rendering on this panel.
+  React.useEffect(() => {
+    for (const item of items) {
+      if (item.status === "ready" && !announcedRef.current.has(item.id)) {
+        announcedRef.current.add(item.id);
+        setReadyMessage(`${item.title || canvasDefaultTitle(item.type)} is ready on the canvas.`);
+      }
+    }
+  }, [items]);
+
+  function focusTabAt(index) {
+    if (!items.length) return;
+    const wrapped = (index + items.length) % items.length;
+    const target = items[wrapped];
+    if (!target) return;
+    setActiveId(target.id);
+    const node = tabRefs.current.get(target.id);
+    if (node) node.focus();
+  }
+
+  function onTabKeyDown(event, index) {
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      event.preventDefault();
+      focusTabAt(index + 1);
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      event.preventDefault();
+      focusTabAt(index - 1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      focusTabAt(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      focusTabAt(items.length - 1);
+    }
+  }
+
+  function submitComposer(event) {
+    event.preventDefault();
+    const brief = composerText.trim();
+    if (!brief || !call?.id) return;
+    onGenerate(call.id, { type: composerType, title: deriveTitle(brief), brief, speed: composerSpeed });
+    setComposerText("");
+  }
+
+  function handleUpdate(itemId, instruction, speed) {
+    if (!call?.id || !onUpdate) return;
+    onUpdate(call.id, itemId, { instruction, speed });
+  }
+
+  const panelId = call?.id || "canvas";
+
+  return (
+    <section className={variant === "drawer" ? "canvas-panel drawer" : "canvas-panel"}>
+      <div className="canvas-head">
+        <h2>Canvas</h2>
+        <div className="canvas-tabs" role="tablist" aria-label="Canvas items">
+          {items.map((item, index) => {
+            const selected = item.id === activeItem?.id;
+            return (
+              <button
+                key={item.id}
+                ref={(node) => {
+                  if (node) tabRefs.current.set(item.id, node);
+                  else tabRefs.current.delete(item.id);
+                }}
+                role="tab"
+                id={`canvas-tab-${panelId}-${item.id}`}
+                aria-selected={selected}
+                aria-controls={`canvas-tabpanel-${panelId}`}
+                tabIndex={selected ? 0 : -1}
+                className={`canvas-tab ${selected ? "active" : ""} ${item.status}`}
+                onClick={() => setActiveId(item.id)}
+                onKeyDown={(event) => onTabKeyDown(event, index)}
+                title={item.title}
+              >
+                {item.status === "generating" && <Clock size={14} aria-hidden="true" />}
+                {item.status === "failed" && <AlertTriangle size={14} aria-hidden="true" />}
+                <span>{item.title || canvasDefaultTitle(item.type)}</span>
+              </button>
+            );
+          })}
+          {!items.length && <span className="muted">No canvas items yet.</span>}
+        </div>
+      </div>
+
+      <div
+        className="canvas-stage"
+        role="tabpanel"
+        id={`canvas-tabpanel-${panelId}`}
+        aria-labelledby={activeItem ? `canvas-tab-${panelId}-${activeItem.id}` : undefined}
+        tabIndex={0}
+      >
+        {activeItem ? (
+          <>
+            <CanvasItemToolbar item={activeItem} onUpdate={handleUpdate} canUpdate={Boolean(onUpdate)} />
+            <CanvasItemView item={activeItem} />
+          </>
+        ) : (
+          <p className="muted">Ask Cooper to diagram or prototype something, or use the box below.</p>
+        )}
+      </div>
+
+      <p className="sr-only" role="status" aria-live="polite">
+        {readyMessage}
+      </p>
+
+      <form className="canvas-composer" onSubmit={submitComposer}>
+        <div className="canvas-composer-type" role="group" aria-label="Canvas item type">
+          <button
+            type="button"
+            className={composerType === "mermaid" ? "active" : ""}
+            onClick={() => setComposerType("mermaid")}
+          >
+            Diagram
+          </button>
+          <button
+            type="button"
+            className={composerType === "html" ? "active" : ""}
+            onClick={() => setComposerType("html")}
+          >
+            Prototype
+          </button>
+          <button
+            type="button"
+            className={composerType === "wireframe" ? "active" : ""}
+            onClick={() => setComposerType("wireframe")}
+          >
+            Wireframe
+          </button>
+        </div>
+        <input
+          value={composerText}
+          onChange={(event) => setComposerText(event.target.value)}
+          placeholder={composerPlaceholder(composerType)}
+          disabled={!call?.id}
+          aria-label={composerPlaceholder(composerType)}
+        />
+        <select
+          className="canvas-speed"
+          value={composerSpeed}
+          onChange={(event) => setComposerSpeed(event.target.value)}
+          aria-label="Generation mode"
+          disabled={!call?.id}
+        >
+          <option value="fast">Fast</option>
+          <option value="quality">Quality</option>
+        </select>
+        <button type="submit" disabled={!call?.id || !composerText.trim()}>
+          <Wand2 size={17} aria-hidden="true" />
+          <span>{composerSubmitLabel(composerType)}</span>
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function CanvasItemToolbar({ item, onUpdate, canUpdate }) {
+  const [editing, setEditing] = React.useState(false);
+  const [instruction, setInstruction] = React.useState("");
+  const [speed, setSpeed] = React.useState("fast");
+  const inputRef = React.useRef(null);
+  const generating = item.status === "generating";
+  const typeLabel = canvasDefaultTitle(item.type);
+
+  React.useEffect(() => {
+    if (editing && inputRef.current) inputRef.current.focus();
+  }, [editing]);
+
+  function applyEdit(event) {
+    event.preventDefault();
+    const change = instruction.trim();
+    if (!change || generating) return;
+    onUpdate(item.id, change, speed);
+    setInstruction("");
+    setEditing(false);
+  }
+
+  return (
+    <div className="canvas-item-toolbar">
+      <div className="canvas-item-meta">
+        <span className="canvas-item-type">{typeLabel}</span>
+        {generating && <span className="canvas-item-state">regenerating…</span>}
+        {item.status === "failed" && <span className="canvas-item-state failed">failed</span>}
+      </div>
+      <div className="canvas-item-actions">
+        {canUpdate && (
+          <button
+            type="button"
+            className="canvas-icon-action"
+            onClick={() => setEditing((open) => !open)}
+            aria-label={`Edit ${item.title || typeLabel}`}
+            aria-expanded={editing}
+            disabled={generating}
+          >
+            <Pencil size={15} aria-hidden="true" />
+            <span>Edit</span>
+          </button>
+        )}
+        <CanvasDownloadMenu item={item} />
+      </div>
+      {editing && canUpdate && (
+        <form className="canvas-edit-form" onSubmit={applyEdit}>
+          <label className="sr-only" htmlFor={`canvas-edit-${item.id}`}>
+            Change to apply to {item.title || typeLabel}
+          </label>
+          <input
+            id={`canvas-edit-${item.id}`}
+            ref={inputRef}
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+            placeholder={`Change this ${typeLabel.toLowerCase()} (e.g. add a dark theme)`}
+          />
+          <select
+            value={speed}
+            onChange={(event) => setSpeed(event.target.value)}
+            aria-label="Update mode"
+          >
+            <option value="fast">Fast</option>
+            <option value="quality">Quality</option>
+          </select>
+          <button type="submit" disabled={!instruction.trim() || generating}>
+            Apply
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function CanvasDownloadMenu({ item }) {
+  const [busy, setBusy] = React.useState(false);
+  const ready = item.status === "ready";
+
+  function triggerDownload(filename, mimeType, content) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function downloadSource() {
+    if (busy) return;
+    const { filename, mimeType } = canvasItemDownload(item);
+    // mermaid + markdown carry their source inline; html/wireframe fetch the rendered document.
+    if (item.type === "mermaid" || item.type === "markdown") {
+      triggerDownload(filename, mimeType, item.content || "");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/canvas/${item.id}/content`, { credentials: "same-origin" });
+      if (!response.ok) throw new Error("download failed");
+      const text = await response.text();
+      triggerDownload(filename, mimeType, text);
+    } catch {
+      // best-effort
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function downloadSvg() {
+    const svg = document.querySelector(`#canvas-svg-${item.id} svg`);
+    if (!svg) return;
+    const { filename } = canvasItemDownload(item);
+    const svgName = filename.replace(/\.[^.]+$/, "") + ".svg";
+    triggerDownload(svgName, "image/svg+xml", svg.outerHTML);
+  }
+
+  if (!ready) return null;
+
+  return (
+    <div className="canvas-download-group">
+      <button
+        type="button"
+        className="canvas-icon-action"
+        onClick={downloadSource}
+        aria-label={`Download ${item.title || canvasDefaultTitle(item.type)}`}
+        disabled={busy}
+      >
+        <Download size={15} aria-hidden="true" />
+        <span>Download</span>
+      </button>
+      {item.type === "mermaid" && (
+        <button
+          type="button"
+          className="canvas-icon-action subtle"
+          onClick={downloadSvg}
+          aria-label={`Download ${item.title || "diagram"} as SVG`}
+        >
+          <Download size={15} aria-hidden="true" />
+          <span>SVG</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CanvasItemView({ item }) {
+  if (item.status === "generating") {
+    return (
+      <div className="canvas-skeleton">
+        <div className="canvas-spinner" />
+        <p>{item.title || "Canvas item"} - generating...</p>
+      </div>
+    );
+  }
+
+  if (item.status === "failed") {
+    return (
+      <div className="canvas-failed">
+        <div className="canvas-failed-head">
+          <AlertTriangle size={18} />
+          <strong>{item.title || "Canvas item"} failed</strong>
+        </div>
+        {item.error && <p className="canvas-error">{item.error}</p>}
+        {item.content && <pre className="markdown-preview">{item.content}</pre>}
+      </div>
+    );
+  }
+
+  if (item.type === "html" || item.type === "wireframe") {
+    const isWireframe = item.type === "wireframe";
+    return (
+      <div className={`prototype-stage desktop canvas-html${isWireframe ? " canvas-wireframe" : ""}`}>
+        <iframe
+          className="prototype-frame"
+          title={item.title || (isWireframe ? "Wireframe" : "Prototype")}
+          src={`/api/canvas/${item.id}/content`}
+          sandbox="allow-forms allow-modals allow-popups allow-scripts"
+        />
+      </div>
+    );
+  }
+
+  if (item.type === "mermaid") {
+    return <CanvasMermaid item={item} />;
+  }
+
+  return <CanvasMarkdown item={item} />;
+}
+
+function CanvasMermaid({ item }) {
+  const containerRef = React.useRef(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const node = containerRef.current;
+    if (!node) return undefined;
+    node.innerHTML = "";
+
+    renderMermaidSource(item.content || "", `canvas-${item.id}`)
+      .then((svg) => {
+        if (cancelled || !containerRef.current) return;
+        containerRef.current.innerHTML = DOMPurify.sanitize(svg, {
+          USE_PROFILES: { svg: true, svgFilters: true }
+        });
+      })
+      .catch(() => {
+        if (cancelled || !containerRef.current) return;
+        containerRef.current.innerHTML = "";
+        const pre = document.createElement("pre");
+        pre.className = "markdown-preview";
+        pre.textContent = item.content || "Unable to render diagram.";
+        containerRef.current.appendChild(pre);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [item.id, item.content]);
+
+  return <div className="canvas-mermaid" id={`canvas-svg-${item.id}`} ref={containerRef} />;
+}
+
+function CanvasMarkdown({ item }) {
+  const articleRef = React.useRef(null);
+  const renderedHtml = React.useMemo(() => renderArtifactHtml(item.content || ""), [item.content]);
+
+  React.useEffect(() => {
+    if (!articleRef.current) return;
+    const nodes = articleRef.current.querySelectorAll(".mermaid");
+    if (!nodes.length) return;
+    renderMermaid(nodes).catch(() => {});
+  }, [renderedHtml]);
+
+  return <article className="rendered-artifact canvas-markdown" ref={articleRef} dangerouslySetInnerHTML={{ __html: renderedHtml }} />;
+}
+
 function SoundWave({ active, speaking }) {
   return (
     <div className={speaking ? "sound-wave speaking" : active ? "sound-wave active" : "sound-wave"}>
@@ -1591,6 +2783,11 @@ function renderArtifactHtml(markdown = "") {
 }
 
 async function renderMermaid(nodes) {
+  const mermaid = await loadMermaid();
+  await mermaid.run({ nodes });
+}
+
+async function loadMermaid() {
   if (!mermaidLoader) {
     mermaidLoader = import("mermaid").then((module) => {
       const mermaid = module.default;
@@ -1610,9 +2807,43 @@ async function renderMermaid(nodes) {
       return mermaid;
     });
   }
+  return mermaidLoader;
+}
 
-  const mermaid = await mermaidLoader;
-  await mermaid.run({ nodes });
+async function renderMermaidSource(source, id) {
+  const mermaid = await loadMermaid();
+  const safeId = `mmd-${String(id || "").replace(/[^a-zA-Z0-9_-]/g, "")}-${Math.random().toString(16).slice(2)}`;
+  const { svg } = await mermaid.render(safeId, String(source || ""));
+  return svg;
+}
+
+function composerPlaceholder(type) {
+  if (type === "html") return "Describe a UI to prototype";
+  if (type === "wireframe") return "Describe a layout to wireframe";
+  return "Describe a diagram to draw";
+}
+
+function composerSubmitLabel(type) {
+  if (type === "html") return "Ask Cooper to prototype this";
+  if (type === "wireframe") return "Ask Cooper to wireframe this";
+  return "Ask Cooper to diagram this";
+}
+
+function canvasDefaultTitle(type) {
+  if (type === "html") return "Prototype";
+  if (type === "wireframe") return "Wireframe";
+  if (type === "markdown") return "Note";
+  return "Diagram";
+}
+
+function normalizeSpeed(value) {
+  return value === "quality" ? "quality" : "fast";
+}
+
+function deriveTitle(text = "") {
+  const clean = String(text).trim().replace(/\s+/g, " ");
+  if (!clean) return "Canvas item";
+  return clean.length > 48 ? `${clean.slice(0, 45)}...` : clean;
 }
 
 function normalizeTime(value = "") {
@@ -1702,6 +2933,14 @@ function formatDuration(seconds = 0) {
 
 function uid() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function parseSseData(data) {
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
 }
 
 createRoot(document.getElementById("root")).render(<App />);

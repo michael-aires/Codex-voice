@@ -6,6 +6,8 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { extractHtmlDocument, sanitizeMermaid, isValidMermaid, pickCanvasLane, buildUpdatePrompt } from "./src/lib/canvas.js";
+import { pickIngestMode } from "./src/lib/knowledge.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === "production";
@@ -18,6 +20,12 @@ const fallbackWorkModel = process.env.COOPER_FALLBACK_WORK_MODEL || "";
 const jobDelayMs = Number(process.env.COOPER_JOB_DELAY_MS || 15000);
 const jobMaxAttempts = Number(process.env.COOPER_JOB_MAX_ATTEMPTS || 3);
 const jobMaxOutputTokens = Number(process.env.COOPER_JOB_MAX_OUTPUT_TOKENS || 6500);
+const fastModel = process.env.COOPER_FAST_MODEL || workModel;
+const fastMaxConcurrency = Number(process.env.COOPER_FAST_CONCURRENCY || 2);
+const fastMaxOutputTokens = Number(process.env.COOPER_FAST_MAX_OUTPUT_TOKENS || 2500);
+const canvasKinds = new Set(["canvas_mermaid", "canvas_html", "canvas_wireframe"]);
+const kbInlineMax = Number(process.env.COOPER_KB_INLINE_MAX_CHARS || 6000);
+const openAiBase = "https://api.openai.com/v1";
 const workModels = [workModel, fallbackWorkModel].filter((model, index, list) => model && list.indexOf(model) === index);
 const appPassword = process.env.COOPER_APP_PASSWORD || "";
 const sessionSecret = process.env.COOPER_SESSION_SECRET || appPassword;
@@ -28,6 +36,8 @@ const app = express();
 const eventClients = new Set();
 let writeQueue = Promise.resolve();
 let workerActive = false;
+let fastWorkerActive = false;
+let fastInFlight = 0;
 let lastGenerationAt = 0;
 
 app.use(express.text({ type: ["application/sdp", "text/plain"], limit: "2mb" }));
@@ -111,6 +121,17 @@ Be calm, direct, commercially aware, and technically grounded. Prefer crisp reco
 # Tools
 Use check_calendar(date, time) when the user asks about availability or scheduling.
 Ask for a missing date or time before calling the tool.
+
+You can put visuals on the shared canvas that Michael is watching while you talk:
+- create_diagram(title, description, diagram_type?, speed?) draws a mermaid diagram for architectures, workflows, flows, and sequences.
+- create_prototype(title, brief, speed?) builds a polished, high-fidelity HTML UI prototype with real sample content.
+- create_wireframe(title, brief, speed?) builds a low-fidelity, grayscale wireframe to sketch layout and structure before any visual polish.
+- update_canvas_item(item_id, instruction, speed?) iterates on an existing canvas item in place, applying a change while keeping the same tab.
+Each accepts speed "fast" or "quality". Default to "fast" for the live flow so the visual appears in a few seconds. Use "quality" only when Michael says to take your time or make it production-grade; quality runs a slower, multi-step refine on the paced lane. Call these whenever a picture would help, keep talking, and briefly mention that the visual will appear on the canvas. You do not need to wait for the result before continuing the conversation.
+
+You have a knowledge base for this call. Michael can add context (pasted notes, docs, or files) at any time, before or during the call.
+- Use search_knowledge(query) to look something up in that knowledge base when a question depends on context Michael has provided. Briefly cite what you found and answer from it.
+- Small notes are injected directly into our conversation; larger documents are indexed and retrieved on demand via search_knowledge.
 `;
 
 const baseSession = {
@@ -397,6 +418,232 @@ app.get("/api/artifacts/:id/content", async (req, res) => {
   }
 });
 
+app.post("/api/calls/:id/canvas", async (req, res) => {
+  const type = req.body?.type === "html"
+    ? "html"
+    : req.body?.type === "wireframe"
+      ? "wireframe"
+      : req.body?.type === "mermaid"
+        ? "mermaid"
+        : null;
+  const brief = cleanText(req.body?.brief);
+  const title = cleanText(req.body?.title);
+  const speed = req.body?.speed === "quality" ? "quality" : "fast";
+
+  if (!type) {
+    res.status(400).json({ error: "type must be \"mermaid\", \"html\", or \"wireframe\"." });
+    return;
+  }
+  if (!brief) {
+    res.status(400).json({ error: "brief is required." });
+    return;
+  }
+
+  const source = req.body?.source === "in_call_tool" ? "in_call_tool" : "manual";
+  const result = await enqueueCanvasJob(req.params.id, { type, brief, title, speed, source });
+
+  if (!result.ok) {
+    res.status(result.status || 400).json({ error: result.error });
+    return;
+  }
+
+  broadcastEvent("canvas.item.created", result.item);
+  res.status(201).json({ item: result.item });
+});
+
+app.post("/api/calls/:id/canvas/:itemId/update", async (req, res) => {
+  const instruction = cleanText(req.body?.instruction);
+  const speed = req.body?.speed === "quality" ? "quality" : req.body?.speed === "fast" ? "fast" : undefined;
+
+  if (!instruction) {
+    res.status(400).json({ error: "instruction is required." });
+    return;
+  }
+
+  const result = await enqueueCanvasUpdateJob(req.params.id, req.params.itemId, { instruction, speed });
+
+  if (!result.ok) {
+    res.status(result.status || 400).json({ error: result.error });
+    return;
+  }
+
+  broadcastEvent("canvas.item.updated", result.item);
+  res.status(202).json({ item: result.item });
+});
+
+app.get("/api/canvas/:id/content", async (req, res) => {
+  const db = await readDb();
+  let item = null;
+  for (const call of db.calls) {
+    const found = (call.canvasItems || []).find((entry) => entry.id === req.params.id);
+    if (found) {
+      item = found;
+      break;
+    }
+  }
+
+  if (!item) {
+    res.status(404).type("text/plain").send("Canvas item not found.");
+    return;
+  }
+
+  if (item.type === "html" || item.type === "wireframe") {
+    try {
+      const content = await readFile(join(artifactsDir, `${item.id}.html`), "utf8");
+      res.type("text/html").send(content);
+    } catch {
+      res.status(404).type("text/plain").send("Canvas file not found.");
+    }
+    return;
+  }
+
+  res.type("text/plain").send(item.content || "");
+});
+
+app.post("/api/calls/:id/knowledge", async (req, res) => {
+  const callId = req.params.id;
+  const text = cleanText(req.body?.text);
+  const name = cleanText(req.body?.name) || "Context";
+  const overrideMode = req.body?.mode === "prompt" || req.body?.mode === "indexed" ? req.body.mode : undefined;
+
+  if (!text) {
+    res.status(400).json({ error: "text is required." });
+    return;
+  }
+
+  const db = await readDb();
+  const call = db.calls.find((item) => item.id === callId);
+  if (!call) {
+    res.status(404).json({ error: "Call not found." });
+    return;
+  }
+
+  const chars = text.length;
+  let mode = pickIngestMode(chars, overrideMode, kbInlineMax);
+  const now = new Date().toISOString();
+  const entryId = randomUUID();
+
+  let fileId = null;
+  let vectorStoreId = call.vectorStoreId || null;
+  let error = null;
+
+  if (mode === "indexed") {
+    try {
+      const indexed = await indexKnowledgeEntry({ name, text, vectorStoreId });
+      fileId = indexed.fileId;
+      vectorStoreId = indexed.vectorStoreId;
+    } catch (vectorError) {
+      // RESILIENCE: never fail the request for a vector-store hiccup.
+      console.error("Knowledge indexing failed, falling back to prompt mode:", vectorError);
+      mode = "prompt";
+      fileId = null;
+      vectorStoreId = call.vectorStoreId || null;
+      error = vectorError?.message || "Indexing failed; stored as injected context instead.";
+    }
+  }
+
+  const entry = {
+    id: entryId,
+    callId,
+    name,
+    mode,
+    text,
+    chars,
+    fileId,
+    vectorStoreId: mode === "indexed" ? vectorStoreId : null,
+    status: "ready",
+    error,
+    createdAt: now
+  };
+
+  await updateDb((next) => {
+    if (!Array.isArray(next.knowledge)) next.knowledge = [];
+    next.knowledge.push(entry);
+    const nextCall = next.calls.find((item) => item.id === callId);
+    if (nextCall && mode === "indexed" && vectorStoreId) {
+      nextCall.vectorStoreId = vectorStoreId;
+      nextCall.updatedAt = now;
+    }
+  });
+
+  broadcastEvent("knowledge.updated", { callId });
+  res.status(201).json({ entry: publicKnowledgeEntry(entry, true) });
+});
+
+app.get("/api/calls/:id/knowledge", async (req, res) => {
+  const db = await readDb();
+  const call = db.calls.find((item) => item.id === req.params.id);
+  if (!call) {
+    res.status(404).json({ error: "Call not found." });
+    return;
+  }
+  const includeText = req.query?.full === "1" || req.query?.full === "true";
+  const entries = (db.knowledge || [])
+    .filter((entry) => entry.callId === req.params.id)
+    .map((entry) => publicKnowledgeEntry(entry, includeText));
+  res.json({ entries });
+});
+
+app.delete("/api/calls/:id/knowledge/:entryId", async (req, res) => {
+  const db = await readDb();
+  const entry = (db.knowledge || []).find(
+    (item) => item.id === req.params.entryId && item.callId === req.params.id
+  );
+  if (!entry) {
+    res.status(404).json({ error: "Knowledge entry not found." });
+    return;
+  }
+
+  // Best-effort removal from the vector store. Never fail the request on error.
+  if (entry.vectorStoreId && entry.fileId) {
+    try {
+      await openAiFetch(`/vector_stores/${entry.vectorStoreId}/files/${entry.fileId}`, {
+        method: "DELETE"
+      });
+    } catch (removeError) {
+      console.error("Knowledge vector-store removal failed (ignored):", removeError);
+    }
+  }
+
+  await updateDb((next) => {
+    next.knowledge = (next.knowledge || []).filter((item) => item.id !== req.params.entryId);
+  });
+
+  broadcastEvent("knowledge.updated", { callId: req.params.id });
+  res.json({ ok: true });
+});
+
+app.post("/api/calls/:id/knowledge/search", async (req, res) => {
+  const callId = req.params.id;
+  const query = cleanText(req.body?.query);
+  if (!query) {
+    res.status(400).json({ error: "query is required." });
+    return;
+  }
+
+  const db = await readDb();
+  const call = db.calls.find((item) => item.id === callId);
+  if (!call) {
+    res.status(404).json({ error: "Call not found." });
+    return;
+  }
+
+  const entries = (db.knowledge || []).filter((entry) => entry.callId === callId);
+  const promptResults = searchPromptEntries(entries, query);
+
+  let vectorResults = [];
+  if (call.vectorStoreId) {
+    try {
+      vectorResults = await searchVectorStore(call.vectorStoreId, query);
+    } catch (searchError) {
+      // RESILIENCE: degrade to prompt-mode-only results.
+      console.error("Vector store search failed, returning prompt-mode results only:", searchError);
+    }
+  }
+
+  res.json({ results: [...vectorResults, ...promptResults].slice(0, 8) });
+});
+
 app.post("/api/jobs/:id/retry", async (req, res) => {
   const result = await updateDb((db) => {
     const job = db.jobs.find((item) => item.id === req.params.id);
@@ -417,7 +664,11 @@ app.post("/api/jobs/:id/retry", async (req, res) => {
     res.status(404).json({ error: "Job not found." });
     return;
   }
-  queueWorker();
+  if (canvasKinds.has(result.kind)) {
+    queueFastWorker();
+  } else {
+    queueWorker();
+  }
   res.json({ job: publicJob(result) });
 });
 
@@ -476,6 +727,639 @@ function queueWorker() {
   }
 }
 
+function publicCanvasItem(item) {
+  if (!item) return null;
+  return {
+    id: item.id,
+    callId: item.callId,
+    type: item.type,
+    title: item.title,
+    status: item.status,
+    content: item.content || "",
+    file: item.file || null,
+    source: item.source,
+    speed: item.speed,
+    jobId: item.jobId || null,
+    error: item.error || null,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt
+  };
+}
+
+async function enqueueCanvasJob(callId, { type, brief, title, speed = "fast", source = "manual" }) {
+  const now = new Date().toISOString();
+  const itemId = randomUUID();
+  const jobId = randomUUID();
+  const safeTitle = title || (type === "html" ? "Prototype" : type === "wireframe" ? "Wireframe" : "Diagram");
+  const kind = type === "html" ? "canvas_html" : type === "wireframe" ? "canvas_wireframe" : "canvas_mermaid";
+  const lane = pickCanvasLane(speed);
+
+  const created = await updateDb((db) => {
+    const call = db.calls.find((entry) => entry.id === callId);
+    if (!call) return { error: "Call not found.", status: 404 };
+    if (!Array.isArray(call.canvasItems)) call.canvasItems = [];
+
+    const item = {
+      id: itemId,
+      callId,
+      type,
+      title: safeTitle,
+      status: "generating",
+      content: "",
+      file: null,
+      source,
+      speed,
+      jobId,
+      error: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    call.canvasItems.push(item);
+
+    const job = {
+      id: jobId,
+      callId,
+      kind,
+      lane,
+      itemId,
+      type,
+      brief,
+      title: safeTitle,
+      intent: "create",
+      status: "queued",
+      attempts: 0,
+      error: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    db.jobs.push(job);
+
+    call.updatedAt = now;
+    return { item };
+  });
+
+  if (created?.error) {
+    return { ok: false, error: created.error, status: created.status };
+  }
+
+  if (lane === "quality") {
+    queueWorker();
+  } else {
+    queueFastWorker();
+  }
+  return { ok: true, item: created.item };
+}
+
+// Enqueue an in-place update of an existing canvas item: regenerate its content
+// from the existing content + instruction, preserving id/type. Routes to the
+// fast or quality lane based on the speed hint.
+async function enqueueCanvasUpdateJob(callId, itemId, { instruction, speed }) {
+  const now = new Date().toISOString();
+  const jobId = randomUUID();
+  const change = cleanText(instruction);
+
+  if (!change) {
+    return { ok: false, error: "instruction is required.", status: 400 };
+  }
+
+  // Look up the item once (outside the write) so we can read any existing
+  // file-backed content (html/wireframe) before regenerating.
+  const snapshot = await readDb();
+  const snapshotCall = snapshot.calls.find((entry) => entry.id === callId);
+  if (!snapshotCall) return { ok: false, error: "Call not found.", status: 404 };
+  const snapshotItem = (snapshotCall.canvasItems || []).find((entry) => entry.id === itemId);
+  if (!snapshotItem) return { ok: false, error: "Canvas item not found.", status: 404 };
+
+  let priorContent = snapshotItem.content || "";
+  if ((snapshotItem.type === "html" || snapshotItem.type === "wireframe")) {
+    try {
+      priorContent = await readFile(join(artifactsDir, `${itemId}.html`), "utf8");
+    } catch {
+      priorContent = snapshotItem.content || "";
+    }
+  }
+
+  const created = await updateDb((db) => {
+    const call = db.calls.find((entry) => entry.id === callId);
+    if (!call) return { error: "Call not found.", status: 404 };
+    const item = (call.canvasItems || []).find((entry) => entry.id === itemId);
+    if (!item) return { error: "Canvas item not found.", status: 404 };
+
+    const useSpeed = speed === "quality" ? "quality" : speed === "fast" ? "fast" : item.speed || "fast";
+    const lane = pickCanvasLane(useSpeed);
+    const kind = item.type === "html" ? "canvas_html" : item.type === "wireframe" ? "canvas_wireframe" : "canvas_mermaid";
+
+    let existingContent = priorContent;
+    item.status = "generating";
+    item.error = null;
+    item.jobId = jobId;
+    item.speed = useSpeed;
+    item.updatedAt = now;
+
+    const job = {
+      id: jobId,
+      callId,
+      kind,
+      lane,
+      itemId,
+      type: item.type,
+      brief: change,
+      instruction: change,
+      existingContent,
+      existingFile: item.file || null,
+      title: item.title,
+      intent: "update",
+      status: "queued",
+      attempts: 0,
+      error: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    db.jobs.push(job);
+    call.updatedAt = now;
+    return { item: publicCanvasItem(item), lane };
+  });
+
+  if (created?.error) {
+    return { ok: false, error: created.error, status: created.status };
+  }
+
+  if (created.lane === "quality") {
+    queueWorker();
+  } else {
+    queueFastWorker();
+  }
+  return { ok: true, item: created.item };
+}
+
+function queueFastWorker() {
+  if (!fastWorkerActive) {
+    setTimeout(processFastQueue, 0);
+  }
+}
+
+async function processFastQueue() {
+  if (fastWorkerActive) return;
+  fastWorkerActive = true;
+
+  try {
+    while (true) {
+      if (fastInFlight >= fastMaxConcurrency) break;
+
+      const db = await readDb();
+      const queued = db.jobs.filter((item) => item.status === "queued" && canvasKinds.has(item.kind) && item.lane !== "quality");
+      const slots = Math.max(0, fastMaxConcurrency - fastInFlight);
+      const batch = queued.slice(0, slots);
+      if (!batch.length) break;
+
+      // Claim the batch, then run concurrently.
+      const claimed = [];
+      for (const job of batch) {
+        const ok = await updateDb((next) => {
+          const target = next.jobs.find((item) => item.id === job.id && item.status === "queued");
+          if (!target) return false;
+          target.status = "running";
+          target.attempts = Number(target.attempts || 0) + 1;
+          target.updatedAt = new Date().toISOString();
+          return true;
+        });
+        if (ok) claimed.push(job.id);
+      }
+
+      if (!claimed.length) break;
+
+      for (const jobId of claimed) {
+        fastInFlight += 1;
+        runCanvasJob(jobId)
+          .catch((error) => console.error("Canvas job error:", error))
+          .finally(() => {
+            fastInFlight -= 1;
+            queueFastWorker();
+          });
+      }
+    }
+  } finally {
+    fastWorkerActive = false;
+  }
+}
+
+async function runCanvasJob(jobId) {
+  const db = await readDb();
+  const job = db.jobs.find((item) => item.id === jobId);
+  if (!job) return;
+
+  try {
+    if (job.type === "mermaid") {
+      await runMermaidCanvasJob(job);
+    } else if (job.type === "wireframe") {
+      await runHtmlCanvasJob(job, wireframeInstruction());
+    } else {
+      await runHtmlCanvasJob(job, prototypeInstruction());
+    }
+  } catch (error) {
+    await markCanvasItem(job.callId, job.itemId, (item) => {
+      item.status = "failed";
+      item.error = error.message || "Canvas generation failed.";
+    }, (j) => {
+      j.status = "failed";
+      j.error = error.message || "Canvas generation failed.";
+    });
+  }
+}
+
+async function runMermaidCanvasJob(job) {
+  const baseInput = buildCanvasInput(job, mermaidInstruction());
+  let raw = await createFastResponse(baseInput, { model: fastModel, outputType: "text" });
+  let mermaid = sanitizeMermaid(raw);
+
+  if (!isValidMermaid(mermaid)) {
+    const retryInput = buildCanvasInput(
+      job,
+      `${mermaidInstruction()}\n\nThe previous output was not valid mermaid, fix it, return only mermaid source.\n\nPrevious output:\n${raw}`,
+      { suppressUpdate: true }
+    );
+    raw = await createFastResponse(retryInput, { model: fastModel, outputType: "text" });
+    mermaid = sanitizeMermaid(raw);
+  }
+
+  const valid = isValidMermaid(mermaid);
+  await markCanvasItem(job.callId, job.itemId, (item) => {
+    item.content = valid ? mermaid : (mermaid || cleanText(raw));
+    item.file = null;
+    item.status = valid ? "ready" : "failed";
+    item.error = valid ? null : "Model did not return valid mermaid source.";
+  }, (j) => {
+    j.status = valid ? "completed" : "failed";
+    j.error = valid ? null : "Model did not return valid mermaid source.";
+  });
+}
+
+async function runHtmlCanvasJob(job, instruction = prototypeInstruction()) {
+  const input = buildCanvasInput(job, instruction);
+  const raw = await createFastResponse(input, { model: fastModel, outputType: "html" });
+  const html = normalizeHtml(extractHtmlDocument(raw) || prototypeFallbackHtml(job.title, raw));
+
+  await writeFile(join(artifactsDir, `${job.itemId}.html`), html, "utf8");
+
+  await markCanvasItem(job.callId, job.itemId, (item) => {
+    item.content = "";
+    item.file = `data/artifacts/${item.id}.html`;
+    item.status = "ready";
+    item.error = null;
+  }, (j) => {
+    j.status = "completed";
+    j.error = null;
+  });
+}
+
+// QUALITY LANE: multi-step refine on the paced worker using createResponse with
+// workModel. Marks the job running, runs 2 model steps, validates mermaid the
+// same way (validate + 1 retry), writes content/file, marks the item ready, and
+// broadcasts canvas.item.updated. Honors the inter-call pacing via jobDelayMs.
+async function runQualityCanvasJob(jobId) {
+  await updateDb((db) => {
+    const job = db.jobs.find((item) => item.id === jobId);
+    if (job) {
+      job.status = "running";
+      job.progress = "Starting quality canvas job.";
+      job.attempts = Number(job.attempts || 0) + 1;
+      job.updatedAt = new Date().toISOString();
+    }
+  });
+
+  const ctx = await readDb();
+  const ctxJob = ctx.jobs.find((item) => item.id === jobId);
+  const callId = ctxJob?.callId || null;
+  const itemId = ctxJob?.itemId || null;
+
+  try {
+    if (!ctxJob) throw new Error("Job context disappeared.");
+
+    if (ctxJob.type === "mermaid") {
+      await runQualityMermaidJob(ctxJob);
+    } else {
+      const instruction = ctxJob.type === "wireframe" ? wireframeInstruction() : prototypeInstruction();
+      await runQualityHtmlJob(ctxJob, instruction);
+    }
+  } catch (error) {
+    await markCanvasItem(callId, itemId, (item) => {
+      item.status = "failed";
+      item.error = error.message || "Canvas generation failed.";
+    }, (j) => {
+      j.status = "failed";
+      j.error = error.message || "Canvas generation failed.";
+    });
+  }
+}
+
+function qualityBaseContext(job) {
+  if (job.intent === "update") {
+    return buildUpdatePrompt(job.type, job.existingContent || "", job.instruction || job.brief);
+  }
+  return `Brief:\n${job.brief}`;
+}
+
+async function runQualityMermaidJob(job) {
+  // Step 1: outline the structure / nodes.
+  const planInput = buildQualityInput(
+    job,
+    "Plan the diagram before drawing it. Outline the key nodes, groupings, and the relationships between them as a short bulleted list. Do not output mermaid yet."
+  );
+  const plan = await createResponse(planInput, { attempt: 1, outputType: "markdown" });
+  lastGenerationAt = Date.now();
+  await wait(jobDelayMs);
+
+  // Step 2: produce final valid mermaid from the plan.
+  const finalInput = buildQualityInput(
+    job,
+    `${mermaidInstruction()}\n\nUse this structure plan you produced:\n${plan}`
+  );
+  let raw = await createResponse(finalInput, { attempt: 1, outputType: "text" });
+  lastGenerationAt = Date.now();
+  let mermaid = sanitizeMermaid(raw);
+
+  if (!isValidMermaid(mermaid)) {
+    await wait(jobDelayMs);
+    const retryInput = buildQualityInput(
+      job,
+      `${mermaidInstruction()}\n\nThe previous output was not valid mermaid, fix it, return only mermaid source.\n\nPrevious output:\n${raw}`
+    );
+    raw = await createResponse(retryInput, { attempt: 1, outputType: "text" });
+    lastGenerationAt = Date.now();
+    mermaid = sanitizeMermaid(raw);
+  }
+
+  const valid = isValidMermaid(mermaid);
+  await markCanvasItem(job.callId, job.itemId, (item) => {
+    item.content = valid ? mermaid : (mermaid || cleanText(raw));
+    item.file = null;
+    item.status = valid ? "ready" : "failed";
+    item.error = valid ? null : "Model did not return valid mermaid source.";
+  }, (j) => {
+    j.status = valid ? "completed" : "failed";
+    j.error = valid ? null : "Model did not return valid mermaid source.";
+    j.completedAt = valid ? new Date().toISOString() : j.completedAt;
+  });
+}
+
+async function runQualityHtmlJob(job, instruction) {
+  // Step 1: plan layout + content.
+  const planInput = buildQualityInput(
+    job,
+    "First, plan this build: define the layout structure, the primary sections, the content hierarchy, the sample content, and any key interactive states. Output a concise plan only, no HTML yet."
+  );
+  const plan = await createResponse(planInput, { attempt: 1, outputType: "markdown" });
+  lastGenerationAt = Date.now();
+  await wait(jobDelayMs);
+
+  // Step 2: produce the complete standalone document from the plan.
+  const finalInput = buildQualityInput(
+    job,
+    `${instruction}\n\nUse this layout and content plan you produced:\n${plan}`
+  );
+  const raw = await createResponse(finalInput, { attempt: 1, outputType: "html" });
+  lastGenerationAt = Date.now();
+  const html = normalizeHtml(extractHtmlDocument(raw) || prototypeFallbackHtml(job.title, raw));
+
+  await writeFile(join(artifactsDir, `${job.itemId}.html`), html, "utf8");
+
+  await markCanvasItem(job.callId, job.itemId, (item) => {
+    item.content = "";
+    item.file = `data/artifacts/${item.id}.html`;
+    item.status = "ready";
+    item.error = null;
+  }, (j) => {
+    j.status = "completed";
+    j.error = null;
+    j.completedAt = new Date().toISOString();
+  });
+}
+
+function buildQualityInput(job, instruction) {
+  return [
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: `Title: ${job.title}\n\n${qualityBaseContext(job)}\n\n${instruction}`
+        }
+      ]
+    }
+  ];
+}
+
+function mermaidInstruction() {
+  return "Return ONLY valid mermaid diagram source code. No markdown code fences, no prose, no explanation. Use graph/flowchart/sequence/erDiagram as appropriate. Lay it out clearly top-down or left-right, group related nodes sensibly, and use concise, readable labels.";
+}
+
+function prototypeInstruction() {
+  return "Build a complete, modern, high-fidelity standalone HTML prototype with inline CSS and small inline JavaScript only. Use a cohesive modern design system: a restrained color palette, a consistent spacing scale, a system font stack, clear visual hierarchy, and realistic sample content (real-looking copy, names, and data rather than lorem ipsum). Mobile-first with responsive desktop expansion. No external assets, no external scripts, no markdown fences. Return only the full HTML document starting with <!doctype html>.";
+}
+
+function wireframeInstruction() {
+  return "Produce a complete standalone HTML wireframe: grayscale, boxy, placeholder text and gray blocks for images, visible layout structure, a consistent spacing scale, system font, NO color theming, NO real content polish. Inline CSS only, no external assets, no markdown fences, start with <!doctype html>.";
+}
+
+function buildCanvasInput(job, instruction, { suppressUpdate = false } = {}) {
+  let text;
+  if (job.intent === "update" && !suppressUpdate) {
+    const updatePrompt = buildUpdatePrompt(job.type, job.existingContent || "", job.instruction || job.brief);
+    text = `Title: ${job.title}\n\n${updatePrompt}\n\n${instruction}`;
+  } else {
+    text = `Title: ${job.title}\n\nBrief:\n${job.brief}\n\n${instruction}`;
+  }
+  return [
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text
+        }
+      ]
+    }
+  ];
+}
+
+async function markCanvasItem(callId, itemId, mutateItem, mutateJob) {
+  let publicItem = null;
+  await updateDb((db) => {
+    const call = db.calls.find((entry) => entry.id === callId);
+    const item = call?.canvasItems?.find((entry) => entry.id === itemId);
+    if (item) {
+      mutateItem(item);
+      item.updatedAt = new Date().toISOString();
+      publicItem = publicCanvasItem(item);
+    }
+    if (call) call.updatedAt = new Date().toISOString();
+    if (mutateJob) {
+      const activeJobId = item?.jobId;
+      const job = (activeJobId && db.jobs.find((entry) => entry.id === activeJobId))
+        || db.jobs.find((entry) => entry.itemId === itemId);
+      if (job) {
+        mutateJob(job);
+        job.updatedAt = new Date().toISOString();
+      }
+    }
+  });
+  if (publicItem) broadcastEvent("canvas.item.updated", publicItem);
+  return publicItem;
+}
+
+async function createFastResponse(input, { model = fastModel, outputType = "text" } = {}) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("Missing OPENAI_API_KEY on the server.");
+  }
+
+  const instructions = outputType === "html"
+    ? "You are Cooper, Michael's AIRES CTO/CPO executive assistant. Produce a complete standalone HTML document with inline CSS and small inline JavaScript. Use no external assets, external scripts, hidden reasoning, or markdown fences."
+    : "You are Cooper, Michael's AIRES CTO/CPO executive assistant. Follow the instruction exactly and return only the requested content with no extra prose.";
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json",
+      "OpenAI-Safety-Identifier": "cooper-local-dev"
+    },
+    body: JSON.stringify({
+      model,
+      instructions,
+      input,
+      reasoning: { effort: "low" },
+      max_output_tokens: fastMaxOutputTokens,
+      text: { format: { type: "text" } }
+    })
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `OpenAI Responses API failed with ${response.status}.`);
+  }
+
+  return extractOutputText(payload);
+}
+
+function publicKnowledgeEntry(entry, includeText = false) {
+  const base = {
+    id: entry.id,
+    callId: entry.callId,
+    name: entry.name,
+    mode: entry.mode,
+    chars: entry.chars,
+    status: entry.status,
+    error: entry.error || null,
+    createdAt: entry.createdAt
+  };
+  if (includeText) base.text = entry.text;
+  return base;
+}
+
+function searchPromptEntries(entries, query) {
+  const needle = query.toLowerCase();
+  const terms = needle.split(/\s+/).filter(Boolean);
+  return entries
+    .filter((entry) => entry.mode === "prompt" && typeof entry.text === "string")
+    .map((entry) => {
+      const haystack = entry.text.toLowerCase();
+      const matches = terms.filter((term) => haystack.includes(term)).length;
+      const direct = haystack.includes(needle);
+      const score = direct ? 1 : terms.length ? matches / terms.length : 0;
+      return { entry, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((item) => ({
+      text: item.entry.text.length > 2000 ? `${item.entry.text.slice(0, 2000)}...` : item.entry.text,
+      score: item.score,
+      source: item.entry.name
+    }));
+}
+
+async function openAiFetch(path, { method = "GET", headers = {}, body } = {}) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("Missing OPENAI_API_KEY on the server.");
+  }
+  const response = await fetch(`${openAiBase}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "OpenAI-Beta": "assistants=v2",
+      "OpenAI-Safety-Identifier": "cooper-local-dev",
+      ...headers
+    },
+    body
+  });
+  return response;
+}
+
+async function openAiJson(path, options = {}) {
+  const response = await openAiFetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `OpenAI API ${path} failed with ${response.status}.`);
+  }
+  return payload;
+}
+
+async function indexKnowledgeEntry({ name, text, vectorStoreId }) {
+  // 1. Upload the text as a file (purpose "assistants").
+  const safeName = (name || "context").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60) || "context";
+  const fileName = safeName.endsWith(".txt") ? safeName : `${safeName}.txt`;
+  const fd = new FormData();
+  fd.set("purpose", "assistants");
+  fd.set("file", new Blob([text], { type: "text/plain" }), fileName);
+  const fileResponse = await openAiFetch("/files", { method: "POST", body: fd });
+  const filePayload = await fileResponse.json().catch(() => null);
+  if (!fileResponse.ok) {
+    throw new Error(filePayload?.error?.message || `OpenAI Files upload failed with ${fileResponse.status}.`);
+  }
+  const fileId = filePayload?.id;
+  if (!fileId) throw new Error("OpenAI Files upload returned no file id.");
+
+  // 2. Create the call's vector store if needed.
+  let vsId = vectorStoreId;
+  if (!vsId) {
+    const vs = await openAiJson("/vector_stores", {
+      method: "POST",
+      body: { name: `cooper-call-${Date.now()}` }
+    });
+    vsId = vs?.id;
+    if (!vsId) throw new Error("Vector store creation returned no id.");
+  }
+
+  // 3. Add the file to the vector store.
+  await openAiJson(`/vector_stores/${vsId}/files`, {
+    method: "POST",
+    body: { file_id: fileId }
+  });
+
+  return { fileId, vectorStoreId: vsId };
+}
+
+async function searchVectorStore(vectorStoreId, query) {
+  const payload = await openAiJson(`/vector_stores/${vectorStoreId}/search`, {
+    method: "POST",
+    body: { query, max_num_results: 5 }
+  });
+  const data = Array.isArray(payload?.data) ? payload.data : [];
+  return data.map((result) => {
+    const chunks = Array.isArray(result?.content)
+      ? result.content.map((part) => part?.text || "").filter(Boolean)
+      : [];
+    return {
+      text: chunks.join("\n").trim() || "",
+      score: typeof result?.score === "number" ? result.score : undefined,
+      source: result?.filename || result?.file_id || "indexed"
+    };
+  }).filter((item) => item.text);
+}
+
 async function processQueue() {
   if (workerActive) return;
   workerActive = true;
@@ -483,7 +1367,12 @@ async function processQueue() {
   try {
     while (true) {
       const db = await readDb();
-      const queued = db.jobs.filter((item) => item.status === "queued");
+      // The paced lane handles artifact jobs plus any canvas job routed to the
+      // quality lane (speed "quality").
+      const queued = db.jobs.filter((item) =>
+        item.status === "queued"
+        && (!canvasKinds.has(item.kind) || item.lane === "quality")
+      );
       const now = Date.now();
       const job = queued.find((item) => !item.retryAt || new Date(item.retryAt).getTime() <= now);
       const nextRetryAt = queued
@@ -506,7 +1395,11 @@ async function processQueue() {
         return;
       }
 
-      await runJob(job.id);
+      if (canvasKinds.has(job.kind)) {
+        await runQualityCanvasJob(job.id);
+      } else {
+        await runJob(job.id);
+      }
     }
   } finally {
     workerActive = false;
@@ -758,7 +1651,7 @@ function extractOutputText(payload) {
 async function ensureDataStore() {
   await mkdir(artifactsDir, { recursive: true });
   if (!existsSync(dbPath)) {
-    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [] }, null, 2), "utf8");
+    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], knowledge: [] }, null, 2), "utf8");
   }
 }
 
@@ -771,10 +1664,17 @@ async function readDbRaw() {
   await ensureDataStore();
   const raw = await readFile(dbPath, "utf8");
   const parsed = JSON.parse(raw || "{}");
+  const calls = Array.isArray(parsed.calls) ? parsed.calls : [];
+  calls.forEach((call) => {
+    if (!Array.isArray(call.canvasItems)) call.canvasItems = [];
+    if (!Array.isArray(call.transcript)) call.transcript = [];
+    if (!Array.isArray(call.suggestions)) call.suggestions = [];
+  });
   return {
-    calls: Array.isArray(parsed.calls) ? parsed.calls : [],
+    calls,
     artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
-    jobs: Array.isArray(parsed.jobs) ? parsed.jobs : []
+    jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
+    knowledge: Array.isArray(parsed.knowledge) ? parsed.knowledge : []
   };
 }
 
@@ -805,8 +1705,10 @@ function publicState(db) {
       jobDelayMs,
       workModel,
       fallbackWorkModel,
+      fastModel,
       jobMaxAttempts,
-      jobMaxOutputTokens
+      jobMaxOutputTokens,
+      kbInlineMax
     }
   };
 }
@@ -894,25 +1796,6 @@ function normalizeMarkdown(value) {
 
 function normalizeHtml(value) {
   return `${value.trim()}\n`;
-}
-
-function extractHtmlDocument(value) {
-  const text = cleanText(value);
-  if (!text) return "";
-
-  const fenced = [...text.matchAll(/```(?:html)?\s*([\s\S]*?)```/gi)]
-    .map((match) => cleanText(match[1]))
-    .filter((candidate) => /<html[\s>]|<!doctype html/i.test(candidate));
-  if (fenced.length) return normalizeHtml(fenced[fenced.length - 1]);
-
-  const lower = text.toLowerCase();
-  const doctypeIndex = lower.lastIndexOf("<!doctype html");
-  if (doctypeIndex >= 0) return normalizeHtml(text.slice(doctypeIndex));
-
-  const htmlIndex = lower.lastIndexOf("<html");
-  if (htmlIndex >= 0) return normalizeHtml(`<!doctype html>\n${text.slice(htmlIndex)}`);
-
-  return "";
 }
 
 function prototypeFallbackHtml(title, draft) {
@@ -1062,7 +1945,9 @@ class RetryableJobError extends Error {
 
 await ensureDataStore();
 await updateDb((db) => {
+  if (!Array.isArray(db.knowledge)) db.knowledge = [];
   db.calls.forEach((call) => {
+    if (!Array.isArray(call.canvasItems)) call.canvasItems = [];
     call.transcript = normalizeTranscript(call.transcript || []);
     const existingSuggestions = new Map((call.suggestions || []).map((suggestion) => [suggestion.kind, suggestion]));
     call.suggestions = defaultSuggestions(call.transcript.length > 0).map((suggestion) => ({
@@ -1081,14 +1966,37 @@ await updateDb((db) => {
       appendJobLog(job, job.status || "state", `Recovered existing ${job.title || "job"} in ${job.status || "unknown"} state.`);
     }
     if (job.status === "running") {
+      // Requeue any in-flight job. Canvas jobs keep their lane field so the
+      // fast lane recovers fast jobs and the paced lane recovers quality jobs.
       job.status = "queued";
       job.progress = "Recovered after restart.";
+      // Canvas jobs default to the fast lane when no lane was persisted.
+      if (canvasKinds.has(job.kind) && !job.lane) job.lane = "fast";
       appendJobLog(job, "recovered", "Server restarted while this job was running. Cooper queued it again.");
       job.updatedAt = new Date().toISOString();
     }
   });
+
+  // Recover canvas items stuck mid-generation. If an item is still
+  // "generating" but no active (queued/running) job covers it, mark it failed.
+  const activeCanvasItemIds = new Set(
+    db.jobs
+      .filter((job) => canvasKinds.has(job.kind) && (job.status === "queued" || job.status === "running"))
+      .map((job) => job.itemId)
+      .filter(Boolean)
+  );
+  db.calls.forEach((call) => {
+    (call.canvasItems || []).forEach((item) => {
+      if (item.status === "generating" && !activeCanvasItemIds.has(item.id)) {
+        item.status = "failed";
+        item.error = "Canvas generation recovered after restart; no active job remained.";
+        item.updatedAt = new Date().toISOString();
+      }
+    });
+  });
 });
 queueWorker();
+queueFastWorker();
 
 if (isProduction) {
   app.use(express.static(join(__dirname, "dist")));
