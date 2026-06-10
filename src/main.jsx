@@ -267,6 +267,7 @@ function App() {
   const activeCallRef = React.useRef(null);
   const selectedCallIdRef = React.useRef(null);
   const callStartedAtRef = React.useRef(null);
+  const pendingCallRef = React.useRef(null);
   const transcriptsRef = React.useRef([]);
   const outputTranscriptBuffersRef = React.useRef(new Map());
   const textTranscriptBuffersRef = React.useRef(new Map());
@@ -394,13 +395,13 @@ function App() {
         item: {
           type: "message",
           role: "user",
-          content: [{ type: "input_text", text: `[Canvas] ${title} is ready` }]
+          content: [{ type: "input_text", text: `[Canvas] "${title}" is ready (item_id ${item.id})` }]
         }
       });
       sendEvent({
         type: "response.create",
         response: {
-          instructions: `Briefly tell Michael the ${title} is ready on the canvas.`
+          instructions: `Briefly tell Michael the ${title} is ready on the canvas. If he asks to change it, call update_canvas_item with item_id "${item.id}".`
         }
       });
     }
@@ -486,6 +487,14 @@ function App() {
       }
     }
     if (!targetId) return;
+
+    // If context is added before a live session, remember this call so connect()
+    // reuses it (and its pre-call knowledge) instead of creating a fresh call.
+    // Skip ended calls so we never resurrect a finished one.
+    if (!activeCallRef.current?.id) {
+      const tgt = state.calls?.find((item) => item.id === targetId);
+      if (!tgt || tgt.status !== "ended") pendingCallRef.current = targetId;
+    }
 
     const body = { name, text };
     if (mode && mode !== "auto") body.mode = mode;
@@ -849,16 +858,21 @@ function App() {
         credentials: "same-origin",
         body: JSON.stringify({ type, title: safeTitle, brief, speed: safeSpeed })
       });
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || "Could not start the canvas item.");
       }
+      const itemId = payload.item?.id;
+      // Return the new item id so the model can pass it to update_canvas_item
+      // when Michael asks to revise this item later in the call.
       replyFunctionOutput(call.call_id, {
         status: "started",
+        item_id: itemId,
+        title: safeTitle,
         message:
           safeSpeed === "quality"
-            ? `Started ${safeTitle} in quality mode - it runs a slower refinement and will appear on the canvas shortly.`
-            : `Started ${safeTitle} - it will appear on the canvas in a few seconds.`
+            ? `Started "${safeTitle}" (item_id ${itemId}) in quality mode - it runs a slower refinement and will appear on the canvas shortly. Use this item_id with update_canvas_item to revise it.`
+            : `Started "${safeTitle}" (item_id ${itemId}) - it will appear on the canvas in a few seconds. Use this item_id with update_canvas_item to revise it.`
       });
       addEvent("Canvas", `${canvasDefaultTitle(type)}: ${safeTitle}${safeSpeed === "quality" ? " (quality)" : ""}`);
     } catch (error) {
@@ -1110,9 +1124,19 @@ function App() {
     setView("call");
 
     try {
-      const call = await createCall();
+      // Reuse the pre-call holder (with any knowledge added before connecting)
+      // if one exists; otherwise create a fresh call.
+      let call;
+      if (pendingCallRef.current) {
+        call = { id: pendingCallRef.current };
+        await refreshState();
+      } else {
+        call = await createCall();
+      }
+      pendingCallRef.current = null;
       activeCallRef.current = call;
       selectedCallIdRef.current = call?.id || selectedCallIdRef.current;
+      if (call?.id) setSelectedCallId(call.id);
       callStartedAtRef.current = Date.now();
       refreshKnowledge(call?.id);
 
@@ -1319,6 +1343,7 @@ function App() {
 
     activeCallRef.current = null;
     callStartedAtRef.current = null;
+    pendingCallRef.current = null;
     setConnected(false);
     setConnecting(false);
     setSpeaking(false);
