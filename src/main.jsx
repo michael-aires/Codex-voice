@@ -259,7 +259,9 @@ function App() {
   const [events, setEvents] = React.useState([]);
   const [transcripts, setTranscripts] = React.useState([]);
   const [knowledgeEntries, setKnowledgeEntries] = React.useState([]);
+  const [planLoaded, setPlanLoaded] = React.useState(false);
   const injectedKnowledgeRef = React.useRef(new Set());
+  const deepLinkHandledRef = React.useRef(false);
   const pcRef = React.useRef(null);
   const dcRef = React.useRef(null);
   const audioRef = React.useRef(null);
@@ -294,6 +296,41 @@ function App() {
       active = false;
     };
   }, []);
+
+  // Deep link: ?call=<id> opens that call pre-seeded with its injected plan.
+  // After auth resolves and the user is authenticated, preselect the call and
+  // arm pendingCallRef so the existing connect() adopts it (and its plan context).
+  React.useEffect(() => {
+    if (!authChecked || !authenticated || deepLinkHandledRef.current) return;
+    let callId = "";
+    try {
+      callId = new URLSearchParams(window.location.search).get("call") || "";
+    } catch {
+      callId = "";
+    }
+    if (!callId) return;
+    deepLinkHandledRef.current = true;
+    setSelectedCallId(callId);
+    selectedCallIdRef.current = callId;
+    // Adopt this call (and its prompt-injected plan) when connect() runs.
+    pendingCallRef.current = callId;
+    setPlanLoaded(true);
+    // A deep link is an explicit intent to open the app on this call, so skip
+    // the splash gate and land directly on the call library with the banner.
+    setEntered(true);
+    try {
+      localStorage.setItem("cooper.entered", "true");
+    } catch {
+      // best-effort
+    }
+    setView("library");
+    // Clear the query param so a refresh does not re-trigger the deep link.
+    try {
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    } catch {
+      // best-effort
+    }
+  }, [authChecked, authenticated]);
 
   const knowledgeCallId = (connected || connecting ? activeCallRef.current?.id : null) || selectedCallId || null;
 
@@ -1458,6 +1495,33 @@ function App() {
           <LogOut size={18} />
         </button>
       </header>
+
+      {planLoaded && (
+        <div className="plan-banner" role="status">
+          <div className="plan-banner-text">
+            <FileText size={20} />
+            <div>
+              <strong>Plan loaded</strong>
+              <span>Cooper has your plan as context. Start a voice chat to talk it through.</span>
+            </div>
+          </div>
+          <div className="plan-banner-actions">
+            <button
+              className="primary-action"
+              onClick={() => {
+                setPlanLoaded(false);
+                connect();
+              }}
+            >
+              <Phone size={20} />
+              <span>Start voice chat</span>
+            </button>
+            <button className="icon-button" onClick={() => setPlanLoaded(false)} aria-label="Dismiss">
+              <ArrowLeft size={18} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {view === "home" && (
         <HomeView

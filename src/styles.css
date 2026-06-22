@@ -161,6 +161,55 @@ h2 {
   margin: 0 auto 22px;
 }
 
+.plan-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  width: min(100%, 1180px);
+  margin: 0 auto 18px;
+  padding: 16px 18px;
+  border: 1px solid #e4cf86;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #fbf3d8, #fdf8e8);
+  color: #2a2410;
+}
+
+.plan-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.plan-banner-text > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plan-banner-text strong {
+  font-size: 1.05rem;
+  color: #1f1c0c;
+}
+
+.plan-banner-text span {
+  color: #6a6346;
+  font-size: 0.92rem;
+}
+
+.plan-banner-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plan-banner-actions .icon-button {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: #e0cf8e;
+}
+
 .brand-button,
 .nav button,
 .icon-button,

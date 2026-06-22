@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { extractHtmlDocument, sanitizeMermaid, isValidMermaid, pickCanvasLane, buildUpdatePrompt } from "./src/lib/canvas.js";
 import { pickIngestMode } from "./src/lib/knowledge.js";
+import { deriveTitleFromPlan, isLoopbackAddress } from "./src/lib/ingest.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === "production";
@@ -31,6 +32,7 @@ const appPassword = process.env.COOPER_APP_PASSWORD || "";
 const sessionSecret = process.env.COOPER_SESSION_SECRET || appPassword;
 const cookieName = "cooper_session";
 const sessionTtlMs = Number(process.env.COOPER_SESSION_TTL_HOURS || 168) * 60 * 60 * 1000;
+const ingestToken = process.env.COOPER_INGEST_TOKEN || "";
 
 const app = express();
 const eventClients = new Set();
@@ -42,6 +44,12 @@ let lastGenerationAt = 0;
 
 app.use(express.text({ type: ["application/sdp", "text/plain"], limit: "2mb" }));
 app.use(express.json({ limit: "4mb" }));
+
+// Unauthenticated readiness probe. Registered before the auth middleware so the
+// chat-with-plan skill can check the app is up before logging in.
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, name: "cooper" });
+});
 
 app.get("/api/auth/session", (req, res) => {
   res.json({ authenticated: isAuthenticated(req) });
@@ -82,7 +90,9 @@ app.post("/api/auth/logout", (_req, res) => {
 });
 
 app.use((req, res, next) => {
-  if (req.path.startsWith("/api/auth/")) {
+  // The plan-ingest endpoint enforces its own token + loopback checks below, so
+  // it is exempt from the shared cookie-auth gate (same as /api/auth/*).
+  if (req.path.startsWith("/api/auth/") || req.path === "/api/ingest/plan") {
     next();
     return;
   }
@@ -299,12 +309,18 @@ app.get("/api/calls/:id", async (req, res) => {
 });
 
 app.post("/api/calls", async (req, res) => {
+  const call = await createCall({ title: req.body?.title, startedAt: req.body?.startedAt });
+  res.status(201).json({ call });
+});
+
+// Shared call-creation path used by POST /api/calls and the plan-ingest endpoint.
+async function createCall({ title, startedAt } = {}) {
   const now = new Date().toISOString();
   const call = {
     id: randomUUID(),
-    title: cleanText(req.body?.title) || `Cooper call ${new Date().toLocaleString()}`,
+    title: cleanText(title) || `Cooper call ${new Date().toLocaleString()}`,
     status: "active",
-    startedAt: req.body?.startedAt || now,
+    startedAt: startedAt || now,
     endedAt: null,
     durationSeconds: 0,
     transcript: [],
@@ -317,7 +333,54 @@ app.post("/api/calls", async (req, res) => {
     db.calls.push(call);
   });
 
-  res.status(201).json({ call });
+  return call;
+}
+
+// Token-authenticated, loopback-only plan ingest used by the chat-with-plan
+// skill. Exempt from the cookie-auth middleware (it enforces its own checks).
+// Creates a call and attaches the plan as a knowledge entry by reusing the same
+// internals as POST /api/calls and POST /api/calls/:id/knowledge.
+app.post("/api/ingest/plan", async (req, res) => {
+  if (!ingestToken) {
+    res.status(503).json({ error: "Ingest disabled (set COOPER_INGEST_TOKEN)." });
+    return;
+  }
+
+  const remoteAddr = req.ip || req.socket?.remoteAddress;
+  if (!isLoopbackAddress(remoteAddr)) {
+    res.status(403).json({ error: "Plan ingest is only available from localhost." });
+    return;
+  }
+
+  const authHeader = cleanText(req.headers?.authorization);
+  const bearer = /^Bearer\s+(.+)$/i.exec(authHeader);
+  const presented = bearer ? bearer[1].trim() : "";
+  if (!safeCompare(presented, ingestToken)) {
+    res.status(401).json({ error: "Invalid ingest token." });
+    return;
+  }
+
+  const plan = cleanText(req.body?.plan);
+  if (!plan) {
+    res.status(400).json({ error: "plan is required." });
+    return;
+  }
+
+  const repo = cleanText(req.body?.repo);
+  const title = cleanText(req.body?.title)
+    || deriveTitleFromPlan(plan)
+    || `Plan ${new Date().toLocaleString()}`;
+
+  const call = await createCall({ title });
+
+  const name = repo ? `Plan - ${repo}` : "Plan";
+  const result = await addKnowledgeEntry({ callId: call.id, text: plan, name });
+  if (!result.ok) {
+    res.status(result.status || 400).json({ error: result.error });
+    return;
+  }
+
+  res.status(201).json({ callId: call.id, url: `/?call=${call.id}` });
 });
 
 app.patch("/api/calls/:id", async (req, res) => {
@@ -511,11 +574,24 @@ app.post("/api/calls/:id/knowledge", async (req, res) => {
     return;
   }
 
+  const result = await addKnowledgeEntry({ callId, text, name, overrideMode });
+  if (!result.ok) {
+    res.status(result.status || 400).json({ error: result.error });
+    return;
+  }
+
+  res.status(201).json({ entry: publicKnowledgeEntry(result.entry, true) });
+});
+
+// Shared knowledge-add path: auto-routes small->prompt-inject / large->vector
+// store, persists the entry, and broadcasts knowledge.updated. Reused by the
+// route handler above and the plan-ingest endpoint. Returns
+// { ok, entry } or { ok: false, error, status }.
+async function addKnowledgeEntry({ callId, text, name = "Context", overrideMode }) {
   const db = await readDb();
   const call = db.calls.find((item) => item.id === callId);
   if (!call) {
-    res.status(404).json({ error: "Call not found." });
-    return;
+    return { ok: false, error: "Call not found.", status: 404 };
   }
 
   const chars = text.length;
@@ -567,8 +643,8 @@ app.post("/api/calls/:id/knowledge", async (req, res) => {
   });
 
   broadcastEvent("knowledge.updated", { callId });
-  res.status(201).json({ entry: publicKnowledgeEntry(entry, true) });
-});
+  return { ok: true, entry };
+}
 
 app.get("/api/calls/:id/knowledge", async (req, res) => {
   const db = await readDb();

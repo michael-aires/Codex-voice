@@ -31,6 +31,8 @@ COOPER_JOB_MAX_OUTPUT_TOKENS=6500
 # Knowledge base inline threshold (characters). Entries at or below this size are injected directly into
 # the live Realtime session; larger entries are indexed into an OpenAI vector store and retrieved on demand.
 COOPER_KB_INLINE_MAX_CHARS=6000
+# Bearer token for the local /api/ingest/plan endpoint used by the chat-with-plan skill; leave blank to disable ingest.
+COOPER_INGEST_TOKEN=
 ```
 
 ## Run
@@ -59,6 +61,7 @@ Open `http://localhost:3000`.
   - Each canvas tab can be downloaded (mermaid `.mmd`, html/wireframe `.html`, plus rendered SVG export for diagrams).
   - Crash recovery: in-flight canvas jobs are requeued onto their original lane after a restart, and any item stuck `generating` with no active job is marked `failed`.
 - Hybrid knowledge base per call: paste or upload context before or during a call. Small entries are injected straight into the live Realtime session; large entries are indexed into an OpenAI vector store and retrieved on demand via the `search_knowledge` tool. Any vector-store error gracefully degrades to injected prompt-mode context, so the feature never hard-fails.
+- chat-with-plan / plan ingest: a global Claude Code skill can push the plan you are working on straight into Cooper and open a pre-seeded voice call. It probes `GET /api/health` (unauthenticated readiness check returning `{ ok: true, name: "cooper" }`), then `POST`s the plan to `/api/ingest/plan`. That endpoint is loopback-only and token-authenticated via `Authorization: Bearer <COOPER_INGEST_TOKEN>` (returns `503` when the token is unset, so ingest is disabled by default). It creates a call titled from the plan's first heading/line and attaches the plan as a normal knowledge entry (prompt-injected, or auto-indexed if large), then returns `{ callId, url }` where the app opens `/?call=<id>` and offers a "Start voice chat" button. Set `COOPER_INGEST_TOKEN` to enable it.
 - Live execution feedback through `/api/events` plus persisted per-job activity logs.
 - Browser/PWA notifications when Cooper finishes queued work, plus manual retry for failed jobs.
 - PWA manifest and service worker for installable mobile/browser use.
