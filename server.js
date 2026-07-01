@@ -1,17 +1,25 @@
 import "dotenv/config";
 import express from "express";
+import multer from "multer";
 import { createServer } from "node:http";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { extractHtmlDocument, sanitizeMermaid, isValidMermaid, pickCanvasLane, buildUpdatePrompt } from "./src/lib/canvas.js";
-import { pickIngestMode } from "./src/lib/knowledge.js";
+import Arcade from "@arcadeai/arcadejs";
+import { PDFParse } from "pdf-parse";
+import { cooperInstructions } from "./cooperPrompt.js";
+import { cooperToolDefinitions, cooperToolNames } from "./cooperTools.js";
+import {
+  explainAiresFrameworkDocuments,
+  workshopAiresFrameworkDocument
+} from "./server/airesFramework.js";
+import { runGstackSkill } from "./server/tools/runGstackSkill.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === "production";
-const port = Number(process.env.PORT || 3000);
+const port = Number(process.env.PORT || 5000);
 const dataDir = join(__dirname, "data");
 const artifactsDir = join(dataDir, "artifacts");
 const dbPath = join(dataDir, "cooper.json");
@@ -20,28 +28,46 @@ const fallbackWorkModel = process.env.COOPER_FALLBACK_WORK_MODEL || "";
 const jobDelayMs = Number(process.env.COOPER_JOB_DELAY_MS || 15000);
 const jobMaxAttempts = Number(process.env.COOPER_JOB_MAX_ATTEMPTS || 3);
 const jobMaxOutputTokens = Number(process.env.COOPER_JOB_MAX_OUTPUT_TOKENS || 6500);
-const fastModel = process.env.COOPER_FAST_MODEL || workModel;
-const fastMaxConcurrency = Number(process.env.COOPER_FAST_CONCURRENCY || 2);
-const fastMaxOutputTokens = Number(process.env.COOPER_FAST_MAX_OUTPUT_TOKENS || 2500);
-const canvasKinds = new Set(["canvas_mermaid", "canvas_html", "canvas_wireframe"]);
-const kbInlineMax = Number(process.env.COOPER_KB_INLINE_MAX_CHARS || 6000);
-const openAiBase = "https://api.openai.com/v1";
+const projectContextChars = Number(process.env.COOPER_PROJECT_CONTEXT_CHARS || 18000);
+const projectSourceMaxChars = Number(process.env.COOPER_PROJECT_SOURCE_MAX_CHARS || 250000);
+const projectUploadMaxBytes = Number(process.env.COOPER_PROJECT_UPLOAD_MAX_MB || 20) * 1024 * 1024;
 const workModels = [workModel, fallbackWorkModel].filter((model, index, list) => model && list.indexOf(model) === index);
 const appPassword = process.env.COOPER_APP_PASSWORD || "";
 const sessionSecret = process.env.COOPER_SESSION_SECRET || appPassword;
 const cookieName = "cooper_session";
 const sessionTtlMs = Number(process.env.COOPER_SESSION_TTL_HOURS || 168) * 60 * 60 * 1000;
+const arcadeUserId = process.env.ARCADE_USER_ID || "michael";
+const arcadeMcpGatewayUrl = process.env.ARCADE_MCP_GATEWAY_URL || "";
+const arcadeToolMappings = {
+  search_workspace_context: process.env.ARCADE_SEARCH_WORKSPACE_TOOL || "",
+  search_notion_workspace: process.env.ARCADE_NOTION_SEARCH_TOOL || "",
+  fetch_notion_page: process.env.ARCADE_NOTION_FETCH_PAGE_TOOL || "",
+  get_customer_context: process.env.ARCADE_CUSTOMER_CONTEXT_TOOL || "",
+  inspect_engineering_context: process.env.ARCADE_ENGINEERING_CONTEXT_TOOL || "",
+  create_followup_action: process.env.ARCADE_CREATE_FOLLOWUP_TOOL || ""
+};
+const arcadeWritesEnabled = process.env.COOPER_ENABLE_ARCADE_WRITES === "true";
+const notionVersion = process.env.NOTION_VERSION || "2026-03-11";
+const notionSearchLimit = Number(process.env.NOTION_SEARCH_LIMIT || 5);
+const notionBlockLimit = Number(process.env.NOTION_BLOCK_LIMIT || 50);
+const mcpAppServers = parseMcpAppServers(
+  process.env.COOPER_MCP_APP_SERVERS ||
+    (arcadeMcpGatewayUrl ? JSON.stringify([{ type: "http", url: arcadeMcpGatewayUrl, serverId: "cooper-arcade" }]) : "")
+);
 
 const app = express();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: projectUploadMaxBytes }
+});
 const eventClients = new Set();
 let writeQueue = Promise.resolve();
 let workerActive = false;
-let fastWorkerActive = false;
-let fastInFlight = 0;
 let lastGenerationAt = 0;
+let arcadeClient = null;
 
 app.use(express.text({ type: ["application/sdp", "text/plain"], limit: "2mb" }));
-app.use(express.json({ limit: "4mb" }));
+app.use(express.json({ limit: "24mb" }));
 
 app.get("/api/auth/session", (req, res) => {
   res.json({ authenticated: isAuthenticated(req) });
@@ -102,38 +128,6 @@ app.use((req, res, next) => {
   next();
 });
 
-const cooperInstructions = `
-# Role and Objective
-You are Cooper, an executive assistant to Michael at AIRES, who serves as CTO and CPO.
-You support day-to-day executive work, product leadership, engineering leadership, software delivery, architecture, planning, meetings, and SDLC decisions.
-
-# Meeting Behavior
-You may listen to meeting audio and retain relevant context.
-Do not speak just because people are talking. Speak only when someone clearly addresses Cooper, asks you directly, or the client explicitly asks you to respond.
-When called on, answer with concise executive judgment. Offer a clear point of view, tradeoffs, risks, and the next practical move.
-
-# Expertise
-Think like a strong C-suite partner across CTO, CPO, product strategy, architecture, developer experience, delivery operations, platform reliability, security posture, roadmap prioritization, and team execution.
-
-# Style
-Be calm, direct, commercially aware, and technically grounded. Prefer crisp recommendations over long explanations.
-
-# Tools
-Use check_calendar(date, time) when the user asks about availability or scheduling.
-Ask for a missing date or time before calling the tool.
-
-You can put visuals on the shared canvas that Michael is watching while you talk:
-- create_diagram(title, description, diagram_type?, speed?) draws a mermaid diagram for architectures, workflows, flows, and sequences.
-- create_prototype(title, brief, speed?) builds a polished, high-fidelity HTML UI prototype with real sample content.
-- create_wireframe(title, brief, speed?) builds a low-fidelity, grayscale wireframe to sketch layout and structure before any visual polish.
-- update_canvas_item(item_id, instruction, speed?) iterates on an existing canvas item in place, applying a change while keeping the same tab.
-Each accepts speed "fast" or "quality". Default to "fast" for the live flow so the visual appears in a few seconds. Use "quality" only when Michael says to take your time or make it production-grade; quality runs a slower, multi-step refine on the paced lane. Call these whenever a picture would help, keep talking, and briefly mention that the visual will appear on the canvas. You do not need to wait for the result before continuing the conversation.
-
-You have a knowledge base for this call. Michael can add context (pasted notes, docs, or files) at any time, before or during the call.
-- Use search_knowledge(query) to look something up in that knowledge base when a question depends on context Michael has provided. Briefly cite what you found and answer from it.
-- Small notes are injected directly into our conversation; larger documents are indexed and retrieved on demand via search_knowledge.
-`;
-
 const baseSession = {
   type: "realtime",
   model: "gpt-realtime-2",
@@ -147,10 +141,8 @@ const baseSession = {
         prompt: "Meeting transcript for Cooper, AIRES, CTO, CPO, product, engineering, software delivery, roadmap, calendar."
       },
       turn_detection: {
-        type: "server_vad",
-        threshold: 0.5,
-        prefix_padding_ms: 300,
-        silence_duration_ms: 700,
+        type: "semantic_vad",
+        eagerness: "low",
         create_response: false,
         interrupt_response: false
       }
@@ -158,8 +150,19 @@ const baseSession = {
     output: {
       voice: "cedar"
     }
-  }
+  },
+  tools: cooperToolDefinitions,
+  tool_choice: "auto"
 };
+
+function realtimeSession(projectContext = "") {
+  return {
+    ...baseSession,
+    instructions: projectContext
+      ? `${cooperInstructions}\n\n${projectContext}`
+      : cooperInstructions
+  };
+}
 
 const artifactRecipes = {
   post_call_kit: {
@@ -215,6 +218,31 @@ const artifactRecipes = {
       "Turn the prototype brief into an implementation-ready interaction plan. Include mobile defaults, desktop expansion behavior, sample data, key UI states, and any lightweight JavaScript interactions needed for a believable prototype.",
       "Build the prototype as a complete standalone HTML document with inline CSS and small inline JavaScript. Default the design for a mobile viewport and include responsive desktop rules. Use no external assets, no external scripts, and no markdown fences. Return only the full HTML document starting with <!doctype html>."
     ]
+  },
+  mermaid_diagram: {
+    title: "Mermaid diagram",
+    outputType: "markdown",
+    steps: [
+      "Extract the system, workflow, architecture, user journey, or decision process that Michael wants visualized. Choose the most useful Mermaid diagram type: flowchart, sequenceDiagram, stateDiagram-v2, journey, or classDiagram.",
+      "Return a concise Markdown artifact with a short title, a one-paragraph explanation, and one valid fenced Mermaid block. The Mermaid block must be syntactically valid and readable on mobile. Add a short 'How to read this' section after the diagram."
+    ]
+  },
+  ui_wireframe: {
+    title: "UI wireframe",
+    outputType: "html",
+    steps: [
+      "Extract the interface, workflow, or prototype idea Michael wants to visualize. Define the target user, primary job, core screens, content hierarchy, states, and mobile-first constraints.",
+      "Build a complete standalone HTML wireframe with inline CSS and small inline JavaScript if useful. Default to a mobile viewport, use a deliberate low-fidelity grayscale wireframe style, include realistic labels/content, and add responsive desktop rules. Use no external assets, no external scripts, and no markdown fences. Return only the full HTML document starting with <!doctype html>."
+    ]
+  },
+  aires_requirements: {
+    title: "AIRES scoped requirements",
+    outputType: "html",
+    steps: [
+      "Capture and distill the source context using the AIRES Requirements Framework. Preserve vivid user phrases, identify the core problem, goal, stakeholders, current state, desired state, constraints, source material, success metric, and a short 5-whys check. Mark assumptions clearly.",
+      "Scope and slice the work. Produce in scope, out of scope now, and non-goals; data, edge cases, failure modes, constraints, and non-functionals; MoSCoW prioritization with real Won't/deferred boundaries; vertical INVEST slices that are small, valuable, and testable; Given/When/Then acceptance criteria; and a Definition of Ready checklist.",
+      "Return a complete standalone AIRES-branded HTML scoped requirements artifact starting with <!doctype html>. Use inline CSS only. Follow the AIRES design system: warm grey page, white portrait document around 900px, soft-black header with a 3px Volt rule, Converge mark SVG, Aires wordmark, Export PDF button wired to window.print(), footer with © Aires Technology Inc., section kickers, scope cards, MoSCoW pills, slice table, Given/When/Then blocks, and Definition of Ready checklist. Use Urbanist/Inter/IBM Plex Mono fallbacks, no gradients, no stock imagery, no emoji, no pure black, no markdown fences, no external scripts."
+    ]
   }
 };
 
@@ -230,9 +258,13 @@ app.post("/session", async (req, res) => {
     return;
   }
 
+  const projectId = cleanText(req.query?.projectId);
+  const db = projectId ? await readDb() : null;
+  const projectContext = db ? buildProjectContext(db, projectId) : "";
+
   const fd = new FormData();
   fd.set("sdp", sdp);
-  fd.set("session", JSON.stringify(baseSession));
+  fd.set("session", JSON.stringify(realtimeSession(projectContext)));
 
   try {
     const response = await fetch("https://api.openai.com/v1/realtime/calls", {
@@ -268,6 +300,250 @@ app.get("/api/state", async (_req, res) => {
   res.json(publicState(db));
 });
 
+app.post("/api/projects", async (req, res) => {
+  const title = cleanText(req.body?.title);
+  if (!title) {
+    res.status(400).json({ error: "Project title is required." });
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const project = {
+    id: randomUUID(),
+    title,
+    description: cleanText(req.body?.description),
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    lastUsedAt: null
+  };
+
+  await updateDb((db) => {
+    db.projects.push(project);
+  });
+
+  res.status(201).json({ project: publicProject(project, []) });
+});
+
+app.patch("/api/projects/:id", async (req, res) => {
+  const project = await updateDb((db) => {
+    const item = db.projects.find((candidate) => candidate.id === req.params.id);
+    if (!item) return null;
+    if (typeof req.body?.title === "string") item.title = cleanText(req.body.title) || item.title;
+    if (typeof req.body?.description === "string") item.description = cleanText(req.body.description);
+    if (typeof req.body?.status === "string") item.status = cleanText(req.body.status) || item.status;
+    item.updatedAt = new Date().toISOString();
+    return item;
+  });
+
+  if (!project) {
+    res.status(404).json({ error: "Project not found." });
+    return;
+  }
+
+  const db = await readDb();
+  res.json({ project: publicProject(project, db.projectSources.filter((source) => source.projectId === project.id)) });
+});
+
+app.get("/api/projects/:id/context", async (req, res) => {
+  const db = await readDb();
+  const project = db.projects.find((item) => item.id === req.params.id);
+  if (!project) {
+    res.status(404).json({ error: "Project not found." });
+    return;
+  }
+  res.json({ context: buildProjectContext(db, project.id), project: publicProject(project, db.projectSources.filter((source) => source.projectId === project.id)) });
+});
+
+app.post("/api/projects/:id/sources", async (req, res) => {
+  const content = cleanText(req.body?.content);
+  if (!content) {
+    res.status(400).json({ error: "Project source content is required." });
+    return;
+  }
+
+  const source = await addProjectSource(req.params.id, {
+    title: cleanText(req.body?.title) || "Pasted agent output",
+    sourceType: cleanText(req.body?.sourceType) || "paste",
+    mimeType: "text/plain",
+    originalName: "",
+    content
+  });
+
+  if (!source) {
+    res.status(404).json({ error: "Project not found." });
+    return;
+  }
+
+  res.status(201).json({ source: publicProjectSource(source) });
+});
+
+app.post("/api/projects/:id/uploads", upload.single("file"), async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    res.status(400).json({ error: "Upload a Markdown, text, or PDF file." });
+    return;
+  }
+
+  try {
+    const extracted = await extractProjectUpload(file);
+    const source = await addProjectSource(req.params.id, {
+      title: cleanText(req.body?.title) || extracted.title,
+      sourceType: extracted.sourceType,
+      mimeType: file.mimetype || extracted.mimeType,
+      originalName: file.originalname || extracted.title,
+      content: extracted.content
+    });
+
+    if (!source) {
+      res.status(404).json({ error: "Project not found." });
+      return;
+    }
+
+    res.status(201).json({ source: publicProjectSource(source) });
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Could not ingest uploaded file." });
+  }
+});
+
+app.get("/api/tools/arcade/status", async (_req, res) => {
+  const db = await readDb();
+  res.json(arcadeSettingsState(db));
+});
+
+app.post("/api/tools/arcade/authorize", async (req, res) => {
+  const name = cleanText(req.body?.name);
+  if (!arcadeToolMappings[name]) {
+    res.status(400).json({ error: `No Arcade mapping is configured for ${name || "(missing)"}.` });
+    return;
+  }
+
+  if (!process.env.ARCADE_API_KEY) {
+    res.status(400).json({ error: "Missing ARCADE_API_KEY on the server." });
+    return;
+  }
+
+  try {
+    const response = await startArcadeAuthorization(name, req);
+    const db = await readDb();
+    res.json({ authorization: publicArcadeAuthorization(response), arcade: arcadeSettingsState(db) });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not start Arcade authorization." });
+  }
+});
+
+app.post("/api/tools/arcade/authorize-all", async (req, res) => {
+  if (!process.env.ARCADE_API_KEY) {
+    res.status(400).json({ error: "Missing ARCADE_API_KEY on the server." });
+    return;
+  }
+
+  const names = Object.keys(arcadeToolMappings).filter((name) => arcadeToolMappings[name]);
+  const results = [];
+  for (const name of names) {
+    try {
+      const authorization = await startArcadeAuthorization(name, req);
+      results.push({ name, ok: true, authorization: publicArcadeAuthorization(authorization) });
+    } catch (error) {
+      results.push({ name, ok: false, error: error.message || "Authorization failed." });
+    }
+  }
+
+  const db = await readDb();
+  res.json({ results, arcade: arcadeSettingsState(db) });
+});
+
+app.post("/api/tools/arcade/check", async (req, res) => {
+  const name = cleanText(req.body?.name);
+  const db = await readDb();
+  const authorization = latestArcadeAuthorization(db, name);
+  if (!authorization?.authorizationId) {
+    res.status(400).json({ error: `No authorization flow has been started for ${name || "(missing)"}.` });
+    return;
+  }
+
+  if (!process.env.ARCADE_API_KEY) {
+    res.status(400).json({ error: "Missing ARCADE_API_KEY on the server." });
+    return;
+  }
+
+  try {
+    const client = getArcadeClient();
+    const response = await client.auth.status({ id: authorization.authorizationId, wait: 1 });
+    const updated = await upsertArcadeAuthorization(name, authorization.arcadeToolName, response, {
+      error: null,
+      lastCheckedAt: new Date().toISOString()
+    });
+    const nextDb = await readDb();
+    res.json({ authorization: publicArcadeAuthorization(updated), arcade: arcadeSettingsState(nextDb) });
+  } catch (error) {
+    const updated = await upsertArcadeAuthorization(name, authorization.arcadeToolName, {}, {
+      status: "failed",
+      error: error.message || "Could not check Arcade authorization.",
+      lastCheckedAt: new Date().toISOString()
+    });
+    const nextDb = await readDb();
+    res.status(500).json({ authorization: publicArcadeAuthorization(updated), arcade: arcadeSettingsState(nextDb), error: updated.error });
+  }
+});
+
+app.post("/api/tools/execute", async (req, res) => {
+  const name = cleanText(req.body?.name);
+  const callId = cleanText(req.body?.callId);
+  const args = isPlainObject(req.body?.arguments) ? req.body.arguments : {};
+
+  if (!cooperToolNames.has(name)) {
+    res.status(400).json({ error: `Unknown Cooper tool: ${name || "(missing)"}` });
+    return;
+  }
+
+  const recordId = randomUUID();
+  const startedAt = Date.now();
+  await updateDb((db) => {
+    db.toolCalls.push({
+      id: recordId,
+      callId,
+      userId: arcadeUserId,
+      toolName: name,
+      arcadeToolName: arcadeToolMappings[name] || null,
+      arguments: safeToolArguments(name, args),
+      riskLevel: toolRiskLevel(name),
+      status: "pending",
+      resultSummary: "",
+      error: null,
+      durationMs: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+  });
+
+  try {
+    const output = await executeCooperTool(name, args, { callId });
+    const durationMs = Date.now() - startedAt;
+    await updateToolCall(recordId, {
+      status: output.status === "error" ? "failed" : output.status === "approval_required" ? "pending_approval" : "executed",
+      resultSummary: summarizeToolResult(output),
+      durationMs,
+      error: output.status === "error" ? output.message || "Tool failed." : null
+    });
+    res.json({ output, recordId });
+  } catch (error) {
+    const output = {
+      status: "error",
+      tool: name,
+      message: error.message || "Cooper tool execution failed.",
+      retryable: false
+    };
+    await updateToolCall(recordId, {
+      status: "failed",
+      resultSummary: summarizeToolResult(output),
+      durationMs: Date.now() - startedAt,
+      error: output.message
+    });
+    res.status(500).json({ output, recordId });
+  }
+});
+
 app.get("/api/events", (req, res) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -285,7 +561,7 @@ app.get("/api/events", (req, res) => {
 
 app.get("/api/calls", async (_req, res) => {
   const db = await readDb();
-  res.json({ calls: sortByDate(db.calls) });
+  res.json({ calls: sortByDate(db.calls).map(publicCall) });
 });
 
 app.get("/api/calls/:id", async (req, res) => {
@@ -295,29 +571,41 @@ app.get("/api/calls/:id", async (req, res) => {
     res.status(404).json({ error: "Call not found." });
     return;
   }
-  res.json({ call, artifacts: db.artifacts.filter((item) => item.callId === call.id) });
+  res.json({ call: publicCall(call), artifacts: db.artifacts.filter((item) => item.callId === call.id).map(publicArtifact) });
 });
 
 app.post("/api/calls", async (req, res) => {
   const now = new Date().toISOString();
-  const call = {
-    id: randomUUID(),
-    title: cleanText(req.body?.title) || `Cooper call ${new Date().toLocaleString()}`,
-    status: "active",
-    startedAt: req.body?.startedAt || now,
-    endedAt: null,
-    durationSeconds: 0,
-    transcript: [],
-    suggestions: defaultSuggestions(),
-    createdAt: now,
-    updatedAt: now
-  };
+  const requestedProjectId = cleanText(req.body?.projectId);
 
-  await updateDb((db) => {
-    db.calls.push(call);
+  const call = await updateDb((db) => {
+    const project = requestedProjectId
+      ? db.projects.find((item) => item.id === requestedProjectId)
+      : null;
+    const nextCall = {
+      id: randomUUID(),
+      title: cleanText(req.body?.title) || `Cooper call ${new Date().toLocaleString()}`,
+      status: "active",
+      startedAt: req.body?.startedAt || now,
+      endedAt: null,
+      durationSeconds: 0,
+      projectId: project?.id || "",
+      projectTitle: project?.title || "",
+      projectContextSnapshot: project ? buildProjectContext(db, project.id) : "",
+      transcript: [],
+      suggestions: defaultSuggestions(),
+      createdAt: now,
+      updatedAt: now
+    };
+    if (project) {
+      project.lastUsedAt = now;
+      project.updatedAt = now;
+    }
+    db.calls.push(nextCall);
+    return nextCall;
   });
 
-  res.status(201).json({ call });
+  res.status(201).json({ call: publicCall(call) });
 });
 
 app.patch("/api/calls/:id", async (req, res) => {
@@ -338,7 +626,7 @@ app.patch("/api/calls/:id", async (req, res) => {
     res.status(404).json({ error: "Call not found." });
     return;
   }
-  res.json({ call: result });
+  res.json({ call: publicCall(result) });
 });
 
 app.post("/api/calls/:id/transcript", async (req, res) => {
@@ -366,7 +654,7 @@ app.post("/api/calls/:id/transcript", async (req, res) => {
     res.status(404).json({ error: "Call not found." });
     return;
   }
-  res.status(201).json({ entry, call: result });
+  res.status(201).json({ entry, call: publicCall(result) });
 });
 
 app.post("/api/calls/:id/end", async (req, res) => {
@@ -386,7 +674,7 @@ app.post("/api/calls/:id/end", async (req, res) => {
     res.status(404).json({ error: "Call not found." });
     return;
   }
-  res.json({ call: result });
+  res.json({ call: publicCall(result) });
 });
 
 app.post("/api/calls/:id/artifacts", async (req, res) => {
@@ -418,232 +706,6 @@ app.get("/api/artifacts/:id/content", async (req, res) => {
   }
 });
 
-app.post("/api/calls/:id/canvas", async (req, res) => {
-  const type = req.body?.type === "html"
-    ? "html"
-    : req.body?.type === "wireframe"
-      ? "wireframe"
-      : req.body?.type === "mermaid"
-        ? "mermaid"
-        : null;
-  const brief = cleanText(req.body?.brief);
-  const title = cleanText(req.body?.title);
-  const speed = req.body?.speed === "quality" ? "quality" : "fast";
-
-  if (!type) {
-    res.status(400).json({ error: "type must be \"mermaid\", \"html\", or \"wireframe\"." });
-    return;
-  }
-  if (!brief) {
-    res.status(400).json({ error: "brief is required." });
-    return;
-  }
-
-  const source = req.body?.source === "in_call_tool" ? "in_call_tool" : "manual";
-  const result = await enqueueCanvasJob(req.params.id, { type, brief, title, speed, source });
-
-  if (!result.ok) {
-    res.status(result.status || 400).json({ error: result.error });
-    return;
-  }
-
-  broadcastEvent("canvas.item.created", result.item);
-  res.status(201).json({ item: result.item });
-});
-
-app.post("/api/calls/:id/canvas/:itemId/update", async (req, res) => {
-  const instruction = cleanText(req.body?.instruction);
-  const speed = req.body?.speed === "quality" ? "quality" : req.body?.speed === "fast" ? "fast" : undefined;
-
-  if (!instruction) {
-    res.status(400).json({ error: "instruction is required." });
-    return;
-  }
-
-  const result = await enqueueCanvasUpdateJob(req.params.id, req.params.itemId, { instruction, speed });
-
-  if (!result.ok) {
-    res.status(result.status || 400).json({ error: result.error });
-    return;
-  }
-
-  broadcastEvent("canvas.item.updated", result.item);
-  res.status(202).json({ item: result.item });
-});
-
-app.get("/api/canvas/:id/content", async (req, res) => {
-  const db = await readDb();
-  let item = null;
-  for (const call of db.calls) {
-    const found = (call.canvasItems || []).find((entry) => entry.id === req.params.id);
-    if (found) {
-      item = found;
-      break;
-    }
-  }
-
-  if (!item) {
-    res.status(404).type("text/plain").send("Canvas item not found.");
-    return;
-  }
-
-  if (item.type === "html" || item.type === "wireframe") {
-    try {
-      const content = await readFile(join(artifactsDir, `${item.id}.html`), "utf8");
-      res.type("text/html").send(content);
-    } catch {
-      res.status(404).type("text/plain").send("Canvas file not found.");
-    }
-    return;
-  }
-
-  res.type("text/plain").send(item.content || "");
-});
-
-app.post("/api/calls/:id/knowledge", async (req, res) => {
-  const callId = req.params.id;
-  const text = cleanText(req.body?.text);
-  const name = cleanText(req.body?.name) || "Context";
-  const overrideMode = req.body?.mode === "prompt" || req.body?.mode === "indexed" ? req.body.mode : undefined;
-
-  if (!text) {
-    res.status(400).json({ error: "text is required." });
-    return;
-  }
-
-  const db = await readDb();
-  const call = db.calls.find((item) => item.id === callId);
-  if (!call) {
-    res.status(404).json({ error: "Call not found." });
-    return;
-  }
-
-  const chars = text.length;
-  let mode = pickIngestMode(chars, overrideMode, kbInlineMax);
-  const now = new Date().toISOString();
-  const entryId = randomUUID();
-
-  let fileId = null;
-  let vectorStoreId = call.vectorStoreId || null;
-  let error = null;
-
-  if (mode === "indexed") {
-    try {
-      const indexed = await indexKnowledgeEntry({ name, text, vectorStoreId });
-      fileId = indexed.fileId;
-      vectorStoreId = indexed.vectorStoreId;
-    } catch (vectorError) {
-      // RESILIENCE: never fail the request for a vector-store hiccup.
-      console.error("Knowledge indexing failed, falling back to prompt mode:", vectorError);
-      mode = "prompt";
-      fileId = null;
-      vectorStoreId = call.vectorStoreId || null;
-      error = vectorError?.message || "Indexing failed; stored as injected context instead.";
-    }
-  }
-
-  const entry = {
-    id: entryId,
-    callId,
-    name,
-    mode,
-    text,
-    chars,
-    fileId,
-    vectorStoreId: mode === "indexed" ? vectorStoreId : null,
-    status: "ready",
-    error,
-    createdAt: now
-  };
-
-  await updateDb((next) => {
-    if (!Array.isArray(next.knowledge)) next.knowledge = [];
-    next.knowledge.push(entry);
-    const nextCall = next.calls.find((item) => item.id === callId);
-    if (nextCall && mode === "indexed" && vectorStoreId) {
-      nextCall.vectorStoreId = vectorStoreId;
-      nextCall.updatedAt = now;
-    }
-  });
-
-  broadcastEvent("knowledge.updated", { callId });
-  res.status(201).json({ entry: publicKnowledgeEntry(entry, true) });
-});
-
-app.get("/api/calls/:id/knowledge", async (req, res) => {
-  const db = await readDb();
-  const call = db.calls.find((item) => item.id === req.params.id);
-  if (!call) {
-    res.status(404).json({ error: "Call not found." });
-    return;
-  }
-  const includeText = req.query?.full === "1" || req.query?.full === "true";
-  const entries = (db.knowledge || [])
-    .filter((entry) => entry.callId === req.params.id)
-    .map((entry) => publicKnowledgeEntry(entry, includeText));
-  res.json({ entries });
-});
-
-app.delete("/api/calls/:id/knowledge/:entryId", async (req, res) => {
-  const db = await readDb();
-  const entry = (db.knowledge || []).find(
-    (item) => item.id === req.params.entryId && item.callId === req.params.id
-  );
-  if (!entry) {
-    res.status(404).json({ error: "Knowledge entry not found." });
-    return;
-  }
-
-  // Best-effort removal from the vector store. Never fail the request on error.
-  if (entry.vectorStoreId && entry.fileId) {
-    try {
-      await openAiFetch(`/vector_stores/${entry.vectorStoreId}/files/${entry.fileId}`, {
-        method: "DELETE"
-      });
-    } catch (removeError) {
-      console.error("Knowledge vector-store removal failed (ignored):", removeError);
-    }
-  }
-
-  await updateDb((next) => {
-    next.knowledge = (next.knowledge || []).filter((item) => item.id !== req.params.entryId);
-  });
-
-  broadcastEvent("knowledge.updated", { callId: req.params.id });
-  res.json({ ok: true });
-});
-
-app.post("/api/calls/:id/knowledge/search", async (req, res) => {
-  const callId = req.params.id;
-  const query = cleanText(req.body?.query);
-  if (!query) {
-    res.status(400).json({ error: "query is required." });
-    return;
-  }
-
-  const db = await readDb();
-  const call = db.calls.find((item) => item.id === callId);
-  if (!call) {
-    res.status(404).json({ error: "Call not found." });
-    return;
-  }
-
-  const entries = (db.knowledge || []).filter((entry) => entry.callId === callId);
-  const promptResults = searchPromptEntries(entries, query);
-
-  let vectorResults = [];
-  if (call.vectorStoreId) {
-    try {
-      vectorResults = await searchVectorStore(call.vectorStoreId, query);
-    } catch (searchError) {
-      // RESILIENCE: degrade to prompt-mode-only results.
-      console.error("Vector store search failed, returning prompt-mode results only:", searchError);
-    }
-  }
-
-  res.json({ results: [...vectorResults, ...promptResults].slice(0, 8) });
-});
-
 app.post("/api/jobs/:id/retry", async (req, res) => {
   const result = await updateDb((db) => {
     const job = db.jobs.find((item) => item.id === req.params.id);
@@ -664,22 +726,20 @@ app.post("/api/jobs/:id/retry", async (req, res) => {
     res.status(404).json({ error: "Job not found." });
     return;
   }
-  if (canvasKinds.has(result.kind)) {
-    queueFastWorker();
-  } else {
-    queueWorker();
-  }
+  queueWorker();
   res.json({ job: publicJob(result) });
 });
 
-async function enqueueArtifactJob(callId, kind, customPrompt = "") {
+async function enqueueArtifactJob(callId, kind, customPrompt = "", options = {}) {
   const now = new Date().toISOString();
   const recipe = artifactRecipes[kind];
 
   const job = await updateDb((db) => {
     const call = db.calls.find((item) => item.id === callId);
     if (!call) return { error: "Call not found.", status: 404 };
-    if (!call.transcript.length) return { error: "A transcript is required before Cooper can generate artifacts.", status: 400 };
+    if (!call.transcript.length && !options.allowEmptyTranscript && !cleanText(customPrompt)) {
+      return { error: "A transcript or canvas prompt is required before Cooper can generate artifacts.", status: 400 };
+    }
 
     const queued = {
       id: randomUUID(),
@@ -727,639 +787,6 @@ function queueWorker() {
   }
 }
 
-function publicCanvasItem(item) {
-  if (!item) return null;
-  return {
-    id: item.id,
-    callId: item.callId,
-    type: item.type,
-    title: item.title,
-    status: item.status,
-    content: item.content || "",
-    file: item.file || null,
-    source: item.source,
-    speed: item.speed,
-    jobId: item.jobId || null,
-    error: item.error || null,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt
-  };
-}
-
-async function enqueueCanvasJob(callId, { type, brief, title, speed = "fast", source = "manual" }) {
-  const now = new Date().toISOString();
-  const itemId = randomUUID();
-  const jobId = randomUUID();
-  const safeTitle = title || (type === "html" ? "Prototype" : type === "wireframe" ? "Wireframe" : "Diagram");
-  const kind = type === "html" ? "canvas_html" : type === "wireframe" ? "canvas_wireframe" : "canvas_mermaid";
-  const lane = pickCanvasLane(speed);
-
-  const created = await updateDb((db) => {
-    const call = db.calls.find((entry) => entry.id === callId);
-    if (!call) return { error: "Call not found.", status: 404 };
-    if (!Array.isArray(call.canvasItems)) call.canvasItems = [];
-
-    const item = {
-      id: itemId,
-      callId,
-      type,
-      title: safeTitle,
-      status: "generating",
-      content: "",
-      file: null,
-      source,
-      speed,
-      jobId,
-      error: null,
-      createdAt: now,
-      updatedAt: now
-    };
-    call.canvasItems.push(item);
-
-    const job = {
-      id: jobId,
-      callId,
-      kind,
-      lane,
-      itemId,
-      type,
-      brief,
-      title: safeTitle,
-      intent: "create",
-      status: "queued",
-      attempts: 0,
-      error: null,
-      createdAt: now,
-      updatedAt: now
-    };
-    db.jobs.push(job);
-
-    call.updatedAt = now;
-    return { item };
-  });
-
-  if (created?.error) {
-    return { ok: false, error: created.error, status: created.status };
-  }
-
-  if (lane === "quality") {
-    queueWorker();
-  } else {
-    queueFastWorker();
-  }
-  return { ok: true, item: created.item };
-}
-
-// Enqueue an in-place update of an existing canvas item: regenerate its content
-// from the existing content + instruction, preserving id/type. Routes to the
-// fast or quality lane based on the speed hint.
-async function enqueueCanvasUpdateJob(callId, itemId, { instruction, speed }) {
-  const now = new Date().toISOString();
-  const jobId = randomUUID();
-  const change = cleanText(instruction);
-
-  if (!change) {
-    return { ok: false, error: "instruction is required.", status: 400 };
-  }
-
-  // Look up the item once (outside the write) so we can read any existing
-  // file-backed content (html/wireframe) before regenerating.
-  const snapshot = await readDb();
-  const snapshotCall = snapshot.calls.find((entry) => entry.id === callId);
-  if (!snapshotCall) return { ok: false, error: "Call not found.", status: 404 };
-  const snapshotItem = (snapshotCall.canvasItems || []).find((entry) => entry.id === itemId);
-  if (!snapshotItem) return { ok: false, error: "Canvas item not found.", status: 404 };
-
-  let priorContent = snapshotItem.content || "";
-  if ((snapshotItem.type === "html" || snapshotItem.type === "wireframe")) {
-    try {
-      priorContent = await readFile(join(artifactsDir, `${itemId}.html`), "utf8");
-    } catch {
-      priorContent = snapshotItem.content || "";
-    }
-  }
-
-  const created = await updateDb((db) => {
-    const call = db.calls.find((entry) => entry.id === callId);
-    if (!call) return { error: "Call not found.", status: 404 };
-    const item = (call.canvasItems || []).find((entry) => entry.id === itemId);
-    if (!item) return { error: "Canvas item not found.", status: 404 };
-
-    const useSpeed = speed === "quality" ? "quality" : speed === "fast" ? "fast" : item.speed || "fast";
-    const lane = pickCanvasLane(useSpeed);
-    const kind = item.type === "html" ? "canvas_html" : item.type === "wireframe" ? "canvas_wireframe" : "canvas_mermaid";
-
-    let existingContent = priorContent;
-    item.status = "generating";
-    item.error = null;
-    item.jobId = jobId;
-    item.speed = useSpeed;
-    item.updatedAt = now;
-
-    const job = {
-      id: jobId,
-      callId,
-      kind,
-      lane,
-      itemId,
-      type: item.type,
-      brief: change,
-      instruction: change,
-      existingContent,
-      existingFile: item.file || null,
-      title: item.title,
-      intent: "update",
-      status: "queued",
-      attempts: 0,
-      error: null,
-      createdAt: now,
-      updatedAt: now
-    };
-    db.jobs.push(job);
-    call.updatedAt = now;
-    return { item: publicCanvasItem(item), lane };
-  });
-
-  if (created?.error) {
-    return { ok: false, error: created.error, status: created.status };
-  }
-
-  if (created.lane === "quality") {
-    queueWorker();
-  } else {
-    queueFastWorker();
-  }
-  return { ok: true, item: created.item };
-}
-
-function queueFastWorker() {
-  if (!fastWorkerActive) {
-    setTimeout(processFastQueue, 0);
-  }
-}
-
-async function processFastQueue() {
-  if (fastWorkerActive) return;
-  fastWorkerActive = true;
-
-  try {
-    while (true) {
-      if (fastInFlight >= fastMaxConcurrency) break;
-
-      const db = await readDb();
-      const queued = db.jobs.filter((item) => item.status === "queued" && canvasKinds.has(item.kind) && item.lane !== "quality");
-      const slots = Math.max(0, fastMaxConcurrency - fastInFlight);
-      const batch = queued.slice(0, slots);
-      if (!batch.length) break;
-
-      // Claim the batch, then run concurrently.
-      const claimed = [];
-      for (const job of batch) {
-        const ok = await updateDb((next) => {
-          const target = next.jobs.find((item) => item.id === job.id && item.status === "queued");
-          if (!target) return false;
-          target.status = "running";
-          target.attempts = Number(target.attempts || 0) + 1;
-          target.updatedAt = new Date().toISOString();
-          return true;
-        });
-        if (ok) claimed.push(job.id);
-      }
-
-      if (!claimed.length) break;
-
-      for (const jobId of claimed) {
-        fastInFlight += 1;
-        runCanvasJob(jobId)
-          .catch((error) => console.error("Canvas job error:", error))
-          .finally(() => {
-            fastInFlight -= 1;
-            queueFastWorker();
-          });
-      }
-    }
-  } finally {
-    fastWorkerActive = false;
-  }
-}
-
-async function runCanvasJob(jobId) {
-  const db = await readDb();
-  const job = db.jobs.find((item) => item.id === jobId);
-  if (!job) return;
-
-  try {
-    if (job.type === "mermaid") {
-      await runMermaidCanvasJob(job);
-    } else if (job.type === "wireframe") {
-      await runHtmlCanvasJob(job, wireframeInstruction());
-    } else {
-      await runHtmlCanvasJob(job, prototypeInstruction());
-    }
-  } catch (error) {
-    await markCanvasItem(job.callId, job.itemId, (item) => {
-      item.status = "failed";
-      item.error = error.message || "Canvas generation failed.";
-    }, (j) => {
-      j.status = "failed";
-      j.error = error.message || "Canvas generation failed.";
-    });
-  }
-}
-
-async function runMermaidCanvasJob(job) {
-  const baseInput = buildCanvasInput(job, mermaidInstruction());
-  let raw = await createFastResponse(baseInput, { model: fastModel, outputType: "text" });
-  let mermaid = sanitizeMermaid(raw);
-
-  if (!isValidMermaid(mermaid)) {
-    const retryInput = buildCanvasInput(
-      job,
-      `${mermaidInstruction()}\n\nThe previous output was not valid mermaid, fix it, return only mermaid source.\n\nPrevious output:\n${raw}`,
-      { suppressUpdate: true }
-    );
-    raw = await createFastResponse(retryInput, { model: fastModel, outputType: "text" });
-    mermaid = sanitizeMermaid(raw);
-  }
-
-  const valid = isValidMermaid(mermaid);
-  await markCanvasItem(job.callId, job.itemId, (item) => {
-    item.content = valid ? mermaid : (mermaid || cleanText(raw));
-    item.file = null;
-    item.status = valid ? "ready" : "failed";
-    item.error = valid ? null : "Model did not return valid mermaid source.";
-  }, (j) => {
-    j.status = valid ? "completed" : "failed";
-    j.error = valid ? null : "Model did not return valid mermaid source.";
-  });
-}
-
-async function runHtmlCanvasJob(job, instruction = prototypeInstruction()) {
-  const input = buildCanvasInput(job, instruction);
-  const raw = await createFastResponse(input, { model: fastModel, outputType: "html" });
-  const html = normalizeHtml(extractHtmlDocument(raw) || prototypeFallbackHtml(job.title, raw));
-
-  await writeFile(join(artifactsDir, `${job.itemId}.html`), html, "utf8");
-
-  await markCanvasItem(job.callId, job.itemId, (item) => {
-    item.content = "";
-    item.file = `data/artifacts/${item.id}.html`;
-    item.status = "ready";
-    item.error = null;
-  }, (j) => {
-    j.status = "completed";
-    j.error = null;
-  });
-}
-
-// QUALITY LANE: multi-step refine on the paced worker using createResponse with
-// workModel. Marks the job running, runs 2 model steps, validates mermaid the
-// same way (validate + 1 retry), writes content/file, marks the item ready, and
-// broadcasts canvas.item.updated. Honors the inter-call pacing via jobDelayMs.
-async function runQualityCanvasJob(jobId) {
-  await updateDb((db) => {
-    const job = db.jobs.find((item) => item.id === jobId);
-    if (job) {
-      job.status = "running";
-      job.progress = "Starting quality canvas job.";
-      job.attempts = Number(job.attempts || 0) + 1;
-      job.updatedAt = new Date().toISOString();
-    }
-  });
-
-  const ctx = await readDb();
-  const ctxJob = ctx.jobs.find((item) => item.id === jobId);
-  const callId = ctxJob?.callId || null;
-  const itemId = ctxJob?.itemId || null;
-
-  try {
-    if (!ctxJob) throw new Error("Job context disappeared.");
-
-    if (ctxJob.type === "mermaid") {
-      await runQualityMermaidJob(ctxJob);
-    } else {
-      const instruction = ctxJob.type === "wireframe" ? wireframeInstruction() : prototypeInstruction();
-      await runQualityHtmlJob(ctxJob, instruction);
-    }
-  } catch (error) {
-    await markCanvasItem(callId, itemId, (item) => {
-      item.status = "failed";
-      item.error = error.message || "Canvas generation failed.";
-    }, (j) => {
-      j.status = "failed";
-      j.error = error.message || "Canvas generation failed.";
-    });
-  }
-}
-
-function qualityBaseContext(job) {
-  if (job.intent === "update") {
-    return buildUpdatePrompt(job.type, job.existingContent || "", job.instruction || job.brief);
-  }
-  return `Brief:\n${job.brief}`;
-}
-
-async function runQualityMermaidJob(job) {
-  // Step 1: outline the structure / nodes.
-  const planInput = buildQualityInput(
-    job,
-    "Plan the diagram before drawing it. Outline the key nodes, groupings, and the relationships between them as a short bulleted list. Do not output mermaid yet."
-  );
-  const plan = await createResponse(planInput, { attempt: 1, outputType: "markdown" });
-  lastGenerationAt = Date.now();
-  await wait(jobDelayMs);
-
-  // Step 2: produce final valid mermaid from the plan.
-  const finalInput = buildQualityInput(
-    job,
-    `${mermaidInstruction()}\n\nUse this structure plan you produced:\n${plan}`
-  );
-  let raw = await createResponse(finalInput, { attempt: 1, outputType: "text" });
-  lastGenerationAt = Date.now();
-  let mermaid = sanitizeMermaid(raw);
-
-  if (!isValidMermaid(mermaid)) {
-    await wait(jobDelayMs);
-    const retryInput = buildQualityInput(
-      job,
-      `${mermaidInstruction()}\n\nThe previous output was not valid mermaid, fix it, return only mermaid source.\n\nPrevious output:\n${raw}`
-    );
-    raw = await createResponse(retryInput, { attempt: 1, outputType: "text" });
-    lastGenerationAt = Date.now();
-    mermaid = sanitizeMermaid(raw);
-  }
-
-  const valid = isValidMermaid(mermaid);
-  await markCanvasItem(job.callId, job.itemId, (item) => {
-    item.content = valid ? mermaid : (mermaid || cleanText(raw));
-    item.file = null;
-    item.status = valid ? "ready" : "failed";
-    item.error = valid ? null : "Model did not return valid mermaid source.";
-  }, (j) => {
-    j.status = valid ? "completed" : "failed";
-    j.error = valid ? null : "Model did not return valid mermaid source.";
-    j.completedAt = valid ? new Date().toISOString() : j.completedAt;
-  });
-}
-
-async function runQualityHtmlJob(job, instruction) {
-  // Step 1: plan layout + content.
-  const planInput = buildQualityInput(
-    job,
-    "First, plan this build: define the layout structure, the primary sections, the content hierarchy, the sample content, and any key interactive states. Output a concise plan only, no HTML yet."
-  );
-  const plan = await createResponse(planInput, { attempt: 1, outputType: "markdown" });
-  lastGenerationAt = Date.now();
-  await wait(jobDelayMs);
-
-  // Step 2: produce the complete standalone document from the plan.
-  const finalInput = buildQualityInput(
-    job,
-    `${instruction}\n\nUse this layout and content plan you produced:\n${plan}`
-  );
-  const raw = await createResponse(finalInput, { attempt: 1, outputType: "html" });
-  lastGenerationAt = Date.now();
-  const html = normalizeHtml(extractHtmlDocument(raw) || prototypeFallbackHtml(job.title, raw));
-
-  await writeFile(join(artifactsDir, `${job.itemId}.html`), html, "utf8");
-
-  await markCanvasItem(job.callId, job.itemId, (item) => {
-    item.content = "";
-    item.file = `data/artifacts/${item.id}.html`;
-    item.status = "ready";
-    item.error = null;
-  }, (j) => {
-    j.status = "completed";
-    j.error = null;
-    j.completedAt = new Date().toISOString();
-  });
-}
-
-function buildQualityInput(job, instruction) {
-  return [
-    {
-      role: "user",
-      content: [
-        {
-          type: "input_text",
-          text: `Title: ${job.title}\n\n${qualityBaseContext(job)}\n\n${instruction}`
-        }
-      ]
-    }
-  ];
-}
-
-function mermaidInstruction() {
-  return "Return ONLY valid mermaid diagram source code. No markdown code fences, no prose, no explanation. Use graph/flowchart/sequence/erDiagram as appropriate. Lay it out clearly top-down or left-right, group related nodes sensibly, and use concise, readable labels.";
-}
-
-function prototypeInstruction() {
-  return "Build a complete, modern, high-fidelity standalone HTML prototype with inline CSS and small inline JavaScript only. Use a cohesive modern design system: a restrained color palette, a consistent spacing scale, a system font stack, clear visual hierarchy, and realistic sample content (real-looking copy, names, and data rather than lorem ipsum). Mobile-first with responsive desktop expansion. No external assets, no external scripts, no markdown fences. Return only the full HTML document starting with <!doctype html>.";
-}
-
-function wireframeInstruction() {
-  return "Produce a complete standalone HTML wireframe: grayscale, boxy, placeholder text and gray blocks for images, visible layout structure, a consistent spacing scale, system font, NO color theming, NO real content polish. Inline CSS only, no external assets, no markdown fences, start with <!doctype html>.";
-}
-
-function buildCanvasInput(job, instruction, { suppressUpdate = false } = {}) {
-  let text;
-  if (job.intent === "update" && !suppressUpdate) {
-    const updatePrompt = buildUpdatePrompt(job.type, job.existingContent || "", job.instruction || job.brief);
-    text = `Title: ${job.title}\n\n${updatePrompt}\n\n${instruction}`;
-  } else {
-    text = `Title: ${job.title}\n\nBrief:\n${job.brief}\n\n${instruction}`;
-  }
-  return [
-    {
-      role: "user",
-      content: [
-        {
-          type: "input_text",
-          text
-        }
-      ]
-    }
-  ];
-}
-
-async function markCanvasItem(callId, itemId, mutateItem, mutateJob) {
-  let publicItem = null;
-  await updateDb((db) => {
-    const call = db.calls.find((entry) => entry.id === callId);
-    const item = call?.canvasItems?.find((entry) => entry.id === itemId);
-    if (item) {
-      mutateItem(item);
-      item.updatedAt = new Date().toISOString();
-      publicItem = publicCanvasItem(item);
-    }
-    if (call) call.updatedAt = new Date().toISOString();
-    if (mutateJob) {
-      const activeJobId = item?.jobId;
-      const job = (activeJobId && db.jobs.find((entry) => entry.id === activeJobId))
-        || db.jobs.find((entry) => entry.itemId === itemId);
-      if (job) {
-        mutateJob(job);
-        job.updatedAt = new Date().toISOString();
-      }
-    }
-  });
-  if (publicItem) broadcastEvent("canvas.item.updated", publicItem);
-  return publicItem;
-}
-
-async function createFastResponse(input, { model = fastModel, outputType = "text" } = {}) {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("Missing OPENAI_API_KEY on the server.");
-  }
-
-  const instructions = outputType === "html"
-    ? "You are Cooper, Michael's AIRES CTO/CPO executive assistant. Produce a complete standalone HTML document with inline CSS and small inline JavaScript. Use no external assets, external scripts, hidden reasoning, or markdown fences."
-    : "You are Cooper, Michael's AIRES CTO/CPO executive assistant. Follow the instruction exactly and return only the requested content with no extra prose.";
-
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-      "OpenAI-Safety-Identifier": "cooper-local-dev"
-    },
-    body: JSON.stringify({
-      model,
-      instructions,
-      input,
-      reasoning: { effort: "low" },
-      max_output_tokens: fastMaxOutputTokens,
-      text: { format: { type: "text" } }
-    })
-  });
-
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `OpenAI Responses API failed with ${response.status}.`);
-  }
-
-  return extractOutputText(payload);
-}
-
-function publicKnowledgeEntry(entry, includeText = false) {
-  const base = {
-    id: entry.id,
-    callId: entry.callId,
-    name: entry.name,
-    mode: entry.mode,
-    chars: entry.chars,
-    status: entry.status,
-    error: entry.error || null,
-    createdAt: entry.createdAt
-  };
-  if (includeText) base.text = entry.text;
-  return base;
-}
-
-function searchPromptEntries(entries, query) {
-  const needle = query.toLowerCase();
-  const terms = needle.split(/\s+/).filter(Boolean);
-  return entries
-    .filter((entry) => entry.mode === "prompt" && typeof entry.text === "string")
-    .map((entry) => {
-      const haystack = entry.text.toLowerCase();
-      const matches = terms.filter((term) => haystack.includes(term)).length;
-      const direct = haystack.includes(needle);
-      const score = direct ? 1 : terms.length ? matches / terms.length : 0;
-      return { entry, score };
-    })
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map((item) => ({
-      text: item.entry.text.length > 2000 ? `${item.entry.text.slice(0, 2000)}...` : item.entry.text,
-      score: item.score,
-      source: item.entry.name
-    }));
-}
-
-async function openAiFetch(path, { method = "GET", headers = {}, body } = {}) {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("Missing OPENAI_API_KEY on the server.");
-  }
-  const response = await fetch(`${openAiBase}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      "OpenAI-Beta": "assistants=v2",
-      "OpenAI-Safety-Identifier": "cooper-local-dev",
-      ...headers
-    },
-    body
-  });
-  return response;
-}
-
-async function openAiJson(path, options = {}) {
-  const response = await openAiFetch(path, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined
-  });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(payload?.error?.message || `OpenAI API ${path} failed with ${response.status}.`);
-  }
-  return payload;
-}
-
-async function indexKnowledgeEntry({ name, text, vectorStoreId }) {
-  // 1. Upload the text as a file (purpose "assistants").
-  const safeName = (name || "context").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60) || "context";
-  const fileName = safeName.endsWith(".txt") ? safeName : `${safeName}.txt`;
-  const fd = new FormData();
-  fd.set("purpose", "assistants");
-  fd.set("file", new Blob([text], { type: "text/plain" }), fileName);
-  const fileResponse = await openAiFetch("/files", { method: "POST", body: fd });
-  const filePayload = await fileResponse.json().catch(() => null);
-  if (!fileResponse.ok) {
-    throw new Error(filePayload?.error?.message || `OpenAI Files upload failed with ${fileResponse.status}.`);
-  }
-  const fileId = filePayload?.id;
-  if (!fileId) throw new Error("OpenAI Files upload returned no file id.");
-
-  // 2. Create the call's vector store if needed.
-  let vsId = vectorStoreId;
-  if (!vsId) {
-    const vs = await openAiJson("/vector_stores", {
-      method: "POST",
-      body: { name: `cooper-call-${Date.now()}` }
-    });
-    vsId = vs?.id;
-    if (!vsId) throw new Error("Vector store creation returned no id.");
-  }
-
-  // 3. Add the file to the vector store.
-  await openAiJson(`/vector_stores/${vsId}/files`, {
-    method: "POST",
-    body: { file_id: fileId }
-  });
-
-  return { fileId, vectorStoreId: vsId };
-}
-
-async function searchVectorStore(vectorStoreId, query) {
-  const payload = await openAiJson(`/vector_stores/${vectorStoreId}/search`, {
-    method: "POST",
-    body: { query, max_num_results: 5 }
-  });
-  const data = Array.isArray(payload?.data) ? payload.data : [];
-  return data.map((result) => {
-    const chunks = Array.isArray(result?.content)
-      ? result.content.map((part) => part?.text || "").filter(Boolean)
-      : [];
-    return {
-      text: chunks.join("\n").trim() || "",
-      score: typeof result?.score === "number" ? result.score : undefined,
-      source: result?.filename || result?.file_id || "indexed"
-    };
-  }).filter((item) => item.text);
-}
-
 async function processQueue() {
   if (workerActive) return;
   workerActive = true;
@@ -1367,12 +794,7 @@ async function processQueue() {
   try {
     while (true) {
       const db = await readDb();
-      // The paced lane handles artifact jobs plus any canvas job routed to the
-      // quality lane (speed "quality").
-      const queued = db.jobs.filter((item) =>
-        item.status === "queued"
-        && (!canvasKinds.has(item.kind) || item.lane === "quality")
-      );
+      const queued = db.jobs.filter((item) => item.status === "queued");
       const now = Date.now();
       const job = queued.find((item) => !item.retryAt || new Date(item.retryAt).getTime() <= now);
       const nextRetryAt = queued
@@ -1395,11 +817,7 @@ async function processQueue() {
         return;
       }
 
-      if (canvasKinds.has(job.kind)) {
-        await runQualityCanvasJob(job.id);
-      } else {
-        await runJob(job.id);
-      }
+      await runJob(job.id);
     }
   } finally {
     workerActive = false;
@@ -1548,6 +966,37 @@ async function completeArtifact(job, call) {
   });
 }
 
+async function createMcpAppArtifact(callId, payload) {
+  const artifactId = randomUUID();
+  const now = new Date().toISOString();
+  const title = cleanText(payload.title) || "MCP App";
+  const content = `${JSON.stringify(payload, null, 2)}\n`;
+
+  await writeFile(join(artifactsDir, `${artifactId}.json`), content, "utf8");
+
+  return updateDb((db) => {
+    const call = db.calls.find((item) => item.id === callId);
+    const artifact = {
+      id: artifactId,
+      callId,
+      jobId: null,
+      kind: "mcp_app",
+      title,
+      outputType: "mcp_app",
+      extension: "json",
+      mimeType: "application/json",
+      file: `data/artifacts/${artifactId}.json`,
+      createdAt: now
+    };
+
+    db.artifacts.push(artifact);
+    if (call) {
+      call.updatedAt = now;
+    }
+    return artifact;
+  });
+}
+
 async function createResponse(input, { attempt = 1, outputType = "markdown" } = {}) {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("Missing OPENAI_API_KEY on the server.");
@@ -1600,9 +1049,11 @@ function buildWorkPrompt(call, job, step) {
     .map((entry) => `- [${entry.at}] ${entry.speaker || "speaker"}: ${entry.text}`)
     .join("\n");
   const recipe = artifactRecipes[job.kind] || {};
-  const finalInstruction = recipe.outputType === "html"
-    ? "Return only the content requested for this step. If this step asks for the prototype, return a complete standalone HTML document starting with <!doctype html>, with inline CSS and inline JavaScript only, and no markdown fences."
-    : "Return only the Markdown content for this step. Do not mention hidden reasoning.";
+  const finalInstruction = job.kind === "aires_requirements"
+    ? "Return only the content requested for this step. If this step asks for the final artifact, return a complete standalone AIRES-branded HTML document starting with <!doctype html>, with inline CSS and a simple window.print() Export PDF button, no external scripts, no stock imagery, no gradients, no emoji, and no markdown fences."
+    : recipe.outputType === "html"
+      ? "Return only the content requested for this step. If this step asks for the prototype, return a complete standalone HTML document starting with <!doctype html>, with inline CSS and inline JavaScript only, and no markdown fences."
+      : "Return only the Markdown content for this step. Do not mention hidden reasoning.";
 
   return [
     {
@@ -1616,6 +1067,9 @@ Started: ${call.startedAt}
 Ended: ${call.endedAt || "unknown"}
 Artifact type: ${recipe.title || job.kind}
 Output type: ${recipe.outputType || "markdown"}
+
+Attached project context:
+${call.projectContextSnapshot || "(none attached)"}
 
 Current draft:
 ${job.draft || "(none yet)"}
@@ -1648,10 +1102,1030 @@ function extractOutputText(payload) {
   return chunks.join("\n\n").trim() || "No content returned.";
 }
 
+async function executeCooperTool(name, args, context = {}) {
+  if (name === "check_calendar") {
+    return {
+      status: "completed",
+      tool: name,
+      source: "local sample calendar",
+      value: checkCalendar(args.date, args.time)
+    };
+  }
+
+  if (name === "run_gstack_skill") {
+    return executeGstackSkillTool(args);
+  }
+
+  if (name === "create_canvas_artifact") {
+    return executeCanvasArtifactTool(args, context);
+  }
+
+  if (name === "render_mcp_app") {
+    return executeMcpAppTool(args, context);
+  }
+
+  if (name === "run_aires_requirements_framework") {
+    return executeAiresRequirementsTool(args, context);
+  }
+
+  if (name === "search_notion_workspace") {
+    return executeNotionSearchTool(args);
+  }
+
+  if (name === "fetch_notion_page") {
+    return executeNotionFetchPageTool(args);
+  }
+
+  if (name === "create_followup_action") {
+    const confirmed = args.confirmed_by_michael === true;
+    if (!confirmed || !arcadeWritesEnabled) {
+      return {
+        status: "approval_required",
+        tool: name,
+        riskLevel: "write",
+        message: "This is a write action. Ask Michael to confirm the exact destination, title, owner, due date, and content before executing.",
+        requestedAction: {
+          action_type: cleanText(args.action_type),
+          title: cleanText(args.title),
+          owner: cleanText(args.owner),
+          due_date: cleanText(args.due_date),
+          destination: cleanText(args.destination),
+          description: cleanText(args.description)
+        },
+        configuredForWrites: arcadeWritesEnabled
+      };
+    }
+  }
+
+  return executeArcadeMappedTool(name, args);
+}
+
+async function executeCanvasArtifactTool(args, context = {}) {
+  const callId = cleanText(context.callId);
+  const kind = artifactRecipes[cleanText(args.kind)] ? cleanText(args.kind) : "mermaid_diagram";
+  const title = cleanText(args.title);
+  const prompt = cleanText(args.prompt);
+  const supportingContext = cleanText(args.context);
+
+  if (!callId) {
+    return {
+      status: "error",
+      tool: "create_canvas_artifact",
+      message: "No active call is available for the canvas artifact.",
+      retryable: false
+    };
+  }
+
+  const customPrompt = [
+    title ? `Canvas title: ${title}` : "",
+    prompt ? `Canvas request: ${prompt}` : "",
+    supportingContext ? `Supporting context:\n${supportingContext}` : ""
+  ].filter(Boolean).join("\n\n");
+
+  const result = await enqueueArtifactJob(callId, kind, customPrompt, { allowEmptyTranscript: Boolean(customPrompt) });
+  if (!result.ok) {
+    return {
+      status: "error",
+      tool: "create_canvas_artifact",
+      message: result.error || "Could not queue canvas work.",
+      retryable: false
+    };
+  }
+
+  return {
+    status: "queued",
+    tool: "create_canvas_artifact",
+    kind,
+    title: result.job.title,
+    jobId: result.job.id,
+    message: `${result.job.title} is running in Cooper's canvas.`
+  };
+}
+
+async function executeMcpAppTool(args, context = {}) {
+  const callId = cleanText(context.callId);
+  const title = cleanText(args.title) || "MCP App";
+  const description = cleanText(args.description);
+  const serverId = cleanText(args.server_id);
+  const resourceUri = cleanText(args.resource_uri);
+  const toolName = cleanText(args.tool_name);
+  const state = isPlainObject(args.state) ? safeAuditObject(args.state) : {};
+  const htmlInput = limitText(args.html, 120000);
+  const server = findMcpAppServer(serverId);
+  const messages = [];
+  let html = htmlInput.text;
+  let source = html ? "inline_html" : "placeholder";
+  let resourceStatus = htmlInput.truncated ? "inline_html_truncated" : "inline_html";
+  let mimeType = "text/html";
+
+  if (!callId) {
+    return {
+      status: "error",
+      tool: "render_mcp_app",
+      message: "No active call is available for the MCP App canvas.",
+      retryable: false
+    };
+  }
+
+  if (!html && resourceUri && server) {
+    try {
+      const resource = await fetchMcpAppResource(server, resourceUri);
+      html = resource.html;
+      mimeType = resource.mimeType || mimeType;
+      source = "mcp_resource";
+      resourceStatus = "resource_loaded";
+      messages.push(`Loaded ${resourceUri} from ${server.serverId}.`);
+    } catch (error) {
+      resourceStatus = "resource_unavailable";
+      messages.push(error.message || "MCP App resource could not be loaded.");
+    }
+  } else if (!html && resourceUri && !server) {
+    resourceStatus = "server_not_configured";
+    messages.push(serverId
+      ? `MCP App server "${serverId}" is not configured.`
+      : "No MCP App server id was provided for this resource.");
+  } else if (!html) {
+    resourceStatus = "placeholder";
+    messages.push("No MCP App resource URI or inline HTML was provided, so Cooper created a placeholder canvas surface.");
+  }
+
+  if (!html) {
+    html = mcpAppPlaceholderHtml({
+      title,
+      description,
+      serverId: server?.serverId || serverId,
+      resourceUri,
+      toolName,
+      state,
+      messages
+    });
+  }
+
+  const payload = {
+    version: "cooper-mcp-app-1",
+    title,
+    description,
+    serverId: server?.serverId || serverId || "",
+    transport: server?.type || "",
+    resourceUri,
+    toolName,
+    source,
+    resourceStatus,
+    state,
+    html: normalizeHtml(html),
+    htmlMimeType: mimeType,
+    aguiEvents: [
+      {
+        type: "TOOL_CALL_START",
+        toolCallId: `cooper-${randomUUID()}`,
+        toolCallName: toolName || "render_mcp_app",
+        at: new Date().toISOString()
+      },
+      {
+        type: "STATE_SNAPSHOT",
+        snapshot: {
+          status: resourceStatus === "resource_loaded" || source === "inline_html" ? "ready" : resourceStatus,
+          title,
+          resourceUri: resourceUri || null,
+          source
+        },
+        at: new Date().toISOString()
+      }
+    ],
+    messages,
+    createdAt: new Date().toISOString()
+  };
+
+  const artifact = await createMcpAppArtifact(callId, payload);
+
+  return {
+    status: "completed",
+    tool: "render_mcp_app",
+    riskLevel: "advisory",
+    artifactId: artifact.id,
+    title: artifact.title,
+    source,
+    resourceStatus,
+    message: `${title} is on Cooper's canvas as an MCP App surface.`
+  };
+}
+
+async function executeAiresRequirementsTool(args, context = {}) {
+  const mode = cleanText(args.mode) || "list_framework";
+  const topic = cleanText(args.topic);
+  const sourceContext = cleanText(args.source_context);
+  const artifactTitle = cleanText(args.artifact_title);
+  const focus = cleanText(args.interview_focus) || "problem";
+  const documentKey = cleanText(args.document_key) || "all";
+  const detailLevel = cleanText(args.detail_level) || "summary";
+  const workshopFocus = cleanText(args.workshop_focus) || "shape";
+  const currentDraft = cleanText(args.current_draft);
+  const goal = cleanText(args.goal);
+  const requestedOutput = cleanText(args.requested_output);
+
+  if (mode === "explain_documents" || mode === "explain_document") {
+    return explainAiresFrameworkDocuments({
+      documentKey: mode === "explain_document" ? documentKey : documentKey || "all",
+      detailLevel
+    });
+  }
+
+  if (mode === "workshop_document") {
+    return workshopAiresFrameworkDocument({
+      documentKey: documentKey === "all" ? "requirements_framework" : documentKey,
+      sourceContext,
+      currentDraft,
+      goal: goal || topic,
+      requestedOutput,
+      workshopFocus
+    });
+  }
+
+  if (mode === "list_framework") {
+    const documents = await explainAiresFrameworkDocuments({ documentKey: "all", detailLevel: "summary" });
+    return {
+      status: "completed",
+      tool: "run_aires_requirements_framework",
+      riskLevel: "advisory",
+      value: {
+        name: "AIRES Requirements Framework",
+        defaultArtifact: "Scoped requirements",
+        flow: ["Capture", "Distill", "Scope", "Slice", "Verify"],
+        sections: [
+          "Problem and goal with success metrics and 5-whys check",
+          "Users and stakeholders",
+          "Current state to desired state",
+          "Scope: in scope, out of scope now, and non-goals",
+          "Data, edge cases, failure modes, constraints, and non-functionals",
+          "MoSCoW prioritization",
+          "Vertical INVEST slices",
+          "Given/When/Then acceptance criteria",
+          "Definition of Ready"
+        ],
+        slicePatterns: [
+          "De-risk the unknown first",
+          "Workflow step",
+          "Persona slice",
+          "Rule variation",
+          "Data/input variation",
+          "Integration seam",
+          "Failure mode",
+          "Deferred non-functional"
+        ],
+        documents: documents.value?.documents || [],
+        workshopModes: documents.value?.workshopModes || [],
+        voice_summary: "The AIRES framework moves messy context through Capture, Distill, Scope, Slice, and Verify, then turns it into scoped requirements with MoSCoW, INVEST slices, acceptance criteria, and a Definition of Ready."
+      }
+    };
+  }
+
+  if (mode === "interview") {
+    return {
+      status: "completed",
+      tool: "run_aires_requirements_framework",
+      riskLevel: "advisory",
+      value: {
+        topic: topic || "current feature idea",
+        focus,
+        questions: requirementsInterviewQuestions(focus),
+        voice_summary: requirementsInterviewVoiceSummary(focus)
+      }
+    };
+  }
+
+  if (mode !== "queue_artifact") {
+    return {
+      status: "error",
+      tool: "run_aires_requirements_framework",
+      message: "Use mode list_framework, explain_documents, explain_document, workshop_document, interview, or queue_artifact.",
+      retryable: false
+    };
+  }
+
+  const callId = cleanText(context.callId);
+  if (!callId) {
+    return {
+      status: "error",
+      tool: "run_aires_requirements_framework",
+      message: "No active call is available for the AIRES requirements artifact.",
+      retryable: false
+    };
+  }
+
+  const customPrompt = [
+    artifactTitle ? `Artifact title: ${artifactTitle}` : "",
+    topic ? `Topic: ${topic}` : "",
+    sourceContext ? `Source context:\n${sourceContext}` : "",
+    "Apply the AIRES Requirements Framework exactly: Capture -> Distill -> Scope -> Slice -> Verify. Preserve vivid user phrases, label assumptions, avoid inventing customer-specific facts, and create the thinnest useful first slice.",
+    "Use the AIRES visual system: architectural, monochrome, precise, soft black, warm grey, sparse Volt accent, no gradients, no stock imagery, no emoji."
+  ].filter(Boolean).join("\n\n");
+
+  const result = await enqueueArtifactJob(callId, "aires_requirements", customPrompt, {
+    allowEmptyTranscript: Boolean(customPrompt)
+  });
+
+  if (!result.ok) {
+    return {
+      status: "error",
+      tool: "run_aires_requirements_framework",
+      message: result.error || "Could not queue AIRES requirements work.",
+      retryable: false
+    };
+  }
+
+  return {
+    status: "queued",
+    tool: "run_aires_requirements_framework",
+    kind: "aires_requirements",
+    title: result.job.title,
+    jobId: result.job.id,
+    message: "AIRES scoped requirements are running in Cooper's work queue."
+  };
+}
+
+async function executeNotionSearchTool(args) {
+  if (process.env.ARCADE_API_KEY && arcadeToolMappings.search_notion_workspace) {
+    return executeArcadeMappedTool("search_notion_workspace", args);
+  }
+
+  if (!process.env.NOTION_API_KEY) {
+    return {
+      status: "configuration_required",
+      tool: "search_notion_workspace",
+      message: "Notion is not configured. Either map ARCADE_NOTION_SEARCH_TOOL and pre-authorize it in Settings, or set NOTION_API_KEY for direct read-only Notion API access.",
+      missing: ["ARCADE_NOTION_SEARCH_TOOL or NOTION_API_KEY"],
+      directEnv: "NOTION_API_KEY",
+      arcadeEnv: "ARCADE_NOTION_SEARCH_TOOL"
+    };
+  }
+
+  const query = cleanText(args.query);
+  if (!query) {
+    return {
+      status: "error",
+      tool: "search_notion_workspace",
+      message: "A Notion search query is required.",
+      retryable: false
+    };
+  }
+
+  const value = await searchNotionDirect(args);
+  return {
+    status: "completed",
+    tool: "search_notion_workspace",
+    source: "direct Notion API",
+    value
+  };
+}
+
+async function executeNotionFetchPageTool(args) {
+  if (process.env.ARCADE_API_KEY && arcadeToolMappings.fetch_notion_page) {
+    return executeArcadeMappedTool("fetch_notion_page", args);
+  }
+
+  if (!process.env.NOTION_API_KEY) {
+    return {
+      status: "configuration_required",
+      tool: "fetch_notion_page",
+      message: "Notion is not configured. Either map ARCADE_NOTION_FETCH_PAGE_TOOL and pre-authorize it in Settings, or set NOTION_API_KEY for direct read-only Notion API access.",
+      missing: ["ARCADE_NOTION_FETCH_PAGE_TOOL or NOTION_API_KEY"],
+      directEnv: "NOTION_API_KEY",
+      arcadeEnv: "ARCADE_NOTION_FETCH_PAGE_TOOL"
+    };
+  }
+
+  const pageId = extractNotionId(args.page_id_or_url);
+  if (!pageId) {
+    return {
+      status: "error",
+      tool: "fetch_notion_page",
+      message: "Provide a valid Notion page URL or page ID.",
+      retryable: false
+    };
+  }
+
+  const value = await fetchNotionPageDirect(pageId, args);
+  return {
+    status: "completed",
+    tool: "fetch_notion_page",
+    source: "direct Notion API",
+    value
+  };
+}
+
+async function executeGstackSkillTool(args) {
+  const startedAt = Date.now();
+  const skill = cleanText(args.skill);
+  const mode = cleanText(args.mode) || "advisory";
+  const input = cleanText(args.input);
+  const context = cleanText(args.context);
+
+  try {
+    const result = await runGstackSkill({ skill, mode, input, context });
+    const durationMs = Date.now() - startedAt;
+    await recordGstackRun({
+      skill,
+      mode,
+      input,
+      context,
+      result,
+      durationMs,
+      status: "completed"
+    });
+
+    return {
+      status: "completed",
+      tool: "run_gstack_skill",
+      riskLevel: "advisory",
+      value: result
+    };
+  } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    await recordGstackRun({
+      skill,
+      mode,
+      input,
+      context,
+      durationMs,
+      status: "failed",
+      error: error.message || "GStack skill failed."
+    });
+    throw error;
+  }
+}
+
+function requirementsInterviewQuestions(focus = "problem") {
+  const shared = {
+    problem: [
+      "What is the real user or business problem underneath the requested solution?",
+      "Who feels the pain most acutely today?",
+      "What metric or observable behavior should move if this works?"
+    ],
+    stakeholders: [
+      "Who is the primary user, who approves done, and who verifies quality?",
+      "Whose workflow or data changes downstream?",
+      "Who needs to be consulted before scope is locked?"
+    ],
+    scope: [
+      "What is the smallest useful version we should include in this pass?",
+      "What valuable work should be explicitly out of scope now?",
+      "What is a non-goal so the feature does not sprawl?"
+    ],
+    data: [
+      "What is the source of truth for the data this work touches?",
+      "What are the likely edge cases: duplicates, permissions, stale records, retries, or empty states?",
+      "Are there security, compliance, tenancy, observability, or performance constraints?"
+    ],
+    slices: [
+      "What is the thinnest vertical slice that delivers observable value end-to-end?",
+      "Which uncertainty should we de-risk first?",
+      "Can each slice be completed and tested in roughly one to two days?"
+    ],
+    acceptance: [
+      "What user action or system event should each acceptance criterion start from?",
+      "What observable outcome proves the behavior works?",
+      "What failure mode needs a Given/When/Then test?"
+    ],
+    ready: [
+      "Is the problem, goal, and success metric written down?",
+      "Are in scope, out of scope now, and non-goals explicit?",
+      "Are the slices vertical, INVEST, and small enough to pull?"
+    ]
+  };
+  return shared[focus] || shared.problem;
+}
+
+function requirementsInterviewVoiceSummary(focus = "problem") {
+  return {
+    problem: "Let's start problem-first: who has the pain, what outcome do we want, and what metric tells us it worked?",
+    stakeholders: "I would lock the people map next: primary user, sign-off owner, verifier, and downstream teams affected by the change.",
+    scope: "Let's draw the boundary clearly: what ships now, what waits, and what this work explicitly will not become.",
+    data: "The requirements will get sharper if we clarify source of truth, edge cases, failure modes, and non-functional constraints.",
+    slices: "I would turn this into thin vertical slices next, starting with the riskiest assumption or the smallest observable workflow step.",
+    acceptance: "Let's make the behavior testable with Given/When/Then criteria tied to user actions, system events, and visible outcomes.",
+    ready: "The ready gate is simple: problem, owner, scope, data, constraints, acceptance criteria, and a vertical slice the team can actually pull."
+  }[focus] || "Let's gather the missing requirements context, then turn it into scoped, sliceable work.";
+}
+
+function checkCalendar(date, time) {
+  const busyBlocks = [
+    { date: "2026-05-12", start: "09:00", end: "10:30" },
+    { date: "2026-05-12", start: "14:00", end: "15:00" },
+    { date: "2026-05-13", start: "11:00", end: "12:00" }
+  ];
+  const normalizedTime = normalizeTime(time);
+  const isBusy = busyBlocks.some((block) => block.date === date && normalizedTime >= block.start && normalizedTime < block.end);
+
+  return {
+    date,
+    time,
+    available: !isBusy,
+    message: isBusy ? "That slot is currently blocked on the sample calendar." : "That slot is available on the sample calendar.",
+    source: "local sample calendar"
+  };
+}
+
+async function searchNotionDirect(args) {
+  const filter = cleanText(args.filter) || "all";
+  const pageSize = clampNumber(args.page_size, 1, 10, notionSearchLimit);
+  const body = {
+    query: cleanText(args.query),
+    page_size: pageSize,
+    sort: { direction: "descending", timestamp: "last_edited_time" }
+  };
+
+  if (filter === "pages") {
+    body.filter = { property: "object", value: "page" };
+  } else if (filter === "data_sources" || filter === "databases") {
+    body.filter = { property: "object", value: notionSearchDataObject() };
+  }
+
+  const payload = await notionRequest("/search", {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  return {
+    query: body.query,
+    filter,
+    count: results.length,
+    results: results.map(notionSearchResultSummary)
+  };
+}
+
+async function fetchNotionPageDirect(pageId, args) {
+  const includeBlocks = args.include_blocks !== false;
+  const maxBlocks = clampNumber(args.max_blocks, 1, 100, notionBlockLimit);
+  const page = await notionRequest(`/pages/${pageId}`);
+  const blocks = includeBlocks ? await fetchNotionBlocks(pageId, maxBlocks) : [];
+  const markdown = limitText(blocks.map(notionBlockToMarkdown).filter(Boolean).join("\n"), 16000);
+
+  return {
+    page: notionPageSummary(page),
+    includeBlocks,
+    blockCount: blocks.length,
+    content: markdown.text,
+    truncated: markdown.truncated
+  };
+}
+
+async function fetchNotionBlocks(blockId, maxBlocks) {
+  const blocks = [];
+  let startCursor = "";
+
+  while (blocks.length < maxBlocks) {
+    const limit = Math.min(100, maxBlocks - blocks.length);
+    const query = new URLSearchParams({ page_size: String(limit) });
+    if (startCursor) query.set("start_cursor", startCursor);
+    const payload = await notionRequest(`/blocks/${blockId}/children?${query.toString()}`);
+    blocks.push(...(Array.isArray(payload.results) ? payload.results : []));
+    if (!payload.has_more || !payload.next_cursor) break;
+    startCursor = payload.next_cursor;
+  }
+
+  return blocks;
+}
+
+async function notionRequest(path, options = {}) {
+  const response = await fetch(`https://api.notion.com/v1${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${process.env.NOTION_API_KEY}`,
+      "Notion-Version": notionVersion,
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.message || `Notion API failed with ${response.status}.`);
+  }
+  return payload;
+}
+
+function notionSearchResultSummary(item) {
+  if (item.object === "database" || item.object === "data_source") {
+    return {
+      id: item.id || "",
+      object: item.object,
+      title: notionDataSourceTitle(item),
+      url: item.url || "",
+      lastEditedAt: item.last_edited_time || ""
+    };
+  }
+
+  return notionPageSummary(item);
+}
+
+function notionSearchDataObject() {
+  return notionVersion >= "2025-09-03" ? "data_source" : "database";
+}
+
+function notionDataSourceTitle(item) {
+  return notionRichText(item.title) || cleanText(item.name) || "Untitled Notion data source";
+}
+
+function notionPageSummary(page) {
+  return {
+    id: page.id || "",
+    object: page.object || "page",
+    title: notionPageTitle(page),
+    url: page.url || "",
+    createdAt: page.created_time || "",
+    lastEditedAt: page.last_edited_time || "",
+    archived: Boolean(page.archived || page.is_archived),
+    inTrash: Boolean(page.in_trash)
+  };
+}
+
+function notionPageTitle(page) {
+  const properties = isPlainObject(page.properties) ? page.properties : {};
+  for (const property of Object.values(properties)) {
+    if (property?.type === "title") {
+      return notionRichText(property.title);
+    }
+  }
+  return notionRichText(page.title) || "Untitled Notion page";
+}
+
+function notionBlockToMarkdown(block) {
+  const type = block?.type;
+  const value = block?.[type] || {};
+  const text = notionRichText(value.rich_text);
+
+  switch (type) {
+    case "heading_1":
+      return text ? `# ${text}` : "";
+    case "heading_2":
+      return text ? `## ${text}` : "";
+    case "heading_3":
+      return text ? `### ${text}` : "";
+    case "paragraph":
+      return text ? `${text}\n` : "";
+    case "bulleted_list_item":
+      return text ? `- ${text}` : "";
+    case "numbered_list_item":
+      return text ? `1. ${text}` : "";
+    case "to_do":
+      return text ? `- [${value.checked ? "x" : " "}] ${text}` : "";
+    case "quote":
+      return text ? `> ${text}` : "";
+    case "callout":
+      return text ? `> ${text}` : "";
+    case "toggle":
+      return text ? `<details><summary>${escapeHtml(text)}</summary></details>` : "";
+    case "code":
+      return `\`\`\`${cleanText(value.language)}\n${text}\n\`\`\``;
+    case "child_page":
+      return value.title ? `- Child page: ${value.title}` : "";
+    case "divider":
+      return "---";
+    default:
+      return text;
+  }
+}
+
+function notionRichText(items) {
+  if (!Array.isArray(items)) return "";
+  return items
+    .map((item) => cleanText(item.plain_text || item.text?.content || ""))
+    .filter(Boolean)
+    .join("");
+}
+
+function extractNotionId(value) {
+  const text = cleanText(value);
+  if (!text) return "";
+  const compactMatches = text.replace(/-/g, "").match(/[0-9a-fA-F]{32}/g);
+  const compact = compactMatches?.[compactMatches.length - 1] || "";
+  if (!compact) return "";
+  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+}
+
+async function executeArcadeMappedTool(name, args) {
+  const arcadeToolName = arcadeToolMappings[name];
+  if (!process.env.ARCADE_API_KEY) {
+    return {
+      status: "configuration_required",
+      tool: name,
+      message: "Arcade is not configured yet. Set ARCADE_API_KEY and ARCADE_USER_ID in .env, then map this Cooper tool to an Arcade tool.",
+      missing: ["ARCADE_API_KEY"],
+      mappingEnv: mappingEnvName(name)
+    };
+  }
+
+  if (!arcadeToolName) {
+    return {
+      status: "mapping_required",
+      tool: name,
+      message: `No Arcade tool mapping is configured for ${name}. Set ${mappingEnvName(name)} to the Arcade qualified tool name.`,
+      mappingEnv: mappingEnvName(name),
+      gatewayUrl: arcadeMcpGatewayUrl || null
+    };
+  }
+
+  const authorization = await getArcadeAuthorizationForTool(name);
+  if (authorization?.status !== "completed") {
+    return {
+      status: "authorization_required",
+      tool: name,
+      arcadeToolName,
+      authorizationUrl: authorization?.authorizationUrl || null,
+      authorizationStatus: authorization?.status || "not_started",
+      message: authorization?.authorizationUrl
+        ? "This Arcade tool has not finished pre-authorization. Open Settings, complete the connection, then check status."
+        : "This Arcade tool must be pre-authorized in Settings before Cooper can use it in a live call."
+    };
+  }
+
+  const input = sanitizeArcadeInput(name, args);
+  const client = getArcadeClient();
+  let response;
+
+  try {
+    response = await client.tools.execute({
+      tool_name: arcadeToolName,
+      input,
+      user_id: arcadeUserId
+    });
+  } catch (error) {
+    return normalizeArcadeThrownError(name, arcadeToolName, error);
+  }
+
+  if (response?.success === false || response?.output?.error) {
+    const authorization = await maybeAuthorizeArcadeTool(client, arcadeToolName, response);
+    if (authorization) {
+      const storedAuthorization = await upsertArcadeAuthorization(name, arcadeToolName, authorization, {
+        error: null,
+        lastCheckedAt: new Date().toISOString()
+      });
+      return {
+        status: "authorization_required",
+        tool: name,
+        arcadeToolName,
+        authorizationUrl: storedAuthorization.authorizationUrl || null,
+        authorizationStatus: storedAuthorization.status || null,
+        message: authorization.url
+          ? "Arcade says this connection needs authorization again. Open Settings, complete the connection, then check status."
+          : "Arcade says this connection needs authorization again. Open Settings and reconnect the tool."
+      };
+    }
+
+    return {
+      status: "error",
+      tool: name,
+      arcadeToolName,
+      message: response.output?.error?.message || "Arcade tool failed.",
+      errorKind: response.output?.error?.kind || "UNKNOWN",
+      retryable: Boolean(response.output?.error?.can_retry)
+    };
+  }
+
+  if (response?.output?.authorization) {
+    const storedAuthorization = await upsertArcadeAuthorization(name, arcadeToolName, response.output.authorization, {
+      error: null,
+      lastCheckedAt: new Date().toISOString()
+    });
+    return {
+      status: "authorization_required",
+      tool: name,
+      arcadeToolName,
+      authorizationUrl: storedAuthorization.authorizationUrl || null,
+      authorizationStatus: storedAuthorization.status || null,
+      message: storedAuthorization.authorizationUrl
+        ? "Arcade says this connection needs authorization again. Open Settings, complete the connection, then check status."
+        : "Arcade says this connection needs authorization again. Open Settings and reconnect the tool."
+    };
+  }
+
+  return {
+    status: "completed",
+    tool: name,
+    arcadeToolName,
+    executionId: response?.execution_id || response?.id || null,
+    durationMs: response?.duration || null,
+    value: response?.output?.value ?? response?.output ?? response
+  };
+}
+
+async function startArcadeAuthorization(name, req) {
+  const arcadeToolName = arcadeToolMappings[name];
+  if (!arcadeToolName) {
+    throw new Error(`No Arcade tool mapping is configured for ${name}.`);
+  }
+
+  const client = getArcadeClient();
+  const origin = requestOrigin(req);
+  const response = await client.tools.authorize({
+    tool_name: arcadeToolName,
+    user_id: arcadeUserId,
+    next_uri: origin || undefined
+  });
+
+  return upsertArcadeAuthorization(name, arcadeToolName, response, {
+    error: null,
+    lastCheckedAt: new Date().toISOString()
+  });
+}
+
+async function getArcadeAuthorizationForTool(name) {
+  const db = await readDb();
+  return latestArcadeAuthorization(db, name);
+}
+
+function latestArcadeAuthorization(db, name) {
+  return sortByDate(db.arcadeAuthorizations || [])
+    .find((item) => item.toolName === name && item.userId === arcadeUserId) || null;
+}
+
+async function upsertArcadeAuthorization(name, arcadeToolName, response = {}, patch = {}) {
+  return updateDb((db) => {
+    const now = new Date().toISOString();
+    db.arcadeAuthorizations = Array.isArray(db.arcadeAuthorizations) ? db.arcadeAuthorizations : [];
+    const existing = db.arcadeAuthorizations.find((item) => item.toolName === name && item.userId === arcadeUserId);
+    const next = {
+      id: existing?.id || randomUUID(),
+      toolName: name,
+      arcadeToolName,
+      userId: arcadeUserId,
+      authorizationId: response.id || existing?.authorizationId || "",
+      authorizationUrl: response.url || existing?.authorizationUrl || "",
+      providerId: response.provider_id || existing?.providerId || "",
+      scopes: Array.isArray(response.scopes) ? response.scopes : existing?.scopes || [],
+      status: response.status || patch.status || existing?.status || "not_started",
+      error: patch.error ?? existing?.error ?? null,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      lastCheckedAt: patch.lastCheckedAt || existing?.lastCheckedAt || now
+    };
+
+    if (existing) {
+      Object.assign(existing, next);
+      return existing;
+    }
+
+    db.arcadeAuthorizations.push(next);
+    return next;
+  });
+}
+
+function getArcadeClient() {
+  if (!arcadeClient) {
+    arcadeClient = new Arcade({ apiKey: process.env.ARCADE_API_KEY });
+  }
+  return arcadeClient;
+}
+
+async function maybeAuthorizeArcadeTool(client, arcadeToolName, response) {
+  const errorKind = response?.output?.error?.kind || "";
+  if (!["TOOL_REQUIREMENTS_NOT_MET", "UPSTREAM_RUNTIME_AUTH_ERROR"].includes(errorKind)) {
+    return null;
+  }
+
+  try {
+    return client.tools.authorize({
+      tool_name: arcadeToolName,
+      user_id: arcadeUserId
+    });
+  } catch {
+    return null;
+  }
+}
+
+function arcadeSettingsState(db) {
+  return {
+    configured: Boolean(process.env.ARCADE_API_KEY),
+    userId: arcadeUserId,
+    gatewayUrl: arcadeMcpGatewayUrl || null,
+    writesEnabled: arcadeWritesEnabled,
+    tools: arcadeToolSettings(db),
+    mappings: Object.fromEntries(
+      Object.entries(arcadeToolMappings).map(([name, mappedTool]) => [name, Boolean(mappedTool)])
+    ),
+    recentToolCalls: sortByDate(db.toolCalls || []).slice(0, 12).map(publicToolCall)
+  };
+}
+
+function arcadeToolSettings(db) {
+  return Object.entries(arcadeToolMappings).map(([name, arcadeToolName]) => {
+    const definition = cooperToolDefinitions.find((tool) => tool.name === name);
+    const authorization = latestArcadeAuthorization(db, name);
+    const configured = Boolean(process.env.ARCADE_API_KEY);
+    const mapped = Boolean(arcadeToolName);
+    const status = !configured
+      ? "missing_api_key"
+      : !mapped
+        ? "missing_mapping"
+        : authorization?.status || "not_started";
+
+    return {
+      name,
+      label: toolLabel(name),
+      description: definition?.description || "",
+      arcadeToolName: arcadeToolName || "",
+      mappingEnv: mappingEnvName(name),
+      mapped,
+      configured,
+      status,
+      riskLevel: toolRiskLevel(name),
+      authorization: publicArcadeAuthorization(authorization)
+    };
+  });
+}
+
+function publicArcadeAuthorization(authorization) {
+  if (!authorization) return null;
+  return {
+    id: authorization.id || "",
+    toolName: authorization.toolName || "",
+    arcadeToolName: authorization.arcadeToolName || "",
+    userId: authorization.userId || "",
+    authorizationId: authorization.authorizationId || "",
+    authorizationUrl: authorization.authorizationUrl || "",
+    providerId: authorization.providerId || "",
+    scopes: Array.isArray(authorization.scopes) ? authorization.scopes : [],
+    status: authorization.status || "not_started",
+    error: authorization.error || null,
+    lastCheckedAt: authorization.lastCheckedAt || "",
+    updatedAt: authorization.updatedAt || ""
+  };
+}
+
+function normalizeArcadeThrownError(name, arcadeToolName, error) {
+  const message = error?.message || "Arcade request failed.";
+  const needsAuth = /authorization|authorize|auth/i.test(message);
+  return {
+    status: needsAuth ? "authorization_required" : "error",
+    tool: name,
+    arcadeToolName,
+    message: needsAuth
+      ? "Arcade says this tool needs authorization. Open the Arcade connection flow for this tool and retry."
+      : message,
+    retryable: !needsAuth
+  };
+}
+
+function sanitizeArcadeInput(name, args) {
+  if (name === "search_workspace_context") {
+    return {
+      query: cleanText(args.query),
+      sources: Array.isArray(args.sources) ? args.sources.map(cleanText).filter(Boolean) : undefined,
+      customer_or_account: cleanText(args.customer_or_account) || undefined,
+      time_range: cleanText(args.time_range) || undefined
+    };
+  }
+
+  if (name === "get_customer_context") {
+    return {
+      customer_name: cleanText(args.customer_name),
+      include: Array.isArray(args.include) ? args.include.map(cleanText).filter(Boolean) : undefined
+    };
+  }
+
+  if (name === "search_notion_workspace") {
+    return {
+      query: cleanText(args.query),
+      filter: cleanText(args.filter) || undefined,
+      page_size: clampNumber(args.page_size, 1, 10, notionSearchLimit)
+    };
+  }
+
+  if (name === "fetch_notion_page") {
+    return {
+      page_id_or_url: cleanText(args.page_id_or_url),
+      include_blocks: args.include_blocks !== false,
+      max_blocks: clampNumber(args.max_blocks, 1, 100, notionBlockLimit)
+    };
+  }
+
+  if (name === "inspect_engineering_context") {
+    return {
+      query: cleanText(args.query),
+      repo: cleanText(args.repo) || undefined,
+      ticket_id: cleanText(args.ticket_id) || undefined,
+      include_code: Boolean(args.include_code)
+    };
+  }
+
+  if (name === "create_followup_action") {
+    return {
+      action_type: cleanText(args.action_type),
+      title: cleanText(args.title),
+      description: cleanText(args.description) || undefined,
+      owner: cleanText(args.owner) || undefined,
+      due_date: cleanText(args.due_date) || undefined,
+      destination: cleanText(args.destination) || undefined
+    };
+  }
+
+  return safeAuditObject(args);
+}
+
 async function ensureDataStore() {
   await mkdir(artifactsDir, { recursive: true });
   if (!existsSync(dbPath)) {
-    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], knowledge: [] }, null, 2), "utf8");
+    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], toolCalls: [], gstackRuns: [], arcadeAuthorizations: [], projects: [], projectSources: [] }, null, 2), "utf8");
   }
 }
 
@@ -1664,17 +2138,15 @@ async function readDbRaw() {
   await ensureDataStore();
   const raw = await readFile(dbPath, "utf8");
   const parsed = JSON.parse(raw || "{}");
-  const calls = Array.isArray(parsed.calls) ? parsed.calls : [];
-  calls.forEach((call) => {
-    if (!Array.isArray(call.canvasItems)) call.canvasItems = [];
-    if (!Array.isArray(call.transcript)) call.transcript = [];
-    if (!Array.isArray(call.suggestions)) call.suggestions = [];
-  });
   return {
-    calls,
+    calls: Array.isArray(parsed.calls) ? parsed.calls : [],
     artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
     jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
-    knowledge: Array.isArray(parsed.knowledge) ? parsed.knowledge : []
+    toolCalls: Array.isArray(parsed.toolCalls) ? parsed.toolCalls : [],
+    gstackRuns: Array.isArray(parsed.gstackRuns) ? parsed.gstackRuns : [],
+    arcadeAuthorizations: Array.isArray(parsed.arcadeAuthorizations) ? parsed.arcadeAuthorizations : [],
+    projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+    projectSources: Array.isArray(parsed.projectSources) ? parsed.projectSources : []
   };
 }
 
@@ -1692,9 +2164,18 @@ async function updateDb(mutator) {
 
 function publicState(db) {
   return {
-    calls: sortByDate(db.calls),
+    calls: sortByDate(db.calls).map(publicCall),
+    projects: sortByDate(db.projects).map((project) =>
+      publicProject(project, db.projectSources.filter((source) => source.projectId === project.id))
+    ),
     artifacts: sortByDate(db.artifacts).map(publicArtifact),
     jobs: sortByDate(db.jobs).map(publicJob),
+    toolCalls: sortByDate(db.toolCalls || []).slice(0, 20).map(publicToolCall),
+    gstackRuns: sortByDate(db.gstackRuns || []).slice(0, 20).map(publicGstackRun),
+    arcade: arcadeSettingsState(db),
+    mcpApps: {
+      servers: publicMcpAppServers()
+    },
     recipes: Object.entries(artifactRecipes).map(([kind, recipe]) => ({
       kind,
       title: recipe.title,
@@ -1705,11 +2186,153 @@ function publicState(db) {
       jobDelayMs,
       workModel,
       fallbackWorkModel,
-      fastModel,
       jobMaxAttempts,
       jobMaxOutputTokens,
-      kbInlineMax
+      gstackModel: process.env.COOPER_GSTACK_MODEL || workModel,
+      gstackMaxOutputTokens: Number(process.env.COOPER_GSTACK_MAX_OUTPUT_TOKENS || 2200)
     }
+  };
+}
+
+async function addProjectSource(projectId, input) {
+  const content = cleanText(input.content);
+  if (!content) return null;
+
+  const now = new Date().toISOString();
+  const limited = limitText(content, projectSourceMaxChars);
+  return updateDb((db) => {
+    const project = db.projects.find((item) => item.id === projectId);
+    if (!project) return null;
+
+    const source = {
+      id: randomUUID(),
+      projectId,
+      title: cleanText(input.title) || "Project context",
+      sourceType: cleanText(input.sourceType) || "paste",
+      mimeType: cleanText(input.mimeType),
+      originalName: cleanText(input.originalName),
+      text: limited.text,
+      charCount: content.length,
+      storedCharCount: limited.text.length,
+      truncated: limited.truncated,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    db.projectSources.push(source);
+    project.updatedAt = now;
+    return source;
+  });
+}
+
+async function extractProjectUpload(file) {
+  const name = cleanText(file.originalname) || "Uploaded context";
+  const lower = name.toLowerCase();
+  const mimeType = cleanText(file.mimetype);
+
+  if (mimeType === "application/pdf" || lower.endsWith(".pdf")) {
+    const parser = new PDFParse({ data: file.buffer });
+    try {
+      const result = await parser.getText();
+      const content = cleanText(result.text);
+      if (!content) throw new Error("No extractable text was found in that PDF.");
+      return {
+        title: name,
+        sourceType: "pdf",
+        mimeType: "application/pdf",
+        content
+      };
+    } finally {
+      await parser.destroy().catch(() => {});
+    }
+  }
+
+  if (
+    mimeType.startsWith("text/") ||
+    lower.endsWith(".md") ||
+    lower.endsWith(".markdown") ||
+    lower.endsWith(".txt")
+  ) {
+    const content = cleanText(file.buffer.toString("utf8"));
+    if (!content) throw new Error("That file did not contain readable text.");
+    return {
+      title: name,
+      sourceType: lower.endsWith(".md") || lower.endsWith(".markdown") ? "markdown" : "text",
+      mimeType: mimeType || "text/plain",
+      content
+    };
+  }
+
+  throw new Error("Unsupported file type. Upload Markdown, plain text, or PDF.");
+}
+
+function buildProjectContext(db, projectId, maxChars = projectContextChars) {
+  const project = db.projects.find((item) => item.id === projectId);
+  if (!project) return "";
+
+  const sources = sortByDate(db.projectSources.filter((source) => source.projectId === project.id));
+  const lines = [
+    "# Active Project Context",
+    "",
+    `Project: ${project.title}`,
+    project.description ? `Description: ${project.description}` : "",
+    `Sources loaded: ${sources.length}`,
+    "",
+    "Cooper should use this project context as background for sprint tickets, feature epics, agent-generated plans, product requirements, implementation notes, and prioritization discussions. Treat it as local working context, ask clarifying questions when content conflicts, and do not invent facts outside it."
+  ].filter(Boolean);
+
+  let remaining = Math.max(0, maxChars - lines.join("\n").length);
+  for (const source of sources.slice(0, 8)) {
+    if (remaining <= 200) break;
+    const header = `\n\n## Source: ${source.title}\nType: ${source.sourceType || "text"}${source.originalName ? `\nFile: ${source.originalName}` : ""}\n`;
+    const bodyBudget = Math.max(0, remaining - header.length - 40);
+    const body = limitText(source.text || "", bodyBudget);
+    lines.push(`${header}${body.text}${body.truncated ? "\n[Source truncated for live call context.]" : ""}`);
+    remaining = maxChars - lines.join("\n").length;
+  }
+
+  return limitText(lines.join("\n").trim(), maxChars).text;
+}
+
+function publicCall(call) {
+  const { projectContextSnapshot: _projectContextSnapshot, ...rest } = call;
+  return {
+    ...rest,
+    projectId: rest.projectId || "",
+    projectTitle: rest.projectTitle || ""
+  };
+}
+
+function publicProject(project, sources = []) {
+  const sortedSources = sortByDate(sources).map(publicProjectSource);
+  return {
+    id: project.id,
+    title: project.title || "Untitled project",
+    description: project.description || "",
+    status: project.status || "active",
+    sourceCount: sortedSources.length,
+    totalChars: sources.reduce((sum, source) => sum + Number(source.storedCharCount || source.text?.length || 0), 0),
+    sources: sortedSources,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    lastUsedAt: project.lastUsedAt || null
+  };
+}
+
+function publicProjectSource(source) {
+  return {
+    id: source.id,
+    projectId: source.projectId,
+    title: source.title || "Project context",
+    sourceType: source.sourceType || "text",
+    mimeType: source.mimeType || "",
+    originalName: source.originalName || "",
+    charCount: Number(source.charCount || source.text?.length || 0),
+    storedCharCount: Number(source.storedCharCount || source.text?.length || 0),
+    truncated: Boolean(source.truncated),
+    preview: sourcePreview(source.text),
+    createdAt: source.createdAt,
+    updatedAt: source.updatedAt
   };
 }
 
@@ -1718,13 +2341,47 @@ function publicJob(job) {
   return { ...rest, logs: Array.isArray(rest.logs) ? rest.logs.slice(-40) : [] };
 }
 
+function publicToolCall(toolCall) {
+  return {
+    id: toolCall.id,
+    callId: toolCall.callId || "",
+    userId: toolCall.userId || "",
+    toolName: toolCall.toolName || "",
+    arcadeToolName: toolCall.arcadeToolName || null,
+    riskLevel: toolCall.riskLevel || "read",
+    status: toolCall.status || "unknown",
+    resultSummary: toolCall.resultSummary || "",
+    error: toolCall.error || null,
+    durationMs: toolCall.durationMs || null,
+    createdAt: toolCall.createdAt,
+    updatedAt: toolCall.updatedAt
+  };
+}
+
+function publicGstackRun(run) {
+  return {
+    id: run.id,
+    skill: run.skill || "",
+    mode: run.mode || "advisory",
+    status: run.status || "unknown",
+    inputLength: Number(run.inputLength || 0),
+    contextLength: Number(run.contextLength || 0),
+    resultLength: Number(run.resultLength || 0),
+    inputRedacted: Boolean(run.inputRedacted),
+    durationMs: run.durationMs || null,
+    error: run.error || null,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt
+  };
+}
+
 function publicArtifact(artifact) {
   const outputType = artifactOutputType(artifact);
   return {
     ...artifact,
     outputType,
-    extension: artifact.extension || (outputType === "html" ? "html" : "md"),
-    mimeType: artifact.mimeType || (outputType === "html" ? "text/html" : "text/markdown")
+    extension: artifact.extension || defaultArtifactExtension(outputType),
+    mimeType: artifact.mimeType || defaultArtifactMimeType(outputType)
   };
 }
 
@@ -1732,11 +2389,61 @@ function sortByDate(items) {
   return [...items].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
 }
 
+async function updateToolCall(id, patch) {
+  return updateDb((db) => {
+    const toolCall = db.toolCalls.find((item) => item.id === id);
+    if (!toolCall) return null;
+    Object.assign(toolCall, patch, { updatedAt: new Date().toISOString() });
+    return toolCall;
+  });
+}
+
+async function recordGstackRun({ skill, mode, input = "", context = "", result = null, durationMs = null, status = "completed", error = null }) {
+  const now = new Date().toISOString();
+  const inputText = cleanText(input);
+  const contextText = cleanText(context);
+  const resultLength = result ? JSON.stringify(result).length : 0;
+  const inputRedacted = containsSensitiveText(inputText) || containsSensitiveText(contextText);
+
+  console.info("GStack skill run", {
+    skill,
+    mode,
+    status,
+    inputLength: inputText.length,
+    contextLength: contextText.length,
+    resultLength,
+    durationMs,
+    inputRedacted
+  });
+
+  return updateDb((db) => {
+    db.gstackRuns = Array.isArray(db.gstackRuns) ? db.gstackRuns : [];
+    db.gstackRuns.push({
+      id: randomUUID(),
+      skill,
+      mode,
+      status,
+      inputLength: inputText.length,
+      contextLength: contextText.length,
+      resultLength,
+      inputRedacted,
+      durationMs,
+      error: error ? cleanText(error).slice(0, 500) : null,
+      createdAt: now,
+      updatedAt: now
+    });
+    db.gstackRuns = sortByDate(db.gstackRuns).slice(0, 200);
+  });
+}
+
 function defaultSuggestions(enabled = false) {
   return [
     { kind: "post_call_kit", label: "Post-call kit", enabled },
     { kind: "execution_plan", label: "Execution plan", enabled },
     { kind: "product_requirements", label: "PRD", enabled },
+    { kind: "aires_requirements", label: "AIRES requirements", enabled },
+    { kind: "mermaid_diagram", label: "Mermaid diagram", enabled },
+    { kind: "ui_wireframe", label: "UI wireframe", enabled },
     { kind: "html_prototype", label: "HTML prototype", enabled },
     { kind: "follow_up", label: "Follow-up summary", enabled },
     { kind: "code_sketch", label: "Code sketch", enabled }
@@ -1772,22 +2479,425 @@ function sameTranscriptTurn(left, right) {
   return false;
 }
 
+function toolRiskLevel(name) {
+  if (name === "create_followup_action") return "write";
+  if (name === "create_canvas_artifact") return "advisory";
+  if (name === "render_mcp_app") return "advisory";
+  if (name === "run_aires_requirements_framework") return "advisory";
+  return "read";
+}
+
+function mappingEnvName(name) {
+  return {
+    search_workspace_context: "ARCADE_SEARCH_WORKSPACE_TOOL",
+    search_notion_workspace: "ARCADE_NOTION_SEARCH_TOOL",
+    fetch_notion_page: "ARCADE_NOTION_FETCH_PAGE_TOOL",
+    get_customer_context: "ARCADE_CUSTOMER_CONTEXT_TOOL",
+    inspect_engineering_context: "ARCADE_ENGINEERING_CONTEXT_TOOL",
+    create_followup_action: "ARCADE_CREATE_FOLLOWUP_TOOL"
+  }[name] || "";
+}
+
+function toolLabel(name) {
+  return {
+    search_workspace_context: "Workspace context",
+    search_notion_workspace: "Notion search",
+    fetch_notion_page: "Notion page",
+    get_customer_context: "Customer context",
+    inspect_engineering_context: "Engineering context",
+    create_followup_action: "Follow-up actions",
+    render_mcp_app: "MCP App canvas",
+    run_aires_requirements_framework: "AIRES requirements"
+  }[name] || name;
+}
+
+function requestOrigin(req) {
+  const origin = cleanText(req.headers.origin);
+  if (origin) return origin;
+  const host = cleanText(req.headers.host);
+  if (!host) return "";
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
+  return `${protocol}://${host}`;
+}
+
+function parseMcpAppServers(value) {
+  const text = cleanText(value);
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text);
+    const sourceServers = Array.isArray(parsed)
+      ? parsed
+      : isPlainObject(parsed?.mcpServers)
+        ? Object.entries(parsed.mcpServers).map(([id, config]) => ({
+          ...(isPlainObject(config) ? config : {}),
+          serverId: config?.serverId || config?.id || id
+        }))
+        : [];
+
+    return sourceServers
+      .map((server, index) => {
+        const type = cleanText(server.type).toLowerCase() === "sse" ? "sse" : "http";
+        const headers = isPlainObject(server.headers)
+          ? Object.fromEntries(
+            Object.entries(server.headers)
+              .map(([key, headerValue]) => [cleanText(key), cleanText(headerValue)])
+              .filter(([key, headerValue]) => key && headerValue)
+          )
+          : {};
+        return {
+          type,
+          url: cleanText(server.url),
+          serverId: cleanText(server.serverId || server.id || server.name) || `mcp-app-${index + 1}`,
+          headers
+        };
+      })
+      .filter((server) => server.url);
+  } catch (error) {
+    console.warn("Could not parse COOPER_MCP_APP_SERVERS:", error.message);
+    return [];
+  }
+}
+
+function findMcpAppServer(serverId) {
+  if (!mcpAppServers.length) return null;
+  const requested = cleanText(serverId);
+  if (!requested) return mcpAppServers[0];
+  return mcpAppServers.find((server) => server.serverId === requested) || null;
+}
+
+function publicMcpAppServers() {
+  return mcpAppServers.map((server) => ({
+    serverId: server.serverId,
+    type: server.type,
+    configured: Boolean(server.url)
+  }));
+}
+
+async function fetchMcpAppResource(server, resourceUri) {
+  if (server.type !== "http") {
+    throw new Error(`MCP App server "${server.serverId}" uses ${server.type}; only HTTP resource reads are supported in this local host.`);
+  }
+
+  const headers = {
+    Accept: "application/json, text/event-stream",
+    "Content-Type": "application/json",
+    ...server.headers
+  };
+  if (!headers.Authorization && process.env.ARCADE_API_KEY && /arcade\.dev/i.test(server.url)) {
+    headers.Authorization = `Bearer ${process.env.ARCADE_API_KEY}`;
+  }
+
+  const response = await fetch(server.url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: randomUUID(),
+      method: "resources/read",
+      params: { uri: resourceUri }
+    })
+  });
+  const payload = await readMcpJsonRpcResponse(response);
+
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `MCP resource read failed with ${response.status}.`);
+  }
+  if (payload?.error) {
+    throw new Error(payload.error.message || "MCP resource read returned an error.");
+  }
+
+  const resource = extractMcpResourceHtml(payload);
+  if (!resource.html) {
+    throw new Error(`MCP resource ${resourceUri} did not include text/html content.`);
+  }
+  return resource;
+}
+
+async function readMcpJsonRpcResponse(response) {
+  const text = await response.text();
+  const contentType = response.headers.get("content-type") || "";
+
+  if (contentType.includes("text/event-stream")) {
+    const dataLines = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .filter((line) => line && line !== "[DONE]");
+
+    for (const line of dataLines.reverse()) {
+      try {
+        return JSON.parse(line);
+      } catch {
+        // Continue looking for the final JSON-RPC data event.
+      }
+    }
+    return null;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function extractMcpResourceHtml(payload) {
+  const contents = Array.isArray(payload?.result?.contents)
+    ? payload.result.contents
+    : Array.isArray(payload?.contents)
+      ? payload.contents
+      : [];
+
+  for (const content of contents) {
+    const mimeType = cleanText(content.mimeType || content.mime_type);
+    if (content.text && /html/i.test(mimeType)) {
+      return { html: normalizeHtml(content.text), mimeType };
+    }
+    if (content.blob && /html/i.test(mimeType)) {
+      return { html: normalizeHtml(Buffer.from(content.blob, "base64").toString("utf8")), mimeType };
+    }
+  }
+
+  const textContent = contents.find((content) => cleanText(content.text));
+  if (textContent) {
+    return {
+      html: mcpAppPlaceholderHtml({
+        title: "MCP Resource",
+        description: "The MCP resource returned text content instead of an HTML app.",
+        state: { mimeType: textContent.mimeType || "text/plain" },
+        messages: [cleanText(textContent.text).slice(0, 2000)]
+      }),
+      mimeType: textContent.mimeType || "text/plain"
+    };
+  }
+
+  return { html: "", mimeType: "" };
+}
+
+function mcpAppPlaceholderHtml({ title, description = "", serverId = "", resourceUri = "", toolName = "", state = {}, messages = [] }) {
+  const stateJson = JSON.stringify(state || {}, null, 2);
+  const messageHtml = messages.length
+    ? messages.map((message) => `<li>${escapeHtml(message)}</li>`).join("")
+    : "<li>Waiting for an MCP App resource or inline preview.</li>";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { color-scheme: light; --black: #1b2421; --ink: #26302c; --muted: #66736c; --line: #dce2dc; --bg: #f4f5f1; --volt: #f0de4a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+    main { display: grid; gap: 18px; max-width: 880px; margin: 0 auto; padding: clamp(18px, 4vw, 42px); }
+    header { border-left: 4px solid var(--volt); padding-left: 16px; }
+    p, li { line-height: 1.55; }
+    .eyebrow { margin: 0 0 8px; color: var(--muted); font-size: 0.75rem; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
+    h1 { margin: 0; color: var(--black); font-size: clamp(1.7rem, 5vw, 3.2rem); line-height: 1.02; }
+    section { padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    dl { display: grid; grid-template-columns: minmax(96px, auto) 1fr; gap: 8px 14px; margin: 0; }
+    dt { color: var(--muted); font-weight: 800; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    pre { max-height: 260px; margin: 0; overflow: auto; white-space: pre-wrap; font: 0.85rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">AG-UI / MCP App Surface</p>
+      <h1>${escapeHtml(title)}</h1>
+      ${description ? `<p>${escapeHtml(description)}</p>` : ""}
+    </header>
+    <section>
+      <dl>
+        <dt>Server</dt><dd>${escapeHtml(serverId || "Not configured")}</dd>
+        <dt>Resource</dt><dd>${escapeHtml(resourceUri || "Inline or pending")}</dd>
+        <dt>Tool</dt><dd>${escapeHtml(toolName || "render_mcp_app")}</dd>
+      </dl>
+    </section>
+    <section>
+      <p class="eyebrow">State Snapshot</p>
+      <pre>${escapeHtml(stateJson)}</pre>
+    </section>
+    <section>
+      <p class="eyebrow">Activity</p>
+      <ul>${messageHtml}</ul>
+    </section>
+  </main>
+  <script>
+    window.parent.postMessage({
+      source: "cooper-mcp-app",
+      type: "STATE_SNAPSHOT",
+      snapshot: ${JSON.stringify(state || {})}
+    }, "*");
+  </script>
+</body>
+</html>`;
+}
+
+function summarizeToolResult(output) {
+  const text = JSON.stringify(output);
+  return text.length > 900 ? `${text.slice(0, 897)}...` : text;
+}
+
+function limitText(value, maxChars) {
+  const text = cleanText(value);
+  const limit = Math.max(0, Number(maxChars || 0));
+  if (!limit || text.length <= limit) return { text, truncated: false };
+  return { text: text.slice(0, limit).trim(), truncated: true };
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return Math.min(max, Math.max(min, Number(fallback) || min));
+  return Math.min(max, Math.max(min, Math.floor(number)));
+}
+
+function sourcePreview(value) {
+  const text = cleanText(value).replace(/\s+/g, " ");
+  return text.length > 280 ? `${text.slice(0, 277)}...` : text;
+}
+
+function safeToolArguments(name, args) {
+  if (name === "run_gstack_skill") {
+    const input = cleanText(args.input);
+    const context = cleanText(args.context);
+    return {
+      skill: cleanText(args.skill),
+      mode: cleanText(args.mode) || "advisory",
+      inputLength: input.length,
+      contextLength: context.length,
+      inputRedacted: containsSensitiveText(input) || containsSensitiveText(context)
+    };
+  }
+
+  if (name === "create_canvas_artifact") {
+    const prompt = cleanText(args.prompt);
+    const context = cleanText(args.context);
+    return {
+      kind: cleanText(args.kind),
+      title: cleanText(args.title),
+      promptLength: prompt.length,
+      contextLength: context.length,
+      inputRedacted: containsSensitiveText(prompt) || containsSensitiveText(context)
+    };
+  }
+
+  if (name === "render_mcp_app") {
+    const html = cleanText(args.html);
+    return {
+      title: cleanText(args.title),
+      serverId: cleanText(args.server_id),
+      resourceUri: cleanText(args.resource_uri),
+      toolName: cleanText(args.tool_name),
+      hasInlineHtml: Boolean(html),
+      htmlLength: html.length,
+      stateKeys: isPlainObject(args.state) ? Object.keys(args.state).slice(0, 20) : [],
+      inputRedacted: containsSensitiveText(html) || containsSensitiveText(JSON.stringify(args.state || {}))
+    };
+  }
+
+  if (name === "run_aires_requirements_framework") {
+    const sourceContext = cleanText(args.source_context);
+    return {
+      mode: cleanText(args.mode),
+      topic: cleanText(args.topic),
+      artifactTitle: cleanText(args.artifact_title),
+      interviewFocus: cleanText(args.interview_focus),
+      sourceContextLength: sourceContext.length,
+      inputRedacted: containsSensitiveText(sourceContext)
+    };
+  }
+
+  if (name === "search_notion_workspace") {
+    const query = cleanText(args.query);
+    return {
+      queryLength: query.length,
+      filter: cleanText(args.filter) || "all",
+      pageSize: clampNumber(args.page_size, 1, 10, notionSearchLimit),
+      inputRedacted: containsSensitiveText(query)
+    };
+  }
+
+  if (name === "fetch_notion_page") {
+    return {
+      pageIdOrUrlProvided: Boolean(cleanText(args.page_id_or_url)),
+      includeBlocks: args.include_blocks !== false,
+      maxBlocks: clampNumber(args.max_blocks, 1, 100, notionBlockLimit)
+    };
+  }
+
+  return safeAuditObject(args);
+}
+
+function safeAuditObject(value) {
+  if (!isPlainObject(value)) return {};
+  const blocked = new Set(["password", "token", "secret", "api_key", "apikey", "authorization"]);
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      blocked.has(key.toLowerCase()) ? "[redacted]" : safeAuditValue(item)
+    ])
+  );
+}
+
+function safeAuditValue(value) {
+  if (Array.isArray(value)) return value.map(safeAuditValue);
+  if (isPlainObject(value)) return safeAuditObject(value);
+  if (typeof value === "string") return value.length > 500 ? `${value.slice(0, 497)}...` : value;
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  return String(value || "");
+}
+
+function containsSensitiveText(value) {
+  const text = cleanText(value);
+  if (!text) return false;
+  return [
+    /\bsk-[A-Za-z0-9_-]{12,}\b/,
+    /\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/,
+    /(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)\s*[:=]/i,
+    /bearer\s+[A-Za-z0-9._-]{12,}/i,
+    /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/
+  ].some((pattern) => pattern.test(text));
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function artifactFileName(artifact) {
   if (artifact.file) {
     return artifact.file.split(/[\\/]/).pop();
   }
-  return `${artifact.id}.${artifact.extension || (artifactOutputType(artifact) === "html" ? "html" : "md")}`;
+  const outputType = artifactOutputType(artifact);
+  return `${artifact.id}.${artifact.extension || defaultArtifactExtension(outputType)}`;
 }
 
 function artifactMimeType(artifact) {
   if (artifact.mimeType) return artifact.mimeType;
-  return artifactOutputType(artifact) === "html" ? "text/html" : "text/markdown";
+  return defaultArtifactMimeType(artifactOutputType(artifact));
 }
 
 function artifactOutputType(artifact) {
   if (artifact.outputType) return artifact.outputType;
+  if (artifact.extension === "json" || artifact.file?.endsWith(".json") || artifact.kind === "mcp_app") return "mcp_app";
   if (artifact.extension === "html" || artifact.file?.endsWith(".html") || artifact.kind === "html_prototype") return "html";
   return "markdown";
+}
+
+function defaultArtifactExtension(outputType) {
+  if (outputType === "html") return "html";
+  if (outputType === "mcp_app") return "json";
+  return "md";
+}
+
+function defaultArtifactMimeType(outputType) {
+  if (outputType === "html") return "text/html";
+  if (outputType === "mcp_app") return "application/json";
+  return "text/markdown";
 }
 
 function normalizeMarkdown(value) {
@@ -1796,6 +2906,25 @@ function normalizeMarkdown(value) {
 
 function normalizeHtml(value) {
   return `${value.trim()}\n`;
+}
+
+function extractHtmlDocument(value) {
+  const text = cleanText(value);
+  if (!text) return "";
+
+  const fenced = [...text.matchAll(/```(?:html)?\s*([\s\S]*?)```/gi)]
+    .map((match) => cleanText(match[1]))
+    .filter((candidate) => /<html[\s>]|<!doctype html/i.test(candidate));
+  if (fenced.length) return normalizeHtml(fenced[fenced.length - 1]);
+
+  const lower = text.toLowerCase();
+  const doctypeIndex = lower.lastIndexOf("<!doctype html");
+  if (doctypeIndex >= 0) return normalizeHtml(text.slice(doctypeIndex));
+
+  const htmlIndex = lower.lastIndexOf("<html");
+  if (htmlIndex >= 0) return normalizeHtml(`<!doctype html>\n${text.slice(htmlIndex)}`);
+
+  return "";
 }
 
 function prototypeFallbackHtml(title, draft) {
@@ -1823,6 +2952,21 @@ function prototypeFallbackHtml(title, draft) {
 
 function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeTime(value = "") {
+  const clean = String(value).trim().toLowerCase();
+  const match = clean.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  if (!match) return clean;
+
+  let hour = Number(match[1]);
+  const minute = match[2] || "00";
+  const suffix = match[3];
+
+  if (suffix === "pm" && hour < 12) hour += 12;
+  if (suffix === "am" && hour === 12) hour = 0;
+
+  return `${String(hour).padStart(2, "0")}:${minute}`;
 }
 
 function escapeHtml(value) {
@@ -1945,20 +3089,42 @@ class RetryableJobError extends Error {
 
 await ensureDataStore();
 await updateDb((db) => {
-  if (!Array.isArray(db.knowledge)) db.knowledge = [];
+  db.toolCalls = Array.isArray(db.toolCalls) ? db.toolCalls : [];
+  db.gstackRuns = Array.isArray(db.gstackRuns) ? db.gstackRuns : [];
+  db.arcadeAuthorizations = Array.isArray(db.arcadeAuthorizations) ? db.arcadeAuthorizations : [];
+  db.projects = Array.isArray(db.projects) ? db.projects : [];
+  db.projectSources = Array.isArray(db.projectSources) ? db.projectSources : [];
   db.calls.forEach((call) => {
-    if (!Array.isArray(call.canvasItems)) call.canvasItems = [];
     call.transcript = normalizeTranscript(call.transcript || []);
+    call.projectId = cleanText(call.projectId);
+    call.projectTitle = cleanText(call.projectTitle);
+    call.projectContextSnapshot = cleanText(call.projectContextSnapshot);
     const existingSuggestions = new Map((call.suggestions || []).map((suggestion) => [suggestion.kind, suggestion]));
     call.suggestions = defaultSuggestions(call.transcript.length > 0).map((suggestion) => ({
       ...suggestion,
       enabled: existingSuggestions.get(suggestion.kind)?.enabled ?? suggestion.enabled
     }));
   });
+  db.projects.forEach((project) => {
+    project.title = cleanText(project.title) || "Untitled project";
+    project.description = cleanText(project.description);
+    project.status = cleanText(project.status) || "active";
+    project.createdAt = project.createdAt || new Date().toISOString();
+    project.updatedAt = project.updatedAt || project.createdAt;
+  });
+  db.projectSources.forEach((source) => {
+    source.title = cleanText(source.title) || "Project context";
+    source.text = cleanText(source.text);
+    source.sourceType = cleanText(source.sourceType) || "text";
+    source.charCount = Number(source.charCount || source.text.length);
+    source.storedCharCount = Number(source.storedCharCount || source.text.length);
+    source.createdAt = source.createdAt || new Date().toISOString();
+    source.updatedAt = source.updatedAt || source.createdAt;
+  });
   db.artifacts.forEach((artifact) => {
     artifact.outputType = artifactOutputType(artifact);
-    artifact.extension = artifact.extension || (artifact.outputType === "html" ? "html" : "md");
-    artifact.mimeType = artifact.mimeType || (artifact.outputType === "html" ? "text/html" : "text/markdown");
+    artifact.extension = artifact.extension || defaultArtifactExtension(artifact.outputType);
+    artifact.mimeType = artifact.mimeType || defaultArtifactMimeType(artifact.outputType);
     artifact.file = artifact.file || `data/artifacts/${artifact.id}.${artifact.extension}`;
   });
   db.jobs.forEach((job) => {
@@ -1966,37 +3132,14 @@ await updateDb((db) => {
       appendJobLog(job, job.status || "state", `Recovered existing ${job.title || "job"} in ${job.status || "unknown"} state.`);
     }
     if (job.status === "running") {
-      // Requeue any in-flight job. Canvas jobs keep their lane field so the
-      // fast lane recovers fast jobs and the paced lane recovers quality jobs.
       job.status = "queued";
       job.progress = "Recovered after restart.";
-      // Canvas jobs default to the fast lane when no lane was persisted.
-      if (canvasKinds.has(job.kind) && !job.lane) job.lane = "fast";
       appendJobLog(job, "recovered", "Server restarted while this job was running. Cooper queued it again.");
       job.updatedAt = new Date().toISOString();
     }
   });
-
-  // Recover canvas items stuck mid-generation. If an item is still
-  // "generating" but no active (queued/running) job covers it, mark it failed.
-  const activeCanvasItemIds = new Set(
-    db.jobs
-      .filter((job) => canvasKinds.has(job.kind) && (job.status === "queued" || job.status === "running"))
-      .map((job) => job.itemId)
-      .filter(Boolean)
-  );
-  db.calls.forEach((call) => {
-    (call.canvasItems || []).forEach((item) => {
-      if (item.status === "generating" && !activeCanvasItemIds.has(item.id)) {
-        item.status = "failed";
-        item.error = "Canvas generation recovered after restart; no active job remained.";
-        item.updatedAt = new Date().toISOString();
-      }
-    });
-  });
 });
 queueWorker();
-queueFastWorker();
 
 if (isProduction) {
   app.use(express.static(join(__dirname, "dist")));

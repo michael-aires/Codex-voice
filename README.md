@@ -17,20 +17,55 @@ COOPER_APP_PASSWORD=use-a-long-random-password
 COOPER_SESSION_SECRET=use-a-different-long-random-secret
 ```
 
+Optional Arcade MCP/tool hub settings:
+
+```bash
+ARCADE_API_KEY=your-arcade-api-key
+ARCADE_USER_ID=michael@example.com
+ARCADE_MCP_GATEWAY_URL=https://api.arcade.dev/mcp/cooper-app
+ARCADE_SEARCH_WORKSPACE_TOOL=YourSearchTool.QualifiedName
+ARCADE_NOTION_SEARCH_TOOL=YourNotionSearchTool.QualifiedName
+ARCADE_NOTION_FETCH_PAGE_TOOL=YourNotionFetchPageTool.QualifiedName
+ARCADE_CUSTOMER_CONTEXT_TOOL=YourCustomerTool.QualifiedName
+ARCADE_ENGINEERING_CONTEXT_TOOL=YourEngineeringTool.QualifiedName
+ARCADE_CREATE_FOLLOWUP_TOOL=YourFollowupTool.QualifiedName
+COOPER_ENABLE_ARCADE_WRITES=false
+COOPER_MCP_APP_SERVERS={"mcpServers":{"Cooper":{"url":"https://api.arcade.dev/mcp/cooper-app"}}}
+```
+
+Arcade write tools are blocked by default. Keep `COOPER_ENABLE_ARCADE_WRITES=false` until the confirmation UI is ready.
+
+After the app is running, open **Settings** and pre-authorize each mapped Arcade tool before using it during a call. Cooper will not execute Arcade-backed voice tools until their Settings authorization status is `Connected`.
+
+`COOPER_MCP_APP_SERVERS` accepts either the MCP Apps shape above or an array such as `[{"type":"http","url":"http://localhost:3108/mcp","serverId":"local-mcp-apps"}]`. Cooper can render a `ui://` resource from a configured HTTP MCP server into the call canvas, or render a small inline AG-UI/MCP App preview when no resource URI is available.
+
+Optional direct Notion read fallback:
+
+```bash
+NOTION_API_KEY=secret_your-notion-integration-token
+NOTION_VERSION=2026-03-11
+NOTION_SEARCH_LIMIT=5
+NOTION_BLOCK_LIMIT=50
+```
+
+Direct Notion access is read-only in Cooper and only sees pages/databases shared with the Notion integration. If Arcade Notion mappings are configured, Cooper prefers Arcade so OAuth and audit behavior stay centralized.
+
 Optional settings:
 
 ```bash
 COOPER_SESSION_TTL_HOURS=168
 COOPER_WORK_MODEL=gpt-5.4
 COOPER_FALLBACK_WORK_MODEL=
-# Fast model for the real-time canvas lane (diagrams, prototypes, wireframes). Defaults to COOPER_WORK_MODEL when unset.
-COOPER_FAST_MODEL=
+COOPER_GSTACK_MODEL=gpt-5.4
+COOPER_GSTACK_MAX_OUTPUT_TOKENS=2200
+COOPER_GSTACK_INPUT_MAX_CHARS=32000
+COOPER_GSTACK_CONTEXT_MAX_CHARS=24000
 COOPER_JOB_DELAY_MS=15000
 COOPER_JOB_MAX_ATTEMPTS=3
 COOPER_JOB_MAX_OUTPUT_TOKENS=6500
-# Knowledge base inline threshold (characters). Entries at or below this size are injected directly into
-# the live Realtime session; larger entries are indexed into an OpenAI vector store and retrieved on demand.
-COOPER_KB_INLINE_MAX_CHARS=6000
+COOPER_PROJECT_CONTEXT_CHARS=18000
+COOPER_PROJECT_SOURCE_MAX_CHARS=250000
+COOPER_PROJECT_UPLOAD_MAX_MB=20
 ```
 
 ## Run
@@ -39,26 +74,45 @@ COOPER_KB_INLINE_MAX_CHARS=6000
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:5000`.
+
+## Test
+
+```bash
+npm test
+```
+
+The test suite currently locks Cooper's wake phrase behavior so direct invitations wake him and casual mentions do not.
 
 ## What Is Included
 
 - Splash entry and mobile-first Cooper workspace.
 - Password gate backed by `COOPER_APP_PASSWORD` and an HTTP-only signed session cookie.
+- Project workspaces for sprint tickets, feature epics, agent output, PRDs, and implementation notes.
+- Project context ingestion from pasted text, Markdown/text uploads, and PDF uploads.
+- Live call context ingestion from pasted notes or uploaded Markdown/text/PDF files, with the active Realtime session refreshed after new context is added.
 - Full-screen WebRTC call mode with microphone input, model audio output, and animated waveform.
+- Live collaboration canvas during calls for Mermaid diagrams, UI wireframes, HTML prototypes, running jobs, and completed visual artifacts.
+- AIRES design-system treatment across the app: soft-black chrome, warm-grey canvas, sharp cards, sparse Volt accents, and document-style artifact previews.
 - Server-side Realtime session endpoint using `/v1/realtime/calls` with multipart `FormData` fields named `sdp` and `session`.
 - `oai-events` data channel plus a sample `check_calendar(date, time)` function tool registered through `session.update`.
+- Semantic VAD is enabled with automatic responses disabled; Cooper only speaks after a Cooper wake phrase or the manual **Ask Cooper** action.
+- Cooper-owned Realtime function tools for workspace search, customer context, engineering context, and follow-up actions.
+- Cooper can queue live canvas artifacts with `create_canvas_artifact` while the conversation continues.
+- Cooper can render MCP Apps and AG-UI-style visual surfaces with `render_mcp_app`, including sandboxed iframe app previews, `ui://` resource metadata, state snapshots, and AG-UI event history in the call canvas.
+- Cooper can invoke the AIRES Requirements Framework with `run_aires_requirements_framework` to explain every framework document, workshop a selected document against provided context/drafts, interview for missing context, or queue an AIRES-branded scoped requirements artifact.
+- Cooper can search and fetch Notion context with `search_notion_workspace` and `fetch_notion_page`, using Arcade when mapped/pre-authorized or direct Notion API reads when `NOTION_API_KEY` is configured.
+- GStack-inspired advisory skill tool for CEO review, engineering review, code review, QA review, spec drafting, office hours, and design critique.
+- Settings page for pre-authorizing mapped Arcade tools before Cooper can use them in live calls.
+- Backend Arcade router at `/api/tools/execute` that proxies pre-authorized Cooper tool calls through Arcade, logs tool activity, returns tool results into the same Realtime session, and requires confirmation for write actions.
+- Backend GStack skill runner at `/api/tools/execute` that calls the OpenAI Responses API, returns structured JSON into the same Realtime session, and logs only metadata such as skill, status, timestamps, lengths, and errors.
 - Saved local call library with transcripts in `data/cooper.json`.
 - Transcript capture for microphone/user turns and Cooper's spoken output transcript events.
 - Post-call suggestions for work: post-call kit, execution plan, PRD, HTML prototype, follow-up summary, and code sketch.
 - Rate-limited server-side job loop that calls `/v1/responses` one step at a time, retries transient/rate-limit failures, and writes artifacts to `data/artifacts`.
 - HTML prototype artifacts are standalone inline HTML/CSS/JS and render in a sandboxed Work preview with Mobile and Desktop viewport toggles.
-- Live shared canvas: Cooper can draw mermaid diagrams (`create_diagram`), high-fidelity HTML prototypes (`create_prototype`), and low-fidelity grayscale wireframes (`create_wireframe`) on a fast background lane while talking.
-  - Each canvas tool accepts `speed` (`"fast"` | `"quality"`, default `fast`). `quality` runs a slower multi-step refine on the paced post-call lane with `COOPER_WORK_MODEL`; `fast` uses the real-time lane with `COOPER_FAST_MODEL`.
-  - Iterate in place with `update_canvas_item(item_id, instruction, speed?)` or the per-tab Edit affordance, which `POST`s `/api/calls/:id/canvas/:itemId/update { instruction, speed? }` to regenerate an item from its current content plus the change while keeping the same tab and id.
-  - Each canvas tab can be downloaded (mermaid `.mmd`, html/wireframe `.html`, plus rendered SVG export for diagrams).
-  - Crash recovery: in-flight canvas jobs are requeued onto their original lane after a restart, and any item stuck `generating` with no active job is marked `failed`.
-- Hybrid knowledge base per call: paste or upload context before or during a call. Small entries are injected straight into the live Realtime session; large entries are indexed into an OpenAI vector store and retrieved on demand via the `search_knowledge` tool. Any vector-store error gracefully degrades to injected prompt-mode context, so the feature never hard-fails.
+- MCP App artifacts persist as JSON-backed call artifacts and restore as sandboxed iframe canvas apps with App and Metadata tabs.
+- Mermaid artifacts render as readable Markdown with live Mermaid diagrams in both Work and the call canvas.
 - Live execution feedback through `/api/events` plus persisted per-job activity logs.
 - Browser/PWA notifications when Cooper finishes queued work, plus manual retry for failed jobs.
 - PWA manifest and service worker for installable mobile/browser use.
@@ -66,8 +120,12 @@ Open `http://localhost:3000`.
 ## Notes
 
 - `COOPER_APP_PASSWORD` is required before Cooper API routes or Realtime sessions will run.
+- `ARCADE_API_KEY`, `ARCADE_USER_ID`, `ARCADE_*_TOOL` mappings, and Settings pre-authorization are required before Arcade-backed Cooper tools can execute.
+- `NOTION_API_KEY` is optional for direct Notion reads; Notion pages must be explicitly shared with the integration.
 - `data/` is ignored by git because it contains local transcripts and generated artifacts.
-- Cooper remains silent by default during meetings. He speaks when addressed by name, when you press **Call Cooper**, or when you submit a prompt.
+- Project source text is stored locally in `data/cooper.json`; Cooper receives a compact active-project context packet at call start.
+- GStack skill prompts live in `server/gstack-skills/` and are adapted from GStack under the MIT License. They are advisory-only and cannot mutate code, deploy, create PRs, or access private repo files.
+- Cooper remains silent by default during meetings. He speaks when clearly addressed by a Cooper wake phrase, when you press **Ask Cooper**, or when you submit a prompt.
 
 ## Docs Used
 
@@ -76,3 +134,10 @@ Open `http://localhost:3000`.
 - [Realtime VAD](https://developers.openai.com/api/docs/guides/realtime-vad)
 - [Responses API reference](https://platform.openai.com/docs/api-reference/responses)
 - [gpt-realtime-2 model](https://developers.openai.com/api/docs/models/gpt-realtime-2)
+- [Arcade custom app tool calling](https://docs.arcade.dev/en/guides/tool-calling/custom-apps)
+- [Arcade authorized tool calling](https://docs.arcade.dev/en/guides/tool-calling/custom-apps/auth-tool-calling)
+- [Arcade MCP gateways](https://docs.arcade.dev/en/guides/mcp-gateways)
+- [Notion API search](https://developers.notion.com/reference/post-search)
+- [Notion block children](https://developers.notion.com/reference/get-block-children)
+- [AG-UI introduction](https://docs.ag-ui.com/introduction)
+- [CopilotKit MCP Apps with AG-UI](https://www.copilotkit.ai/blog/bring-mcp-apps-into-your-own-app-with-copilotkit-and-ag-ui)
