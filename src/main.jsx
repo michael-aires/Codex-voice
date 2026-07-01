@@ -7,6 +7,18 @@ import { cooperToolDefinitions } from "../cooperTools.js";
 import { createAudioResponseEvent } from "./realtimeEvents.js";
 import { isCooperWakePhrase } from "./wakeWords.js";
 import {
+  collectJobLogs,
+  jobApiLine,
+  jobStatusLine,
+  progressPercent
+} from "./jobTelemetry.js";
+import {
+  callModeLabel,
+  callPromptPlaceholder,
+  canvasStateLabel,
+  wakeHint
+} from "./callExperience.js";
+import {
   Activity,
   AlertTriangle,
   ArrowLeft,
@@ -43,6 +55,13 @@ import {
 import "./styles.css";
 
 let mermaidLoader = null;
+
+const canvasQuickActions = [
+  { kind: "mermaid_diagram", label: "Diagram", icon: Files },
+  { kind: "ui_wireframe", label: "Wireframe", icon: MonitorSmartphone },
+  { kind: "html_prototype", label: "Prototype", icon: Wand2 },
+  { kind: "aires_requirements", label: "Requirements", icon: FileText }
+];
 
 const markdownRenderer = new MarkdownIt({
   html: false,
@@ -129,6 +148,9 @@ function App() {
   const outputTranscriptBuffersRef = React.useRef(new Map());
   const textTranscriptBuffersRef = React.useRef(new Map());
   const persistedResponseIdsRef = React.useRef(new Set());
+  const responseInProgressRef = React.useRef(false);
+  const pendingResponseRef = React.useRef(null);
+  const lastResponseEventRef = React.useRef(null);
   const knownCompletedJobsRef = React.useRef(new Set());
   const didLoadStateRef = React.useRef(false);
 
@@ -352,7 +374,12 @@ function App() {
         output: JSON.stringify(result)
       }
     });
-    sendEvent(createAudioResponseEvent("tool_result"));
+    const toolResponseEvent = createAudioResponseEvent("tool_result");
+    lastResponseEventRef.current = toolResponseEvent;
+    if (sendEvent(toolResponseEvent)) {
+      responseInProgressRef.current = true;
+      setStatus("Cooper preparing");
+    }
     addEvent("Tool", `${call.name} returned.`);
   }
 
@@ -406,9 +433,21 @@ function App() {
       }
     }
 
-    const sent = sendEvent(createAudioResponseEvent(userText ? "typed_prompt" : reason));
+    const responseEvent = createAudioResponseEvent(userText ? "typed_prompt" : reason);
+    if (responseInProgressRef.current) {
+      pendingResponseRef.current = responseEvent;
+      addEvent("Cooper", userText ? "Queued after current response." : "Ask queued after current response.");
+      return;
+    }
 
-    if (sent) addEvent("Cooper", userText || "Called by voice.");
+    lastResponseEventRef.current = responseEvent;
+    const sent = sendEvent(responseEvent);
+
+    if (sent) {
+      responseInProgressRef.current = true;
+      setStatus("Cooper preparing");
+      addEvent("Cooper", userText || "Called by voice.");
+    }
   }
 
   function handleServerEvent(event) {
@@ -461,6 +500,7 @@ function App() {
     }
 
     if (event.type === "response.created") {
+      responseInProgressRef.current = true;
       setStatus("Cooper preparing");
       return;
     }
@@ -497,16 +537,44 @@ function App() {
     }
 
     if (event.type === "response.done") {
+      responseInProgressRef.current = false;
       setSpeaking(false);
       setStatus("Listening");
       const calls = event.response?.output?.filter((item) => item.type === "function_call") || [];
+      if (calls.length) {
+        responseInProgressRef.current = true;
+      }
       calls.forEach(handleFunctionCall);
       finalizeResponseTranscriptFallback(event.response);
+      if (calls.length) return;
+      const pending = pendingResponseRef.current;
+      pendingResponseRef.current = null;
+      if (pending) {
+        window.setTimeout(() => {
+          lastResponseEventRef.current = pending;
+          if (sendEvent(pending)) {
+            responseInProgressRef.current = true;
+            setStatus("Cooper preparing");
+            addEvent("Cooper", "Queued ask sent.");
+          }
+        }, 80);
+      }
       return;
     }
 
     if (event.type === "error") {
       const message = event.error?.message || "Realtime error";
+      if (/active response/i.test(message)) {
+        if (lastResponseEventRef.current) {
+          pendingResponseRef.current = lastResponseEventRef.current;
+        }
+        responseInProgressRef.current = true;
+        setStatus("Cooper preparing");
+        addEvent("Cooper", "Already answering; queued the latest ask.");
+        return;
+      } else {
+        responseInProgressRef.current = false;
+      }
       setStatus("Error");
       addEvent("Error", message);
     }
@@ -523,6 +591,8 @@ function App() {
     outputTranscriptBuffersRef.current = new Map();
     textTranscriptBuffersRef.current = new Map();
     persistedResponseIdsRef.current = new Set();
+    responseInProgressRef.current = false;
+    pendingResponseRef.current = null;
     setView("call");
 
     try {
@@ -807,6 +877,39 @@ function App() {
     await generateArtifact(call.id, kind, customPrompt, { stay: true });
   }
 
+  async function presentAiresExample(exampleId, options = {}) {
+    const call = activeCallRef.current;
+    if (!call?.id) {
+      addEvent("Canvas", "Join the call before presenting an AIRES example.");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/tools/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          name: "present_aires_example",
+          arguments: {
+            example_id: exampleId,
+            mode: options.mode || "show",
+            reason: options.reason || "Michael opened this AIRES example from the live canvas.",
+            context: options.context || transcriptsRef.current.slice(-6).map((entry) => `${entry.speaker}: ${entry.text}`).join("\n")
+          },
+          callId: call.id
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Could not present AIRES example.");
+      if (payload.output?.artifactId) setSelectedArtifactId(payload.output.artifactId);
+      await refreshState();
+      addEvent("Canvas", payload.output?.message || "AIRES example is on the canvas.");
+    } catch (error) {
+      addEvent("Canvas", error.message);
+    }
+  }
+
   async function ensureLiveContextProject() {
     if (selectedProject?.id) return selectedProject.id;
 
@@ -1049,6 +1152,7 @@ function App() {
         onCallCooper={() => requestCooper("", "manual_ask")}
         onSelectArtifact={setSelectedArtifactId}
         onGenerateCanvas={generateLiveCanvasArtifact}
+        onPresentExample={presentAiresExample}
         onAddContext={addLiveContext}
         onUploadContext={uploadLiveContext}
         onRetryJob={retryJob}
@@ -1430,33 +1534,98 @@ function CallScreen({
   onCallCooper,
   onSelectArtifact,
   onGenerateCanvas,
+  onPresentExample,
   onAddContext,
   onUploadContext,
   onRetryJob,
   onBack
-}) {
-  const mode = speaking ? "speaking" : hearing ? "hearing" : connected ? "listening" : "idle";
+  }) {
+    const mode = speaking ? "speaking" : hearing ? "hearing" : connected ? "listening" : "idle";
+    const modeLabel = callModeLabel({ speaking, hearing, connecting, connected });
+    const hint = wakeHint(connected);
 
-  return (
-    <main className={`call-screen ${mode}`}>
-      <header className="call-topbar">
-        <button className="icon-button inverted" onClick={onBack} aria-label="Back">
-          <ArrowLeft size={20} />
-        </button>
-        <div className="call-status">
-          <Radio size={18} />
-          <span>{status}</span>
-        </div>
-        <button className="icon-button inverted danger-text" onClick={onEndCall} aria-label="End call">
-          <PhoneOff size={20} />
-        </button>
-      </header>
+    return (
+      <main className={`call-screen ${mode}`}>
+      <section className="call-rail" aria-label="Cooper call controls">
+        <header className="call-topbar">
+          <button className="icon-button inverted" onClick={onBack} aria-label="Back">
+            <ArrowLeft size={20} />
+          </button>
+          <div className="call-status">
+            <Radio size={18} />
+            <span>{status}</span>
+          </div>
+          <button className="icon-button inverted danger-text" onClick={onEndCall} aria-label="End call">
+            <PhoneOff size={20} />
+          </button>
+        </header>
 
-      <section className="wave-stage">
-        <div className="call-label">Cooper</div>
-        {project && <div className="call-project">{project.title}</div>}
-        <SoundWave active={speaking || hearing || connecting} speaking={speaking} />
-        <p>{speaking ? "Speaking" : hearing ? "Listening" : connected ? "Standing by" : "Ready"}</p>
+          <section className="wave-stage">
+            <div className="call-label">Cooper</div>
+            {project && <div className="call-project">{project.title}</div>}
+            <SoundWave active={speaking || hearing || connecting} speaking={speaking} />
+            <p>{modeLabel}</p>
+            <div className="wake-strip" aria-label="Cooper wake behavior">
+              <span>{hint.label}</span>
+              <strong>{hint.value}</strong>
+              <span>{hint.detail}</span>
+            </div>
+          </section>
+
+        <section className="call-dock">
+          <div className="dock-actions">
+            {!connected && !connecting && (
+              <button className="primary-action" onClick={onConnect}>
+                <Phone size={20} />
+                <span>Join</span>
+              </button>
+            )}
+              <button className="secondary-action" onClick={onCallCooper} disabled={!connected}>
+                <Mic size={20} />
+                <span>Wake Cooper</span>
+              </button>
+            <button className="danger-action" onClick={onEndCall}>
+              <PhoneOff size={20} />
+              <span>End</span>
+            </button>
+          </div>
+
+          <form className="call-prompt" onSubmit={onSubmitPrompt}>
+            <input
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder={callPromptPlaceholder(connected)}
+                disabled={!connected}
+              />
+            <button type="submit" disabled={!connected || !prompt.trim()} aria-label="Send">
+              <Send size={19} />
+            </button>
+          </form>
+
+          <div className="live-feed">
+            <section>
+              <h2>Transcript</h2>
+              <div className="feed-list">
+                {transcripts.slice(-4).reverse().map((entry) => (
+                  <div className={`feed-turn ${speakerClass(entry.speaker)}`} key={entry.id}>
+                    <span>{normalizeSpeaker(entry.speaker)}</span>
+                    <p>{entry.text}</p>
+                  </div>
+                ))}
+                {!transcripts.length && <p className="muted">Waiting for speech.</p>}
+              </div>
+            </section>
+            <section>
+              <h2>Events</h2>
+              <div className="feed-list">
+                {events.slice(0, 4).map((event) => (
+                  <p key={event.id}>{event.label}: {event.detail}</p>
+                ))}
+                {!events.length && <p className="muted">No events yet.</p>}
+              </div>
+            </section>
+          </div>
+        </section>
       </section>
 
       <CallCanvas
@@ -1469,65 +1638,11 @@ function CallScreen({
         artifactContent={artifactContent}
         onSelectArtifact={onSelectArtifact}
         onGenerateCanvas={onGenerateCanvas}
+        onPresentExample={onPresentExample}
         onAddContext={onAddContext}
         onUploadContext={onUploadContext}
         onRetryJob={onRetryJob}
       />
-
-      <section className="call-dock">
-        <div className="dock-actions">
-          {!connected && !connecting && (
-            <button className="primary-action" onClick={onConnect}>
-              <Phone size={20} />
-              <span>Join</span>
-            </button>
-          )}
-          <button className="secondary-action" onClick={onCallCooper} disabled={!connected}>
-            <Mic size={20} />
-            <span>Ask Cooper</span>
-          </button>
-          <button className="danger-action" onClick={onEndCall}>
-            <PhoneOff size={20} />
-            <span>End</span>
-          </button>
-        </div>
-
-        <form className="call-prompt" onSubmit={onSubmitPrompt}>
-          <input
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder="Ask Cooper"
-            disabled={!connected}
-          />
-          <button type="submit" disabled={!connected || !prompt.trim()} aria-label="Send">
-            <Send size={19} />
-          </button>
-        </form>
-
-        <div className="live-feed">
-          <section>
-            <h2>Transcript</h2>
-            <div className="feed-list">
-              {transcripts.slice(-4).reverse().map((entry) => (
-                <div className={`feed-turn ${speakerClass(entry.speaker)}`} key={entry.id}>
-                  <span>{normalizeSpeaker(entry.speaker)}</span>
-                  <p>{entry.text}</p>
-                </div>
-              ))}
-              {!transcripts.length && <p className="muted">Waiting for speech.</p>}
-            </div>
-          </section>
-          <section>
-            <h2>Events</h2>
-            <div className="feed-list">
-              {events.slice(0, 4).map((event) => (
-                <p key={event.id}>{event.label}: {event.detail}</p>
-              ))}
-              {!events.length && <p className="muted">No events yet.</p>}
-            </div>
-          </section>
-        </div>
-      </section>
     </main>
   );
 }
@@ -1542,21 +1657,29 @@ function CallCanvas({
   artifactContent,
   onSelectArtifact,
   onGenerateCanvas,
+  onPresentExample,
   onAddContext,
   onUploadContext,
   onRetryJob
 }) {
-  const [activeTab, setActiveTab] = React.useState("canvas");
+  const [activeTab, setActiveTab] = React.useState("preview");
   const [artifactMode, setArtifactMode] = React.useState("rendered");
+  const [buildKind, setBuildKind] = React.useState("mermaid_diagram");
   const [canvasPrompt, setCanvasPrompt] = React.useState("");
   const [contextTitle, setContextTitle] = React.useState("");
   const [contextText, setContextText] = React.useState("");
+  const [examples, setExamples] = React.useState([]);
+  const [selectedExampleId, setSelectedExampleId] = React.useState("");
+  const [exampleHtml, setExampleHtml] = React.useState("");
+  const [examplesStatus, setExamplesStatus] = React.useState("idle");
   const fileInputRef = React.useRef(null);
   const callId = activeCall?.id || "";
-  const callArtifacts = artifacts.filter((artifact) => artifact.callId === callId);
-  const callJobs = jobs.filter((job) => job.callId === callId);
-  const visibleArtifact = selectedArtifact?.callId === callId ? selectedArtifact : callArtifacts[0] || null;
-  const visibleContent = visibleArtifact?.id === selectedArtifact?.id ? artifactContent : "";
+    const callArtifacts = artifacts.filter((artifact) => artifact.callId === callId);
+    const callJobs = jobs.filter((job) => job.callId === callId);
+    const activeJobCount = callJobs.filter((job) => ["queued", "running"].includes(job.status)).length;
+    const visibleArtifact = selectedArtifact?.callId === callId ? selectedArtifact : callArtifacts[0] || null;
+    const visibleContent = visibleArtifact?.id === selectedArtifact?.id ? artifactContent : "";
+    const selectedExample = examples.find((example) => example.id === selectedExampleId) || examples[0] || null;
 
   React.useEffect(() => {
     if (visibleArtifact?.id && selectedArtifact?.id !== visibleArtifact.id) {
@@ -1568,10 +1691,83 @@ function CallCanvas({
     setArtifactMode(visibleArtifact?.outputType === "html" ? "preview" : visibleArtifact?.outputType === "mcp_app" ? "app" : "rendered");
   }, [visibleArtifact?.id, visibleArtifact?.outputType]);
 
+  React.useEffect(() => {
+    let active = true;
+    setExamplesStatus("loading");
+    fetch("/api/aires/examples", { credentials: "same-origin" })
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load AIRES examples.");
+        return response.json();
+      })
+      .then((payload) => {
+        if (!active) return;
+        const nextExamples = Array.isArray(payload.examples) ? payload.examples : [];
+        setExamples(nextExamples);
+        setSelectedExampleId((current) => current || nextExamples[0]?.id || "");
+        setExamplesStatus("ready");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setExamplesStatus(error.message || "Could not load AIRES examples.");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!selectedExample?.id) {
+      setExampleHtml("");
+      return undefined;
+    }
+
+    let active = true;
+    setExamplesStatus("loading");
+    fetch(`/api/aires/examples/${selectedExample.id}`, { credentials: "same-origin" })
+      .then((response) => {
+        if (!response.ok) throw new Error("Could not load the selected AIRES example.");
+        return response.json();
+      })
+      .then((payload) => {
+        if (!active) return;
+        setExampleHtml(payload.example?.html || "");
+        setExamplesStatus("ready");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setExampleHtml("");
+        setExamplesStatus(error.message || "Could not load the selected AIRES example.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedExample?.id]);
+
   function submitCanvas(event) {
     event.preventDefault();
-    onGenerateCanvas("mermaid_diagram", canvasPrompt);
+    queueCanvasBuild(buildKind, canvasPrompt);
     setCanvasPrompt("");
+  }
+
+  function queueCanvasBuild(kind, request = "") {
+    setBuildKind(kind);
+    onGenerateCanvas(kind, request);
+    setActiveTab("activity");
+  }
+
+  function generateSelectedExample() {
+    if (!selectedExample) return;
+    queueCanvasBuild(selectedExample.recipeKind || "aires_requirements", buildExamplePrompt(selectedExample, canvasPrompt));
+  }
+
+  function presentSelectedExample() {
+    if (!selectedExample || !onPresentExample) return;
+    onPresentExample(selectedExample.id, {
+      mode: "show",
+      reason: `Michael opened ${selectedExample.title} from the live canvas.`,
+      context: canvasPrompt
+    });
+    setActiveTab("preview");
   }
 
   function submitContext(event) {
@@ -1598,90 +1794,166 @@ function CallCanvas({
           <p className="eyebrow">Live Canvas</p>
           <h2>{visibleArtifact?.title || "Collaborate visually"}</h2>
         </div>
-        <span className={connected ? "canvas-state live" : "canvas-state"}>{connected ? "Live" : "Idle"}</span>
-      </div>
+          <span className={connected ? "canvas-state live" : "canvas-state"}>{canvasStateLabel({ connected, activeJobCount })}</span>
+        </div>
 
       <div className="canvas-tabs" role="tablist" aria-label="Canvas sections">
-        <button className={activeTab === "canvas" ? "active" : ""} onClick={() => setActiveTab("canvas")} role="tab">
-          Canvas
+        <button className={activeTab === "preview" ? "active" : ""} onClick={() => setActiveTab("preview")} role="tab">
+          Preview
+        </button>
+        <button className={activeTab === "build" ? "active" : ""} onClick={() => setActiveTab("build")} role="tab">
+          Build
         </button>
         <button className={activeTab === "context" ? "active" : ""} onClick={() => setActiveTab("context")} role="tab">
           Context
         </button>
+        <button className={activeTab === "examples" ? "active" : ""} onClick={() => setActiveTab("examples")} role="tab">
+          Examples
+        </button>
+        <button className={activeTab === "activity" ? "active" : ""} onClick={() => setActiveTab("activity")} role="tab">
+          Activity
+        </button>
       </div>
 
-      {activeTab === "canvas" ? (
+      {activeTab === "preview" && (
         <div className="canvas-body">
+          <div className="canvas-preview-grid">
+            <section className="canvas-preview-main">
+              {callArtifacts.length > 0 && (
+                <div className="canvas-artifact-tabs">
+                  {callArtifacts.map((artifact) => (
+                    <button
+                      key={artifact.id}
+                      className={visibleArtifact?.id === artifact.id ? "active" : ""}
+                      onClick={() => onSelectArtifact(artifact.id)}
+                    >
+                      {artifact.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {visibleArtifact ? (
+                <ArtifactDocument
+                  artifact={visibleArtifact}
+                  mode={artifactMode}
+                  onModeChange={setArtifactMode}
+                  content={visibleContent}
+                  title={visibleArtifact.title}
+                />
+                ) : (
+                  <div className="canvas-empty large">
+                    <Files size={28} />
+                    <strong>Nothing on the canvas yet.</strong>
+                    <p>Cooper can bring diagrams, prototypes, requirements, or AIRES examples forward while the call keeps moving.</p>
+                    <div className="quick-canvas-actions" aria-label="Canvas quick actions">
+                      {canvasQuickActions.map(({ kind, label, icon: Icon }) => (
+                        <button key={kind} onClick={() => queueCanvasBuild(kind)} disabled={!callId}>
+                          <Icon size={17} />
+                          <span>{label}</span>
+                        </button>
+                      ))}
+                      <button onClick={() => setActiveTab("examples")} disabled={!callId}>
+                        <Library size={17} />
+                        <span>Examples</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+            </section>
+
+            <aside className="canvas-preview-side">
+              <div className="canvas-section-head">
+                <Activity size={17} />
+                <strong>Running work</strong>
+              </div>
+              <JobList jobs={callJobs} onRetry={onRetryJob} />
+              <ActivityStream jobs={callJobs} compact />
+            </aside>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "build" && (
+        <div className="canvas-body">
+          <div className="canvas-section-head">
+            <Wand2 size={17} />
+            <strong>Select what Cooper should build</strong>
+          </div>
+
           <div className="canvas-actions">
-            <button onClick={() => onGenerateCanvas("mermaid_diagram", canvasPrompt)} disabled={!callId}>
+            <button className={buildKind === "mermaid_diagram" ? "active" : ""} onClick={() => setBuildKind("mermaid_diagram")} disabled={!callId}>
               <Files size={17} />
               <span>Diagram</span>
             </button>
-            <button onClick={() => onGenerateCanvas("ui_wireframe", canvasPrompt)} disabled={!callId}>
+            <button className={buildKind === "ui_wireframe" ? "active" : ""} onClick={() => setBuildKind("ui_wireframe")} disabled={!callId}>
               <MonitorSmartphone size={17} />
               <span>Wireframe</span>
             </button>
-            <button onClick={() => onGenerateCanvas("html_prototype", canvasPrompt)} disabled={!callId}>
+            <button className={buildKind === "html_prototype" ? "active" : ""} onClick={() => setBuildKind("html_prototype")} disabled={!callId}>
               <Wand2 size={17} />
               <span>Prototype</span>
             </button>
-            <button onClick={() => onGenerateCanvas("aires_requirements", canvasPrompt)} disabled={!callId}>
+            <button className={buildKind === "aires_requirements" ? "active" : ""} onClick={() => setBuildKind("aires_requirements")} disabled={!callId}>
               <FileText size={17} />
               <span>Requirements</span>
             </button>
           </div>
 
-          <form className="canvas-prompt-form" onSubmit={submitCanvas}>
-            <input
+          <form className="canvas-prompt-form expanded" onSubmit={submitCanvas}>
+            <textarea
               value={canvasPrompt}
               onChange={(event) => setCanvasPrompt(event.target.value)}
-              placeholder="Ask for a workflow, architecture map, wireframe, prototype, or scoped requirements"
+              placeholder="Describe the artifact, or leave blank and Cooper will use the live transcript and loaded project context."
+              rows={5}
             />
             <button type="submit" disabled={!callId}>
               <Send size={17} />
+              <span>Generate</span>
             </button>
           </form>
 
-          {callJobs.length > 0 && (
-            <section className="canvas-work">
-              <JobList jobs={callJobs} onRetry={onRetryJob} />
-            </section>
-          )}
+          <div className="flow-grid">
+            {examples.map((example) => (
+              <button
+                className={selectedExampleId === example.id ? "flow-card active" : "flow-card"}
+                key={example.id}
+                onClick={() => {
+                  setSelectedExampleId(example.id);
+                  setBuildKind(example.recipeKind || "aires_requirements");
+                }}
+              >
+                <span>{example.category}</span>
+                <strong>{example.title}</strong>
+                <small>{example.flow}</small>
+              </button>
+            ))}
+          </div>
 
-          {callArtifacts.length > 0 && (
-            <div className="canvas-artifact-tabs">
-              {callArtifacts.map((artifact) => (
-                <button
-                  key={artifact.id}
-                  className={visibleArtifact?.id === artifact.id ? "active" : ""}
-                  onClick={() => onSelectArtifact(artifact.id)}
-                >
-                  {artifact.title}
+          {selectedExample && (
+            <div className="context-mode-card">
+              <strong>{selectedExample.title}</strong>
+              <span>{selectedExample.description}</span>
+              <div className="inline-actions">
+                <button className="primary-action compact" onClick={generateSelectedExample} disabled={!callId}>
+                  <Wand2 size={17} />
+                  <span>Generate this flow</span>
                 </button>
-              ))}
-            </div>
-          )}
-
-          {visibleArtifact ? (
-            <ArtifactDocument
-              artifact={visibleArtifact}
-              mode={artifactMode}
-              onModeChange={setArtifactMode}
-              content={visibleContent}
-              title={visibleArtifact.title}
-            />
-          ) : (
-            <div className="canvas-empty">
-              <Files size={24} />
-              <p>Ask Cooper for a Mermaid diagram, workflow map, wireframe, prototype, or AIRES scoped requirements. It will appear here when ready.</p>
+                <button className="secondary-action compact" onClick={() => setActiveTab("examples")}>
+                  <ExternalLink size={17} />
+                  <span>Preview example</span>
+                </button>
+              </div>
             </div>
           )}
         </div>
-      ) : (
+      )}
+
+      {activeTab === "context" && (
         <div className="canvas-body">
           <div className="context-mode-card">
             <strong>{project?.title || "Live context"}</strong>
-            <span>Mode: project knowledge base plus live session prompt refresh.</span>
+            <span>Paste or upload sprint tickets, feature epics, agent output, requirements drafts, PDFs, and notes. Cooper refreshes the live session context after ingestion.</span>
           </div>
 
           <form className="live-context-form" onSubmit={submitContext}>
@@ -1693,8 +1965,8 @@ function CallCanvas({
             <textarea
               value={contextText}
               onChange={(event) => setContextText(event.target.value)}
-              placeholder="Paste sprint tickets, feature epics, agent output, customer notes, architecture notes, or PRD fragments"
-              rows={7}
+              placeholder="Paste sprint tickets, feature epics, agent output, customer notes, architecture notes, PRD fragments, or AI-generated research"
+              rows={10}
             />
             <button className="primary-action" type="submit" disabled={!contextText.trim()}>
               <FileText size={18} />
@@ -1713,6 +1985,68 @@ function CallCanvas({
             <Upload size={18} />
             <span>Upload Markdown, Text, or PDF</span>
           </button>
+        </div>
+      )}
+
+      {activeTab === "examples" && (
+        <div className="canvas-body">
+          <div className="example-layout">
+            <aside className="example-list">
+              {examples.map((example) => (
+                <button
+                  className={selectedExampleId === example.id ? "example-button active" : "example-button"}
+                  key={example.id}
+                  onClick={() => setSelectedExampleId(example.id)}
+                >
+                  <span>{example.category}</span>
+                  <strong>{example.title}</strong>
+                </button>
+              ))}
+              {!examples.length && <p className="muted">{examplesStatus === "loading" ? "Loading examples." : "No examples found."}</p>}
+            </aside>
+
+            <section className="example-preview">
+              <div className="example-preview-head">
+                <div>
+                  <p className="eyebrow">{selectedExample?.category || "AIRES example"}</p>
+                  <h3>{selectedExample?.title || "Example"}</h3>
+                  {selectedExample && <p>{selectedExample.description}</p>}
+                </div>
+                <div className="inline-actions">
+                  <button className="secondary-action compact" onClick={presentSelectedExample} disabled={!callId || !selectedExample}>
+                    <Files size={17} />
+                    <span>Present</span>
+                  </button>
+                  <button className="primary-action compact" onClick={generateSelectedExample} disabled={!callId || !selectedExample}>
+                    <Wand2 size={17} />
+                    <span>Generate</span>
+                  </button>
+                </div>
+              </div>
+              {exampleHtml ? (
+                <iframe
+                  className="example-frame"
+                  title={selectedExample?.title || "AIRES example"}
+                  srcDoc={exampleHtml}
+                  sandbox="allow-forms allow-modals allow-popups allow-scripts"
+                />
+              ) : (
+                <div className="canvas-empty">
+                  <Files size={24} />
+                  <p>{examplesStatus === "loading" ? "Loading selected example." : examplesStatus}</p>
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "activity" && (
+        <div className="canvas-body">
+          <section className="canvas-work expanded">
+            <JobList jobs={callJobs} onRetry={onRetryJob} />
+          </section>
+          <ActivityStream jobs={callJobs} />
         </div>
       )}
     </aside>
@@ -2375,6 +2709,8 @@ function CallRow({ call }) {
 }
 
 function JobList({ jobs, onRetry }) {
+  const hasActiveJobs = jobs.some((job) => ["queued", "running"].includes(job.status));
+  const now = useNow(hasActiveJobs);
   if (!jobs.length) return <p className="muted">Queue is clear.</p>;
 
   return (
@@ -2384,15 +2720,14 @@ function JobList({ jobs, onRetry }) {
           {job.status === "completed" ? <CheckCircle2 size={18} /> : job.status === "failed" ? <AlertTriangle size={18} /> : <Clock size={18} />}
           <div>
             <strong>{job.title}</strong>
-            <span>
-              {job.status} - step {Math.min(job.stepIndex + 1, job.stepCount)}/{job.stepCount}
-              {job.attempts ? ` - calls ${job.attempts}` : ""}
-              {job.maxAttempts ? ` - retries ${job.failures || 0}/${job.maxAttempts}` : ""}
-            </span>
+            <span>{jobStatusLine(job, now)}</span>
             <div className="job-progress" aria-label={`${job.title} progress`}>
               <span style={{ width: `${progressPercent(job)}%` }} />
             </div>
             {job.progress && <small>{job.progress}</small>}
+            {job.activeStepSummary && <small>Step: {job.activeStepSummary}</small>}
+            {jobApiLine(job, now) && <small>{jobApiLine(job, now)}</small>}
+            {job.draftCharCount ? <small>Draft: {Number(job.draftCharCount).toLocaleString()} chars captured.</small> : null}
             {job.error && <small>{job.error}</small>}
             {job.status === "failed" && onRetry && (
               <button className="inline-action" onClick={() => onRetry(job.id)}>
@@ -2405,6 +2740,18 @@ function JobList({ jobs, onRetry }) {
       ))}
     </div>
   );
+}
+
+function useNow(enabled) {
+  const [now, setNow] = React.useState(() => Date.now());
+
+  React.useEffect(() => {
+    if (!enabled) return undefined;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [enabled]);
+
+  return enabled ? now : Date.now();
 }
 
 function ActivityStream({ jobs, compact = false }) {
@@ -2478,24 +2825,16 @@ function defaultCanvasPrompt(kind) {
   }[kind] || "Create a visual artifact for what we are discussing.";
 }
 
-function collectJobLogs(jobs) {
-  return jobs
-    .flatMap((job) =>
-      (job.logs || []).map((log) => ({
-        ...log,
-        jobId: job.id,
-        jobTitle: job.title
-      }))
-    )
-    .sort((a, b) => new Date(b.at) - new Date(a.at));
-}
-
-function progressPercent(job) {
-  if (job.status === "completed") return 100;
-  if (job.status === "failed") return Math.max(8, Math.round((Number(job.stepIndex || 0) / Math.max(1, Number(job.stepCount || 1))) * 100));
-  const stepCount = Math.max(1, Number(job.stepCount || 1));
-  const base = (Number(job.stepIndex || 0) / stepCount) * 100;
-  return Math.min(96, Math.max(8, Math.round(base + (job.status === "running" ? 18 / stepCount : 0))));
+function buildExamplePrompt(example, instruction = "") {
+  if (!example) return defaultCanvasPrompt("aires_requirements");
+  return [
+    example.promptHint || `Generate ${example.title} for the current discussion.`,
+    `Use the active project context and live transcript as the source of truth.`,
+    `Use the AIRES example "${example.title}" as the structural model.`,
+    example.flow ? `Flow: ${example.flow}` : "",
+    example.description ? `Reference intent: ${example.description}` : "",
+    instruction.trim() ? `Michael's additional instruction:\n${instruction.trim()}` : ""
+  ].filter(Boolean).join("\n\n");
 }
 
 function renderArtifactHtml(markdown = "") {
@@ -2738,6 +3077,7 @@ function toolLabel(name) {
     check_calendar: "Calendar check",
     create_canvas_artifact: "Canvas artifact",
     render_mcp_app: "MCP App canvas",
+    present_aires_example: "AIRES example canvas",
     run_gstack_skill: "GStack skill",
     run_aires_requirements_framework: "AIRES requirements"
   }[name] || String(name || "Tool").replace(/_/g, " ");

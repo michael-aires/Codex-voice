@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The rep velocity thesis — Aires</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{--black:#2D2C2D;--white:#fff;--volt:#F0DE4A;--grey:#F0F2EB;--mgrey:#9C9C9C;--orange:#EE7437;--sky:#B1CDD6;--blue:#2563EB;
+--ink-700:#3F3F46;--ink-600:#52525B;--ink-500:#71717A;--ink-400:#A1A1AA;--ink-300:#D4D4D8;--ink-200:#E4E4E7;--ink-100:#F4F4F5;--ink-50:#FAFAFA;
+--success:#059669;--fd:'Urbanist',sans-serif;--fb:'Inter',sans-serif;--fs:'Instrument Serif',Georgia,serif;--fm:'IBM Plex Mono',monospace;
+--sh-xs:0 1px 2px rgba(16,24,40,.05);--sh-md:0 4px 8px -2px rgba(16,24,40,.10),0 2px 4px -2px rgba(16,24,40,.06)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--fb);color:var(--black);background:var(--grey);line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:880px;margin:28px auto;background:var(--white);box-shadow:var(--sh-md);border-radius:10px;overflow:hidden;border:1px solid var(--ink-200)}
+.aires-header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:26px 48px;background:var(--black);color:#fff;border-bottom:3px solid var(--volt)}
+.brand{display:flex;align-items:center;gap:11px}
+.brand svg{width:24px;height:24px;display:block}
+.brand .wm{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:.02em}
+.hd-meta{flex:1}
+.hd-meta h1{font-family:var(--fd);font-weight:600;font-size:30px;line-height:1.08}
+.hd-meta .sub{font-family:var(--fm);font-size:10.5px;color:var(--mgrey);margin-top:7px;letter-spacing:.03em}
+.btn{font-family:var(--fb);font-size:12px;font-weight:600;color:var(--black);background:var(--white);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:opacity .13s ease}
+.btn:hover{opacity:.88}
+main{padding:8px 48px 20px}
+.lede{font-family:var(--fs);font-size:25px;line-height:1.4;color:var(--ink-700);padding:36px 0 28px;border-bottom:1px solid var(--ink-200)}
+.lede em{font-style:italic;color:var(--black)}
+section{padding:32px 0;border-bottom:1px solid var(--ink-200)}
+section:last-of-type{border-bottom:none}
+.eyebrow{font-family:var(--fb);font-size:10.5px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:var(--ink-500);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.eyebrow:before{content:"";width:18px;height:2px;background:var(--volt)}
+h2{font-family:var(--fd);font-weight:600;font-size:28px;line-height:1.12;margin-bottom:14px}
+h3{font-size:14px;font-weight:600;margin:20px 0 8px}
+p{font-size:15.5px;color:var(--ink-700);margin-bottom:14px}
+p strong{color:var(--black);font-weight:600}
+.pull{font-family:var(--fs);font-size:27px;line-height:1.34;color:var(--black);border-left:3px solid var(--volt);padding:4px 0 4px 24px;margin:24px 0}
+.pull em{font-style:italic}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}
+.card{background:var(--white);border:1px solid var(--ink-200);border-radius:8px;padding:20px 22px;box-shadow:var(--sh-xs)}
+.card .tag{font-family:var(--fm);font-size:10px;letter-spacing:.06em;text-transform:uppercase;font-weight:600;margin-bottom:10px;display:inline-block;padding:3px 9px;border-radius:9999px}
+.tag.mgr{color:var(--black);background:var(--ink-100);border:1px solid var(--ink-200)}
+.tag.rep{color:var(--black);background:#FBF7CF;border:1px solid var(--volt)}
+.card h4{font-family:var(--fd);font-size:17px;font-weight:600;margin-bottom:6px}
+.card p{font-size:14px;margin-bottom:0;color:var(--ink-600)}
+.flywheel{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;margin:24px 0 6px}
+.fw-node{font-size:13px;font-weight:500;padding:11px 16px;border-radius:9999px;border:1px solid var(--ink-300);color:var(--black);background:var(--white)}
+.fw-arrow{color:var(--orange);font-size:17px;font-weight:700;font-family:var(--fm)}
+.stack{margin-top:18px}
+.step{display:flex;gap:16px;align-items:flex-start;padding:15px 0;border-bottom:1px solid var(--ink-100)}
+.step:last-child{border-bottom:none}
+.step .num{flex:0 0 30px;height:30px;border-radius:9999px;background:var(--black);color:var(--volt);font-family:var(--fm);font-size:13px;display:flex;align-items:center;justify-content:center;font-weight:600}
+.step .body h4{font-family:var(--fd);font-size:16px;font-weight:600;margin-bottom:2px}
+.step .body h4 .spark{color:var(--orange)}
+.step .body p{font-size:14px;margin-bottom:0;color:var(--ink-600)}
+.surfaces{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+.surface{border:1px solid var(--ink-200);border-radius:8px;overflow:hidden;box-shadow:var(--sh-xs)}
+.surface .hd{background:var(--black);color:#fff;padding:12px 16px;font-family:var(--fd);font-weight:600;font-size:14.5px}
+.surface .bd{padding:14px 16px;font-size:13.5px;color:var(--ink-600)}
+.surface .q{font-family:var(--fs);font-style:italic;color:var(--black);font-size:16px;margin-top:10px;display:block}
+.clients{margin-top:14px}
+.client{display:flex;gap:18px;padding:18px 0;border-bottom:1px solid var(--ink-100)}
+.client:last-child{border-bottom:none}
+.client .name{flex:0 0 130px;font-family:var(--fd);font-size:21px;font-weight:600;color:var(--black)}
+.client .name span{display:block;font-family:var(--fm);font-size:10px;letter-spacing:.04em;color:var(--ink-500);text-transform:uppercase;margin-top:3px;font-weight:500}
+.client .desc p{margin-bottom:6px;font-size:14.5px}
+.client .desc .cap{font-family:var(--fm);font-size:12px;color:var(--orange)}
+.done-box{background:var(--black);color:#fff;border-radius:10px;padding:30px 34px;margin-top:4px}
+.done-box .eyebrow{color:var(--volt)}.done-box .eyebrow:before{background:var(--volt)}
+.done-box h2{color:#fff}
+.done-box p{color:var(--ink-300)}
+.done-box .pull{color:#fff;border-left-color:var(--volt);font-size:23px}
+.aires-footer{display:flex;justify-content:space-between;padding:18px 48px;background:var(--grey);border-top:1px solid var(--ink-200);font-size:10.5px;color:var(--ink-500);font-family:var(--fm);letter-spacing:.03em}
+@media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0;border:none}.btn{display:none}section{page-break-inside:avoid}}
+@media(max-width:760px){main,.aires-header,.aires-footer{padding-left:26px;padding-right:26px}.grid2,.surfaces{grid-template-columns:1fr}.hd-meta h1{font-size:24px}}
+</style>
+</head>
+<body>
+<div class="wrap" id="doc">
+  <header class="aires-header">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 1.5 30.5 16 16 30.5 1.5 16Z" fill="#fff"/><path d="M16 6.5l1.9 6.1 6.1 1.9-6.1 1.9L16 22.5l-1.9-6.1L8 14.5l6.1-1.9Z" fill="#2D2C2D"/></svg>
+      <span class="wm">Aires</span>
+    </div>
+    <div class="hd-meta">
+      <h1>The rep velocity thesis</h1>
+      <p class="sub">Product thesis · CRM for pre-sale sales teams · June 2026 · Confidential</p>
+    </div>
+    <button class="btn" onclick="exportPDF()">Export PDF</button>
+  </header>
+
+  <main>
+    <p class="lede">A salesperson wants the <em>highest impact in the least time.</em> Every feature we ship either earns a minute back or wastes one. The thesis: a CRM that turns data <em>in</em> into leverage <em>out</em> — fast enough to keep, smart enough to act above human scale.</p>
+
+    <section>
+      <div class="eyebrow">The core bet</div>
+      <h2>The job is to get it done, fast</h2>
+      <p>Reps don't want a system of record. They want a system of action. The unit of value isn't a clean database — it's a sold-firm unit, and before that, the <strong>next right move made faster than a competitor's</strong>. So the product is judged on a brutal exchange rate: <strong>minutes spent in the tool versus impact taken out of it.</strong></p>
+      <p>Two questions sit underneath everything a rep does in a day. If the CRM answers them instantly, it wins. If it makes the rep go find the answer, it loses.</p>
+      <div class="pull">"<em>What should I do today?</em>" &nbsp; "<em>How do I know I'm done?</em>"</div>
+      <p>Most CRMs answer neither. They show everything and prioritize nothing — leaving the rep to be the query engine. Our job is to be the query engine, so the rep is only ever the closer.</p>
+    </section>
+
+    <section>
+      <div class="eyebrow">The flywheel</div>
+      <h2>Data in, leverage out</h2>
+      <p>The reason reps avoid data entry is that traditional CRMs make it a tax with no rebate — you feed the machine and the machine feeds a report your manager reads. We invert it. <strong>Every input the rep makes immediately sharpens what they get back:</strong> better prioritization, tighter lists, faster surfacing of the deal that's about to slip.</p>
+      <div class="flywheel">
+        <span class="fw-node">Rep logs activity</span>
+        <span class="fw-arrow">&rarr;</span>
+        <span class="fw-node">CRM enriches the picture</span>
+        <span class="fw-arrow">&rarr;</span>
+        <span class="fw-node">Better "do this next"</span>
+        <span class="fw-arrow">&rarr;</span>
+        <span class="fw-node">Rep acts &amp; wins faster</span>
+        <span class="fw-arrow">&#8635;</span>
+      </div>
+      <p>The flywheel only spins if the rebate is <strong>felt the same day</strong>. That is the design constraint: data entered this morning has to change what the tool tells the rep to do this afternoon. The more they put in, the more they get out — and the loop becomes self-reinforcing rather than self-defeating.</p>
+    </section>
+
+    <section>
+      <div class="eyebrow">Why velocity, not just results</div>
+      <h2>Results lag — so we measure the leading edge</h2>
+      <p>In pre-sale real estate, a result — a unit sold firm — can be weeks or months downstream of the work that earned it. If reps and managers only watch results, they are steering by a rear-view mirror. So the product makes the <strong>leading indicators</strong> — daily and weekly velocity of the right activities — first-class and visible. Two stakeholders, two lenses on the same data.</p>
+      <div class="grid2">
+        <div class="card">
+          <span class="tag mgr">Sales manager</span>
+          <h4>Drive output</h4>
+          <p>Needs to see velocity across the team, spot who has stalled, and know the pipeline is being worked — before results confirm it. Manages by the leading edge.</p>
+        </div>
+        <div class="card">
+          <span class="tag rep">Sales rep</span>
+          <h4>Prove performance now</h4>
+          <p>Can't wait for closings to show they are effective. Needs their daily and weekly velocity to be legible and self-evident — performance you can see today, not next quarter.</p>
+        </div>
+      </div>
+      <h3>The corollary: make all activity reportable</h3>
+      <p>If velocity is the currency, then every meaningful action a rep takes must be captured as a countable, attributable event. Not for surveillance — for <strong>credit</strong>. Activity that isn't reportable is work the rep did for free and can't be rewarded or coached on.</p>
+    </section>
+
+    <section>
+      <div class="eyebrow">Operating above human scale</div>
+      <h2>The needle in the haystack</h2>
+      <p>A single project can carry thousands of leads — more than any human can hold in their head or work by hand. At that scale the bottleneck isn't effort, it's <strong>attention allocation</strong>. The winning rep isn't the one who works hardest; it's the one who consistently finds the few leads that matter today and ignores the thousands that don't.</p>
+      <p>So the product's central capability is <strong>narrowing</strong> — turning an unworkable haystack into a short, ranked, trustworthy list. It's built as a ladder, each rung removing more manual effort. The same ladder runs in two directions: the system can climb it <em>for</em> the rep, or the rep can climb it themselves when they arrive with an intent.</p>
+      <div class="stack">
+        <div class="step"><div class="num">1</div><div class="body"><h4>Search — find</h4><p>Pull any contact or signal out of the pile on demand. The floor capability.</p></div></div>
+        <div class="step"><div class="num">2</div><div class="body"><h4>Filter — slice</h4><p>Reduce the haystack to a defined segment by attributes, stage, recency, or source.</p></div></div>
+        <div class="step"><div class="num">3</div><div class="body"><h4>Saved filters — remember</h4><p>Stop rebuilding the same slice every morning. The rep's working views become durable.</p></div></div>
+        <div class="step"><div class="num">4</div><div class="body"><h4>Smart Lists <span class="spark">&#10022;</span> — decide for me</h4><p>The system maintains living, prioritized lists that surface the needle automatically — the answer to "what should I do today" rendered as a list the rep just works top-down.</p></div></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="eyebrow">Two ways to find the needle</div>
+      <h2>The system can narrow for you — or you narrow it yourself</h2>
+      <p>The ladder runs both directions, and the product needs both. Sometimes the system should hand the rep the list (<strong>push</strong>); sometimes the rep arrives already knowing who they want and needs to carve that list out fast (<strong>pull</strong>).</p>
+      <div class="grid2">
+        <div class="card"><span class="tag mgr">Push</span><h4>"What should I do today?"</h4><p>The system surfaces the needle — a ranked Smart List waiting on the dashboard. The rep just works it.</p></div>
+        <div class="card"><span class="tag rep">Pull</span><h4>"I know who I want — help me reach them."</h4><p>An intent arrives: a promo, a fresh event, a colleague away. The rep composes a filter, builds the list, and acts.</p></div>
+      </div>
+      <h3>The pull job is timely outreach</h3>
+      <p>The pull loop is <strong>intent &rarr; filter &rarr; list &rarr; outreach</strong>: turn a reason-to-reach into a precise segment, then communicate with the whole segment without leaving the CRM — every touch logged. A handful of asks recur: "everyone who showed interest in a one-bedroom in the last month," "anyone we haven't contacted since yesterday's event," "Jason's A and B prospects while he's away," "everyone who opened the two-bedroom promo." They sound different; they're the same move.</p>
+      <h3>Eight composable dimensions</h3>
+      <p>Those asks reduce to a small, composable set — <strong>attribute, recency window, contact gap, event / behavior, source, owner, grade, engagement</strong> — combined with AND/OR and saved as a Smart List the rep can re-run. Build the set once and most future asks fall out of it for free.</p>
+      <p>One consequence worth stating up front: the moment a list can bulk-message, it becomes a <strong>compliance surface</strong>. Consent and opt-out (CASL) and SMS A2P limits have to be a filter dimension and a hard send-time gate — not an afterthought.</p>
+    </section>
+
+    <section>
+      <div class="eyebrow">Where it lives</div>
+      <h2>Three surfaces, three jobs</h2>
+      <p>The thesis shows up on exactly three surfaces. Each does a distinct job in the daily loop, and each must answer one of the two questions or capture reportable activity.</p>
+      <div class="surfaces">
+        <div class="surface"><div class="hd">Dashboard</div><div class="bd">The command center. Velocity, what's hot, what's slipping, what to do next.<span class="q">"What should I do today?"</span></div></div>
+        <div class="surface"><div class="hd">Contact table</div><div class="bd">The narrowing &amp; list-building surface. Search, filter on eight dimensions, save, Smart Lists, and launch outreach against the result.<span class="q">"Show me — and let me reach — the needles."</span></div></div>
+        <div class="surface"><div class="hd">Contact profile</div><div class="bd">The action surface. Respond fast, log activity, advance the deal — every action reportable.<span class="q">"How do I know I'm done?"</span></div></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="eyebrow">Client-shaped proof</div>
+      <h2>The same engine, three problems</h2>
+      <p>The thesis isn't abstract — it's already shaped by what real clients need the narrowing engine to do. Same primitives (search &rarr; filter &rarr; saved &rarr; Smart Lists), three different needles.</p>
+      <div class="clients">
+        <div class="client"><div class="name">PATH<span>Developments</span></div><div class="desc"><p>Runs <strong>many projects at once</strong>. The need is portfolio-level command — working the right leads across many active sales efforts without losing the thread on any one.</p><p class="cap">Smart Lists scoped per project, rolled up across the portfolio</p></div></div>
+        <div class="client"><div class="name">Peterson<span>Group</span></div><div class="desc"><p>Needs <strong>timely follow-up of hot leads</strong>. The needle is recency and intent — respond as fast as possible before the lead cools. Speed is the whole game.</p><p class="cap">A "hot &amp; aging" Smart List, surfaced on the dashboard</p></div></div>
+        <div class="client"><div class="name">Creo<span>Use case</span></div><div class="desc"><p>Needs to <strong>exclude</strong> — investors and past buyers shouldn't pollute the working list. The needle is found by subtraction as much as selection.</p><p class="cap">Saved filters with exclusion logic baked in</p></div></div>
+      </div>
+    </section>
+
+    <section>
+      <div class="done-box">
+        <div class="eyebrow">What good looks like</div>
+        <h2>Done is a number, not a feeling</h2>
+        <p>The product succeeds when a rep can open it, be told what to do, do it, and watch a reportable velocity number move — all before they have spent ten minutes administering anything. Manager and rep look at the same leading-edge truth. The haystack is permanently workable. And the flywheel pays its rebate the same day.</p>
+        <div class="pull">The CRM stops being where work goes to be recorded, and becomes <em>where work goes to get done.</em></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="aires-footer"><span>© Aires Technology Inc.</span><span>Rep velocity thesis · v0.3</span><span>Confidential</span></footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>function exportPDF(){const el=document.getElementById('doc'),b=document.querySelector('.btn');b.style.display='none';html2pdf().set({margin:[.3,.35],filename:'aires-thesis-rep-velocity.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'in',format:'letter',orientation:'portrait'}}).from(el).save().then(()=>{b.style.display=''})}</script>
+</body>
+</html>

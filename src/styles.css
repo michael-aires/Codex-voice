@@ -554,11 +554,13 @@ textarea:focus {
 }
 
 .activity-row.step_start::before,
-.activity-row.start::before {
+.activity-row.start::before,
+.activity-row.api_request::before {
   background: #f0bf3d;
 }
 
-.activity-row.completed::before {
+.activity-row.completed::before,
+.activity-row.api_response::before {
   background: #2d8a5f;
 }
 
@@ -1321,9 +1323,13 @@ textarea:focus {
 
 .call-screen {
   position: relative;
+  display: grid;
+  grid-template-columns: minmax(320px, 25%) minmax(0, 1fr);
+  gap: 16px;
   min-height: 100vh;
+  padding: 16px;
   overflow: hidden;
-  background: var(--aires-black);
+  background: #252424;
   color: var(--aires-white);
 }
 
@@ -1331,8 +1337,9 @@ textarea:focus {
   position: absolute;
   inset: 0;
   content: "";
-  background: var(--aires-black);
+  background: #252424;
   opacity: 1;
+  pointer-events: none;
 }
 
 .call-screen.speaking::before {
@@ -1344,6 +1351,20 @@ textarea:focus {
 .call-dock {
   position: relative;
   z-index: 1;
+}
+
+.call-rail {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: calc(100vh - 32px);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: #101412;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
 }
 
 .call-topbar {
@@ -1379,8 +1400,8 @@ textarea:focus {
 .wave-stage {
   display: grid;
   place-items: center;
-  min-height: calc(100vh - 330px);
-  padding: 48px 20px 220px;
+  min-height: 0;
+  padding: 28px 18px;
   text-align: center;
 }
 
@@ -1392,7 +1413,7 @@ textarea:focus {
 }
 
 .call-project {
-  max-width: min(90vw, 680px);
+  max-width: 100%;
   margin: -16px 0 22px;
   color: #d8e4dd;
   font-size: 0.95rem;
@@ -1408,13 +1429,38 @@ textarea:focus {
   font-weight: 800;
 }
 
+.wake-strip {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  width: min(100%, 300px);
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.wake-strip span {
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.wake-strip strong {
+  color: var(--aires-volt);
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
 .sound-wave {
   display: grid;
   grid-template-columns: repeat(31, minmax(3px, 1fr));
   align-items: center;
   gap: 7px;
-  width: min(92vw, 900px);
-  height: min(34vh, 270px);
+  width: min(100%, 360px);
+  height: min(28vh, 220px);
 }
 
 .sound-wave span {
@@ -1453,18 +1499,21 @@ textarea:focus {
 }
 
 .call-dock {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  left: 18px;
+  position: relative;
+  right: auto;
+  bottom: auto;
+  left: auto;
   display: grid;
   gap: 12px;
-  max-width: 980px;
-  margin: 0 auto;
+  max-width: none;
+  max-height: 48vh;
+  margin: 0;
   padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(15, 18, 17, 0.84);
+  overflow: auto;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0;
+  background: #0b0f0d;
   backdrop-filter: blur(18px);
 }
 
@@ -1486,7 +1535,7 @@ textarea:focus {
   padding: 0 14px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
   color: #ffffff;
   outline: none;
 }
@@ -1505,7 +1554,7 @@ textarea:focus {
 
 .live-feed {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
@@ -1543,22 +1592,24 @@ textarea:focus {
 }
 
 .call-canvas {
-  position: fixed;
+  position: relative;
   z-index: 2;
-  top: 84px;
-  right: 18px;
-  bottom: 220px;
+  top: auto;
+  right: auto;
+  bottom: auto;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
-  width: min(460px, calc(100vw - 36px));
+  width: 100%;
+  min-height: calc(100vh - 32px);
   padding: 14px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
-  background: rgba(15, 18, 17, 0.86);
+  background: #0f1412;
   color: #f8faf7;
   backdrop-filter: blur(20px);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.26);
 }
 
 .canvas-head {
@@ -1595,12 +1646,12 @@ textarea:focus {
 
 .canvas-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .canvas-tabs button,
@@ -1609,11 +1660,12 @@ textarea:focus {
   min-height: 38px;
   border-radius: 7px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.76);
+  color: rgba(255, 255, 255, 0.84);
   font-weight: 850;
 }
 
 .canvas-tabs button.active,
+.canvas-actions button.active,
 .canvas-artifact-tabs button.active {
   background: var(--aires-volt);
   color: var(--aires-black);
@@ -1627,6 +1679,45 @@ textarea:focus {
   overflow: auto;
 }
 
+.canvas-preview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 28%);
+  gap: 14px;
+  min-height: 0;
+}
+
+.canvas-preview-main,
+.canvas-preview-side,
+.example-preview {
+  min-width: 0;
+}
+
+.canvas-preview-side {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: #161b19;
+}
+
+.canvas-section-head,
+.inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.canvas-section-head {
+  color: #ffffff;
+  font-weight: 900;
+}
+
+.inline-actions {
+  flex-wrap: wrap;
+}
+
 .canvas-actions {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1638,8 +1729,8 @@ textarea:focus {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.09);
 }
 
 .canvas-prompt-form {
@@ -1649,22 +1740,36 @@ textarea:focus {
 }
 
 .canvas-prompt-form input,
+.canvas-prompt-form textarea,
 .live-context-form input,
 .live-context-form textarea {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
   color: #ffffff;
 }
 
 .canvas-prompt-form input::placeholder,
+.canvas-prompt-form textarea::placeholder,
 .live-context-form input::placeholder,
 .live-context-form textarea::placeholder {
   color: rgba(255, 255, 255, 0.55);
 }
 
+.canvas-prompt-form.expanded {
+  grid-template-columns: minmax(0, 1fr) minmax(118px, auto);
+  align-items: stretch;
+}
+
+.canvas-prompt-form.expanded textarea {
+  min-height: 118px;
+  resize: vertical;
+}
+
 .canvas-prompt-form button {
-  display: inline-grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border-radius: var(--radius-control);
   background: var(--aires-volt);
   color: var(--aires-black);
@@ -1672,19 +1777,49 @@ textarea:focus {
 
 .canvas-work {
   padding: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
+  background: #161b19;
 }
 
-.canvas-work .job-row {
+.canvas-work.expanded {
+  padding: 14px;
+}
+
+.call-canvas .job-row {
   border-color: rgba(255, 255, 255, 0.1);
 }
 
-.canvas-work .job-row strong,
-.canvas-work .job-row span,
-.canvas-work .job-row small {
+.call-canvas .job-row strong,
+.call-canvas .job-row span,
+.call-canvas .job-row small {
   color: #f8faf7;
+}
+
+.call-canvas .job-row small,
+.call-canvas .job-row span {
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.call-canvas .job-progress {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.call-canvas .activity-stream {
+  border-top-color: rgba(255, 255, 255, 0.18);
+}
+
+.call-canvas .activity-head,
+.call-canvas .activity-row strong {
+  color: #f8faf7;
+}
+
+.call-canvas .activity-row span {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.call-canvas .activity-row p {
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .canvas-artifact-tabs {
@@ -1709,11 +1844,51 @@ textarea:focus {
   display: grid;
   gap: 10px;
   padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.78);
+  background: #161b19;
+  color: rgba(255, 255, 255, 0.82);
   line-height: 1.45;
+}
+
+.canvas-empty.large {
+  min-height: 420px;
+  align-content: center;
+  justify-items: start;
+}
+
+.quick-canvas-actions {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.quick-canvas-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.09);
+  color: #f8faf7;
+  font-weight: 850;
+}
+
+.quick-canvas-actions button:hover:not(:disabled),
+.canvas-actions button:hover:not(:disabled),
+.canvas-tabs button:hover:not(:disabled) {
+  border-color: rgba(240, 222, 74, 0.55);
+  background: rgba(240, 222, 74, 0.12);
+}
+
+.canvas-empty strong {
+  color: #ffffff;
+  font-size: 1.1rem;
 }
 
 .context-mode-card strong,
@@ -1728,6 +1903,112 @@ textarea:focus {
 .live-context-form {
   display: grid;
   gap: 9px;
+}
+
+.flow-grid,
+.example-layout {
+  display: grid;
+  gap: 12px;
+}
+
+.flow-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.flow-card,
+.example-button {
+  display: grid;
+  gap: 7px;
+  min-height: 112px;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: #161b19;
+  color: #f8faf7;
+}
+
+.flow-card.active,
+.example-button.active {
+  border-color: rgba(240, 222, 74, 0.72);
+  background: rgba(240, 222, 74, 0.12);
+}
+
+.flow-card span,
+.example-button span {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.flow-card strong,
+.example-button strong {
+  overflow-wrap: anywhere;
+}
+
+.flow-card small {
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.35;
+}
+
+.example-layout {
+  grid-template-columns: minmax(220px, 26%) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.example-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.example-button {
+  min-height: 76px;
+}
+
+.example-preview {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.example-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.example-preview-head h3 {
+  margin: 0;
+  color: #ffffff;
+}
+
+.example-preview-head p:not(.eyebrow) {
+  margin: 6px 0 0;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.4;
+}
+
+.example-frame {
+  width: 100%;
+  min-height: 720px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: #f4f5f1;
+}
+
+.compact {
+  min-height: 40px;
+  padding: 0 12px;
 }
 
 .call-canvas .artifact-document {
@@ -1751,35 +2032,36 @@ textarea:focus {
 
 .call-canvas .rendered-artifact,
 .call-canvas .markdown-preview {
-  min-height: 280px;
-  max-height: 42vh;
-  padding: 16px;
+  min-height: 520px;
+  max-height: none;
+  padding: 22px;
 }
 
 .call-canvas .prototype-stage {
-  min-height: 360px;
-  max-height: 44vh;
-  padding: 10px;
+  min-height: 720px;
+  max-height: none;
+  padding: 12px;
 }
 
 .call-canvas .prototype-frame {
-  width: min(100%, 330px);
-  height: 560px;
+  width: min(100%, 390px);
+  height: 700px;
 }
 
 .call-canvas .prototype-stage.desktop .prototype-frame {
-  min-width: 700px;
-  height: 560px;
+  width: min(100%, 1120px);
+  min-width: 900px;
+  height: 700px;
 }
 
 .call-canvas .mcp-app-stage {
-  min-height: 360px;
-  max-height: 44vh;
+  min-height: 720px;
+  max-height: none;
   padding: 10px;
 }
 
 .call-canvas .mcp-app-frame {
-  min-height: 520px;
+  min-height: 700px;
 }
 
 .call-canvas .mcp-app-meta section {
@@ -1797,6 +2079,25 @@ textarea:focus {
   line-height: 1.45;
 }
 
+@media (max-width: 1180px) {
+  .call-screen {
+    grid-template-columns: minmax(300px, 34%) minmax(0, 1fr);
+  }
+
+  .canvas-preview-grid,
+  .example-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .canvas-preview-side {
+    order: -1;
+  }
+
+  .flow-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 820px) {
   h1 {
     font-size: 2.55rem;
@@ -1807,7 +2108,16 @@ textarea:focus {
   }
 
   .call-screen {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    min-height: 100vh;
+    padding: 10px;
     overflow: auto;
+  }
+
+  .call-rail {
+    min-height: min(760px, calc(100vh - 20px));
   }
 
   .topbar {
@@ -1917,42 +2227,48 @@ textarea:focus {
   }
 
   .wave-stage {
-    min-height: 46vh;
+    min-height: 42vh;
     padding: 34px 14px 18px;
   }
 
   .sound-wave {
     gap: 4px;
-    width: 94vw;
+    width: 100%;
     height: 220px;
   }
 
   .call-dock {
-    right: 10px;
-    bottom: 10px;
-    left: 10px;
     max-height: 46vh;
     overflow: auto;
   }
 
   .call-canvas {
-    position: relative;
-    top: auto;
-    right: auto;
-    bottom: auto;
-    width: auto;
-    margin: 0 10px 300px;
-    max-height: none;
+    width: 100%;
+    min-height: 720px;
+    margin: 0 0 20px;
   }
 
-  .canvas-actions {
-    grid-template-columns: 1fr;
+  .canvas-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+	  .canvas-actions,
+	  .canvas-prompt-form.expanded,
+	  .quick-canvas-actions,
+	  .flow-grid,
+	  .example-layout {
+	    grid-template-columns: 1fr;
+	  }
+
+  .example-preview-head {
+    display: grid;
   }
 
   .call-canvas .rendered-artifact,
   .call-canvas .markdown-preview,
   .call-canvas .prototype-stage,
-  .call-canvas .mcp-app-stage {
+  .call-canvas .mcp-app-stage,
+  .example-frame {
     max-height: none;
   }
 

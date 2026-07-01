@@ -41,32 +41,41 @@ test("wakes on direct Cooper invocations", () => {
   });
 });
 
-test("does not wake when Cooper is only mentioned casually", () => {
+test("wakes on broad Cooper mentions so live meetings do not require exact recipes", () => {
   [
-    "",
-    "Can someone summarize this?",
     "The Cooper app is listening.",
     "We mentioned Cooper earlier.",
-    "I don't think Cooper should speak yet.",
-    "Not Cooper, the other tool.",
     "Someone named Cooper joined the meeting.",
     "This is for Cooper later, but keep going.",
     "The Cooper transcript needs to include all speakers.",
     "I was talking about Cooper's wake word.",
     "Michael said the word Cooper in a sentence.",
+    "Thanks Cooper.",
+    "About Cooper, can we make the canvas better?"
+  ].forEach((phrase) => {
+    assert.equal(isCooperWakePhrase(phrase), true, phrase);
+  });
+});
+
+test("does not wake without Cooper or when explicitly suppressed", () => {
+  [
+    "",
+    "Can someone summarize this?",
+    "Not Cooper, the other tool.",
     "Let's not ask Cooper yet.",
     "Do not ask Cooper yet.",
+    "Don't wake Cooper yet.",
+    "Do not call Cooper for this.",
     "Cooper should not interrupt here.",
-    "The Cooper canvas has a diagram.",
-    "We need Cooper access in settings."
+    "Cooper never respond to this."
   ].forEach((phrase) => {
     assert.equal(isCooperWakePhrase(phrase), false, phrase);
   });
 });
 
-test("requires direct intent even for short Cooper mentions", () => {
+test("short Cooper mentions wake unless negated", () => {
   assert.equal(isCooperWakePhrase("hey Cooper"), true);
-  assert.equal(isCooperWakePhrase("thanks Cooper"), false);
-  assert.equal(isCooperWakePhrase("about Cooper"), false);
+  assert.equal(isCooperWakePhrase("thanks Cooper"), true);
+  assert.equal(isCooperWakePhrase("about Cooper"), true);
   assert.equal(isCooperWakePhrase("not Cooper"), false);
 });

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The data flywheel — Aires</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{--black:#2D2C2D;--white:#fff;--volt:#F0DE4A;--grey:#F0F2EB;--mgrey:#9C9C9C;--orange:#EE7437;--sky:#B1CDD6;--blue:#2563EB;
+--ink-700:#3F3F46;--ink-600:#52525B;--ink-500:#71717A;--ink-300:#D4D4D8;--ink-200:#E4E4E7;--ink-100:#F4F4F5;
+--fd:'Urbanist',sans-serif;--fb:'Inter',sans-serif;--fs:'Instrument Serif',Georgia,serif;--fm:'IBM Plex Mono',monospace;
+--sh-xs:0 1px 2px rgba(16,24,40,.05);--sh-md:0 4px 8px -2px rgba(16,24,40,.10),0 2px 4px -2px rgba(16,24,40,.06);--sh-lg:0 12px 16px -4px rgba(16,24,40,.08),0 4px 6px -2px rgba(16,24,40,.03)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--fb);color:var(--black);background:var(--grey);line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1060px;margin:24px auto;background:var(--white);box-shadow:var(--sh-md);border-radius:10px;overflow:hidden;border:1px solid var(--ink-200)}
+.aires-header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:20px 36px;background:var(--black);color:#fff;border-bottom:3px solid var(--volt)}
+.brand{display:flex;align-items:center;gap:11px}.brand svg{width:24px;height:24px;display:block}.brand .wm{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:.02em}
+.hd-meta{flex:1}.hd-meta h1{font-family:var(--fd);font-weight:600;font-size:26px;line-height:1.08}
+.hd-meta .sub{font-family:var(--fm);font-size:10.5px;color:var(--mgrey);margin-top:6px;letter-spacing:.03em}
+.btn{font-family:var(--fb);font-size:12px;font-weight:600;color:var(--black);background:var(--white);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}.btn:hover{opacity:.88}
+.content{padding:24px 36px 8px}
+.intro{text-align:center;max-width:660px;margin:6px auto 4px;color:var(--ink-600);font-size:15px}
+.intro b{color:var(--black)}
+.stage{position:relative;width:760px;height:600px;margin:0 auto}
+.hub{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:212px;height:212px;border-radius:9999px;background:var(--black);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:22px;box-shadow:var(--sh-lg);z-index:3;border:3px solid var(--volt)}
+.hub .k{font-family:var(--fm);font-size:9.5px;letter-spacing:.12em;color:var(--volt);text-transform:uppercase}
+.hub .t{font-family:var(--fd);font-weight:600;font-size:24px;line-height:1.08;margin-top:9px}
+.hub .d{font-size:11px;color:var(--ink-300);margin-top:9px;line-height:1.42}
+.node{position:absolute;width:232px;background:var(--white);border:1px solid var(--ink-200);border-radius:8px;padding:16px 18px;box-shadow:var(--sh-md);z-index:2}
+.node .n{font-family:var(--fm);font-size:11px;color:var(--orange);font-weight:600}
+.node h3{font-family:var(--fd);font-size:16px;font-weight:600;margin:3px 0 4px}
+.node p{font-size:12.5px;color:var(--ink-600);line-height:1.4}
+.n1{top:0;left:50%;transform:translateX(-50%)}.n2{top:50%;right:0;transform:translateY(-50%)}.n3{bottom:0;left:50%;transform:translateX(-50%)}.n4{top:50%;left:0;transform:translateY(-50%)}
+svg.ring{position:absolute;inset:0;width:100%;height:100%;z-index:1;overflow:visible}
+.legend{text-align:center;font-family:var(--fs);font-size:17px;color:var(--ink-700);margin:6px 0 14px}
+.aires-footer{display:flex;justify-content:space-between;padding:16px 36px;background:var(--grey);border-top:1px solid var(--ink-200);font-size:10.5px;color:var(--ink-500);font-family:var(--fm);letter-spacing:.03em}
+@media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0;border:none}.btn{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap" id="doc">
+  <header class="aires-header">
+    <div class="brand"><svg viewBox="0 0 32 32"><path d="M16 1.5 30.5 16 16 30.5 1.5 16Z" fill="#fff"/><path d="M16 6.5l1.9 6.1 6.1 1.9-6.1 1.9L16 22.5l-1.9-6.1L8 14.5l6.1-1.9Z" fill="#2D2C2D"/></svg><span class="wm">Aires</span></div>
+    <div class="hd-meta"><h1>The data flywheel</h1><p class="sub">Growth flywheel · June 2026 · Data in → leverage out</p></div>
+    <button class="btn" onclick="exportPDF()">Export PDF</button>
+  </header>
+  <main class="content">
+    <p class="intro">Traditional CRMs make data entry a tax with no rebate. We invert it: every input the rep makes immediately sharpens what they get back. The loop only spins if the rebate is <b>felt the same day.</b></p>
+    <div class="stage">
+      <svg class="ring" viewBox="0 0 760 600">
+        <defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="6" refY="6" orient="auto"><path d="M2,2 L10,6 L2,10" fill="none" stroke="#EE7437" stroke-width="2.2" stroke-linecap="round"/></marker></defs>
+        <g fill="none" stroke="#EE7437" stroke-width="3" marker-end="url(#arrow)">
+          <path d="M 470 95 A 250 250 0 0 1 665 300"/>
+          <path d="M 665 360 A 250 250 0 0 1 470 505"/>
+          <path d="M 290 505 A 250 250 0 0 1 95 360"/>
+          <path d="M 95 300 A 250 250 0 0 1 290 95"/>
+        </g>
+      </svg>
+      <div class="hub"><div class="k">The constraint</div><div class="t">Same-day rebate</div><div class="d">Data entered this morning changes what the tool tells the rep to do this afternoon.</div></div>
+      <div class="node n1"><div class="n">01</div><h3>Rep logs activity &amp; outreach</h3><p>Calls, replies, status moves, sends — captured fast, with minimal friction.</p></div>
+      <div class="node n2"><div class="n">02</div><h3>CRM enriches the picture</h3><p>Scoring, recency, intent, engagement (opens / events) and segmentation update across every dimension.</p></div>
+      <div class="node n3"><div class="n">03</div><h3>Sharper lists, both ways</h3><p>Pushed Smart Lists re-rank; rep-built segments get richer filter dimensions to compose from.</p></div>
+      <div class="node n4"><div class="n">04</div><h3>Rep acts &amp; wins faster</h3><p>Faster response, more complete &amp; timely outreach — and more reason to keep logging.</p></div>
+    </div>
+    <p class="legend">The more they put in, the more they get out — self-reinforcing, not self-defeating.</p>
+  </main>
+  <footer class="aires-footer"><span>© Aires Technology Inc.</span><span>Data flywheel · v0.3</span><span>Confidential</span></footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>function exportPDF(){const el=document.getElementById('doc'),b=document.querySelector('.btn');b.style.display='none';html2pdf().set({margin:[.3,.4],filename:'aires-data-flywheel.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'in',format:'letter',orientation:'portrait'}}).from(el).save().then(()=>{b.style.display=''})}</script>
+</body>
+</html>

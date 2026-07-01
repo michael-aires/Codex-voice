@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The daily rep loop — Aires</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{--black:#2D2C2D;--white:#fff;--volt:#F0DE4A;--grey:#F0F2EB;--mgrey:#9C9C9C;--orange:#EE7437;--sky:#B1CDD6;--blue:#2563EB;
+--ink-700:#3F3F46;--ink-600:#52525B;--ink-500:#71717A;--ink-300:#D4D4D8;--ink-200:#E4E4E7;--ink-100:#F4F4F5;
+--success:#059669;--error:#DC2626;--fd:'Urbanist',sans-serif;--fb:'Inter',sans-serif;--fs:'Instrument Serif',Georgia,serif;--fm:'IBM Plex Mono',monospace;
+--sh-xs:0 1px 2px rgba(16,24,40,.05);--sh-md:0 4px 8px -2px rgba(16,24,40,.10),0 2px 4px -2px rgba(16,24,40,.06)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--fb);color:var(--black);background:var(--grey);line-height:1.45;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1320px;margin:24px auto;background:var(--white);box-shadow:var(--sh-md);border-radius:10px;overflow:hidden;border:1px solid var(--ink-200)}
+.aires-header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:20px 36px;background:var(--black);color:#fff;border-bottom:3px solid var(--volt)}
+.brand{display:flex;align-items:center;gap:11px}.brand svg{width:24px;height:24px;display:block}.brand .wm{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:.02em}
+.hd-meta{flex:1}.hd-meta h1{font-family:var(--fd);font-weight:600;font-size:26px;line-height:1.08}
+.hd-meta .sub{font-family:var(--fm);font-size:10.5px;color:var(--mgrey);margin-top:6px;letter-spacing:.03em}
+.btn{font-family:var(--fb);font-size:12px;font-weight:600;color:var(--black);background:var(--white);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}.btn:hover{opacity:.88}
+.content{padding:28px 36px 14px}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:0 4px}
+.node{border-radius:6px;padding:13px 15px;font-size:13px;font-weight:500;max-width:185px;text-align:center;line-height:1.3;background:var(--white)}
+.lab{font-family:var(--fm);font-size:9px;letter-spacing:.06em;text-transform:uppercase;display:block;margin-bottom:4px;color:var(--ink-500);font-weight:500}
+.start{background:var(--volt);color:var(--black);border-radius:9999px;padding:13px 22px;font-family:var(--fd);font-weight:600}
+.end{background:var(--black);color:var(--volt);border-radius:9999px;padding:13px 22px;font-family:var(--fd);font-weight:600}
+.action{border:1px solid var(--ink-300)}
+.screen{border:1px dashed var(--ink-400,#A1A1AA);background:var(--grey)}
+.system{border:1px solid var(--ink-300);background:var(--ink-50,#FAFAFA);border-left:3px solid var(--volt)}
+.decision{width:142px;height:142px;display:flex;align-items:center;justify-content:center;background:var(--white);border:2px solid var(--volt);transform:rotate(45deg);border-radius:10px;flex:0 0 auto}
+.decision span{transform:rotate(-45deg);font-family:var(--fd);font-size:12.5px;font-weight:600;text-align:center;max-width:118px;line-height:1.22}
+.arrow{color:var(--orange);font-size:19px;font-weight:700;padding:0 2px;flex:0 0 auto;font-family:var(--fm)}
+.branch{display:inline-flex;flex-direction:column;align-items:center;gap:4px;margin:0 2px}
+.branch .tag{font-family:var(--fm);font-size:9.5px;font-weight:600;padding:2px 8px;border-radius:9999px;border:1px solid}
+.tag.yes{color:var(--success);border-color:var(--success);background:#ECFDF5}
+.tag.no{color:var(--error);border-color:var(--error);background:#FEF2F2}
+.rowlbl{font-family:var(--fb);font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-500);font-weight:600;margin:22px 0 10px;border-top:1px solid var(--ink-200);padding-top:10px;display:flex;align-items:center;gap:8px}
+.rowlbl:before{content:"";width:18px;height:2px;background:var(--volt)}
+.loop{margin-top:18px;background:var(--grey);border:1px solid var(--ink-200);border-left:3px solid var(--volt);border-radius:6px;padding:13px 18px;font-size:13.5px;color:var(--ink-700)}
+.loop b{color:var(--black)}
+.qa{display:flex;gap:16px;margin-top:20px;flex-wrap:wrap}
+.qa .q{flex:1;min-width:240px;background:var(--black);color:#fff;border-radius:8px;padding:16px 20px;border-left:3px solid var(--volt)}
+.qa .q .k{font-family:var(--fm);font-size:9.5px;letter-spacing:.1em;color:var(--volt);text-transform:uppercase}
+.qa .q .t{font-family:var(--fs);font-style:italic;font-size:20px;margin-top:5px}
+.qa .q small{display:block;color:var(--ink-300);font-size:12px;margin-top:6px}
+.aires-footer{display:flex;justify-content:space-between;padding:16px 36px;background:var(--grey);border-top:1px solid var(--ink-200);font-size:10.5px;color:var(--ink-500);font-family:var(--fm);letter-spacing:.03em}
+@media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0;border:none}.btn{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap" id="doc">
+  <header class="aires-header">
+    <div class="brand"><svg viewBox="0 0 32 32"><path d="M16 1.5 30.5 16 16 30.5 1.5 16Z" fill="#fff"/><path d="M16 6.5l1.9 6.1 6.1 1.9-6.1 1.9L16 22.5l-1.9-6.1L8 14.5l6.1-1.9Z" fill="#2D2C2D"/></svg><span class="wm">Aires</span></div>
+    <div class="hd-meta"><h1>The daily rep loop</h1><p class="sub">User flow · June 2026 · "What do I do today" → "How do I know I'm done"</p></div>
+    <button class="btn" onclick="exportPDF()">Export PDF</button>
+  </header>
+  <main class="content">
+    <div class="rowlbl">Open the day → narrow to the needle</div>
+    <div class="flow">
+      <div class="node start">Start the day</div>
+      <span class="arrow">&rarr;</span>
+      <div class="node action"><span class="lab">Surface · dashboard</span>Open dashboard: read velocity + today's list</div>
+      <span class="arrow">&rarr;</span>
+      <div class="decision"><span>Any hot or aging lead?</span></div>
+      <span class="branch"><span class="tag yes">Yes</span><span class="arrow">&rarr;</span></span>
+      <div class="node action"><span class="lab">Action · speed</span>Respond as fast as possible</div>
+      <span class="arrow">&#8600;</span>
+    </div>
+
+    <div class="rowlbl">Work the list → act → make it count</div>
+    <div class="flow">
+      <span class="branch"><span class="tag no">No / then</span><span class="arrow">&rarr;</span></span>
+      <div class="node action"><span class="lab">Surface · contact table</span>Work the Smart List, top-down</div>
+      <span class="arrow">&rarr;</span>
+      <div class="node screen"><span class="lab">Surface · contact profile</span>Open the contact</div>
+      <span class="arrow">&rarr;</span>
+      <div class="node action"><span class="lab">Action</span>Engage &amp; advance the deal</div>
+      <span class="arrow">&rarr;</span>
+      <div class="node action"><span class="lab">Action</span>Log activity (low friction)</div>
+      <span class="arrow">&rarr;</span>
+      <div class="node system"><span class="lab">System</span>Activity → reportable, attributable event</div>
+    </div>
+
+    <div class="rowlbl">Rebate → done?</div>
+    <div class="flow">
+      <div class="node system"><span class="lab">System · same-day rebate</span>Velocity updates; lists re-rank</div>
+      <span class="arrow">&rarr;</span>
+      <div class="decision"><span>Today's list cleared?</span></div>
+      <span class="branch"><span class="tag no">No</span><span class="arrow">&#8635;</span></span>
+      <div class="node action" style="border-style:dashed">Back to the list — next needle</div>
+      <span class="branch"><span class="tag yes">Yes</span><span class="arrow">&rarr;</span></span>
+      <div class="node end">Done — number moved</div>
+    </div>
+
+    <div class="rowlbl">Or: the rep arrives with an intent (the pull path)</div>
+    <div class="flow">
+      <div class="node start" style="background:var(--black);color:var(--volt)">Intent: promo / event / cover Jason</div>
+      <span class="arrow">&rarr;</span>
+      <div class="node action"><span class="lab">Surface · contact table</span>Compose a filter (interest + recency + owner + engagement…)</div>
+      <span class="arrow">&rarr;</span>
+      <div class="node action"><span class="lab">Action</span>Build &amp; save the list as a Smart List &#10022;</div>
+      <span class="arrow">&rarr;</span>
+      <div class="decision"><span>Consent &amp; no double-contact?</span></div>
+      <span class="branch"><span class="tag yes">Pass</span><span class="arrow">&rarr;</span></span>
+      <div class="node action"><span class="lab">Action · outreach</span>Message the whole segment in place</div>
+      <span class="arrow">&rarr;</span>
+      <div class="node system"><span class="lab">System</span>Each touch → reportable, attributed event</div>
+      <span class="arrow">&rarr;</span>
+      <div class="node end">Timely outreach — segment covered</div>
+    </div>
+
+    <div class="loop"><b>Two loops, one engine.</b> Push — the rep never decides <i>what</i> to work; the list does. Pull — the rep brings the <i>intent</i>; the filter builds the list. Both end the same way: act, logged, in time.</div>
+
+    <div class="qa">
+      <div class="q"><div class="k">Answered by the dashboard</div><div class="t">"What should I do today?"</div><small>Velocity + the ranked "today" list, waiting on open.</small></div>
+      <div class="q"><div class="k">Answered by the loop's end</div><div class="t">"How do I know I'm done?"</div><small>Done is the list cleared and a reportable number that moved.</small></div>
+      <div class="q"><div class="k">Answered by the pull path</div><div class="t">"Did I reach everyone I meant to?"</div><small>The saved segment + logged touches show the outreach is complete.</small></div>
+    </div>
+  </main>
+  <footer class="aires-footer"><span>© Aires Technology Inc.</span><span>Daily rep flow · v0.3</span><span>Confidential</span></footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>function exportPDF(){const el=document.getElementById('doc'),b=document.querySelector('.btn');b.style.display='none';html2pdf().set({margin:[.3,.35],filename:'aires-daily-rep-flow.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'in',format:'letter',orientation:'landscape'}}).from(el).save().then(()=>{b.style.display=''})}</script>
+</body>
+</html>

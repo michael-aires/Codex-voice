@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Service blueprint — a rep's day — Aires</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{--black:#2D2C2D;--white:#fff;--volt:#F0DE4A;--grey:#F0F2EB;--mgrey:#9C9C9C;--orange:#EE7437;--sky:#B1CDD6;--blue:#2563EB;
+--ink-700:#3F3F46;--ink-600:#52525B;--ink-500:#71717A;--ink-300:#D4D4D8;--ink-200:#E4E4E7;--ink-100:#F4F4F5;--ink-50:#FAFAFA;
+--fd:'Urbanist',sans-serif;--fb:'Inter',sans-serif;--fs:'Instrument Serif',Georgia,serif;--fm:'IBM Plex Mono',monospace;
+--sh-xs:0 1px 2px rgba(16,24,40,.05);--sh-md:0 4px 8px -2px rgba(16,24,40,.10),0 2px 4px -2px rgba(16,24,40,.06)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--fb);color:var(--black);background:var(--grey);line-height:1.4;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1380px;margin:24px auto;background:var(--white);box-shadow:var(--sh-md);border-radius:10px;overflow:hidden;border:1px solid var(--ink-200)}
+.aires-header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:20px 32px;background:var(--black);color:#fff;border-bottom:3px solid var(--volt)}
+.brand{display:flex;align-items:center;gap:11px}.brand svg{width:24px;height:24px;display:block}.brand .wm{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:.02em}
+.hd-meta{flex:1}.hd-meta h1{font-family:var(--fd);font-weight:600;font-size:25px;line-height:1.08}
+.hd-meta .sub{font-family:var(--fm);font-size:10.5px;color:var(--mgrey);margin-top:6px;letter-spacing:.03em}
+.btn{font-family:var(--fb);font-size:12px;font-weight:600;color:var(--black);background:var(--white);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}.btn:hover{opacity:.88}
+.content{padding:24px 28px 12px;overflow-x:auto}
+.bp{display:grid;grid-template-columns:152px repeat(6,1fr);gap:6px;min-width:1180px}
+.stage{background:var(--black);color:#fff;border-radius:6px;padding:10px 8px;text-align:center;font-family:var(--fd);font-weight:600;font-size:13.5px}
+.stage small{display:block;font-family:var(--fm);font-size:8.5px;color:var(--volt);letter-spacing:.06em;margin-top:3px;font-weight:500}
+.rowlab{display:flex;flex-direction:column;justify-content:center;font-size:11.5px;font-weight:600;padding:0 10px;border-radius:6px;color:#fff;background:var(--black);text-align:left;line-height:1.25;font-family:var(--fd)}
+.rowlab small{font-family:var(--fm);font-weight:500;font-size:8.5px;color:var(--mgrey);display:block;letter-spacing:.05em;margin-top:3px;text-transform:uppercase}
+.cell{border:1px solid var(--ink-200);border-radius:6px;padding:9px 10px;font-size:11.5px;color:var(--ink-700);background:var(--white);border-top:3px solid var(--ink-300)}
+.cell:focus{outline:2px solid var(--blue)}
+.band-surf .cell{border-top-color:var(--volt)} .band-surf .cell{font-weight:600;color:var(--black)}
+.band-rep .cell{border-top-color:var(--black)}
+.band-front .cell{border-top-color:var(--sky)}
+.band-back .cell{border-top-color:var(--mgrey)}
+.band-supp .cell{border-top-color:var(--ink-500);background:var(--ink-50);font-family:var(--fm);font-size:10.5px;color:var(--ink-600)}
+.band-surf .rowlab{border-left:3px solid var(--volt)}
+.band-rep .rowlab{border-left:3px solid var(--black)}
+.band-front .rowlab{border-left:3px solid var(--sky)}
+.band-back .rowlab{border-left:3px solid var(--mgrey)}
+.band-supp .rowlab{border-left:3px solid var(--ink-500)}
+.line{grid-column:1/-1;display:flex;align-items:center;gap:10px;margin:6px 0 2px}
+.line .txt{font-family:var(--fm);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-500);white-space:nowrap}
+.line .rule{flex:1;border-top:1px dashed var(--ink-300)}
+.band{display:contents}
+.aires-footer{display:flex;justify-content:space-between;padding:16px 32px;background:var(--grey);border-top:1px solid var(--ink-200);font-size:10.5px;color:var(--ink-500);font-family:var(--fm);letter-spacing:.03em}
+@media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0;border:none}.btn{display:none}.content{overflow:visible}.bp{min-width:0}}
+</style>
+</head>
+<body>
+<div class="wrap" id="doc">
+  <header class="aires-header">
+    <div class="brand"><svg viewBox="0 0 32 32"><path d="M16 1.5 30.5 16 16 30.5 1.5 16Z" fill="#fff"/><path d="M16 6.5l1.9 6.1 6.1 1.9-6.1 1.9L16 22.5l-1.9-6.1L8 14.5l6.1-1.9Z" fill="#2D2C2D"/></svg><span class="wm">Aires</span></div>
+    <div class="hd-meta"><h1>Service blueprint — a rep's day</h1><p class="sub">Service blueprint · June 2026 · Three surfaces, the engine underneath</p></div>
+    <button class="btn" onclick="exportPDF()">Export PDF</button>
+  </header>
+  <main class="content">
+    <div class="bp">
+      <div></div>
+      <div class="stage">Arrive<small>Stage 01</small></div>
+      <div class="stage">Triage<small>Stage 02</small></div>
+      <div class="stage">Find / build list<small>Stage 03</small></div>
+      <div class="stage">Engage / outreach<small>Stage 04</small></div>
+      <div class="stage">Log<small>Stage 05</small></div>
+      <div class="stage">Report<small>Stage 06</small></div>
+
+      <div class="band band-surf">
+        <div class="rowlab">Surface in play<small>Physical evidence</small></div>
+        <div class="cell" contenteditable="true">Dashboard</div>
+        <div class="cell" contenteditable="true">Dashboard</div>
+        <div class="cell" contenteditable="true">Contact table</div>
+        <div class="cell" contenteditable="true">Contact profile</div>
+        <div class="cell" contenteditable="true">Contact profile</div>
+        <div class="cell" contenteditable="true">Dashboard</div>
+      </div>
+
+      <div class="band band-rep">
+        <div class="rowlab">Rep actions<small>Frontstage actor</small></div>
+        <div class="cell" contenteditable="true">Open the app to start the day.</div>
+        <div class="cell" contenteditable="true">Scan velocity; see what's hot and what's slipping.</div>
+        <div class="cell" contenteditable="true">Work the Smart List — or compose a filter from an intent &amp; save the segment.</div>
+        <div class="cell" contenteditable="true">Respond fast 1:1, or message the whole segment in place.</div>
+        <div class="cell" contenteditable="true">Log the activity in a tap or two.</div>
+        <div class="cell" contenteditable="true">Check that the number moved.</div>
+      </div>
+
+      <div class="line"><span class="txt">Line of interaction</span><span class="rule"></span></div>
+
+      <div class="band band-front">
+        <div class="rowlab">What the CRM shows<small>Frontstage system</small></div>
+        <div class="cell" contenteditable="true">Velocity widget + ranked "today" list, pre-built.</div>
+        <div class="cell" contenteditable="true">Hot &amp; aging leads surfaced; alerts.</div>
+        <div class="cell" contenteditable="true">Ranked Smart List, or a filter builder across eight dimensions; save as a list.</div>
+        <div class="cell" contenteditable="true">Context + suggested next step / Cooper draft; bulk outreach composer with consent shown.</div>
+        <div class="cell" contenteditable="true">One-tap activity capture, pre-attributed.</div>
+        <div class="cell" contenteditable="true">Updated velocity &amp; coverage, visible to rep + manager.</div>
+      </div>
+
+      <div class="line"><span class="txt">Line of visibility</span><span class="rule"></span></div>
+
+      <div class="band band-back">
+        <div class="rowlab">Backstage ops<small>Cooper · data</small></div>
+        <div class="cell" contenteditable="true">Authenticate; load tenant + project data.</div>
+        <div class="cell" contenteditable="true">Score leads; compute recency &amp; intent.</div>
+        <div class="cell" contenteditable="true">Rank Smart Lists; compose &amp; resolve multi-dimension filters; ingest engagement (opens / events).</div>
+        <div class="cell" contenteditable="true">Cooper relays / drafts; consent + double-contact gate before any send; escalation detection.</div>
+        <div class="cell" contenteditable="true">Write reportable event; attribute to rep.</div>
+        <div class="cell" contenteditable="true">Roll up metrics; refresh manager view.</div>
+      </div>
+
+      <div class="line"><span class="txt">Line of internal interaction</span><span class="rule"></span></div>
+
+      <div class="band band-supp">
+        <div class="rowlab">Support processes<small>Infra / engine</small></div>
+        <div class="cell" contenteditable="true">MongoDB · Twilio / Aircall / SendGrid sync</div>
+        <div class="cell" contenteditable="true">Scoring pipeline · signals</div>
+        <div class="cell" contenteditable="true">Search / filter / saved-filter / Smart List engine · engagement events</div>
+        <div class="cell" contenteditable="true">Cooper state machine · Gemini · consent / A2P · Twilio / SendGrid</div>
+        <div class="cell" contenteditable="true">Activity event store · attribution model</div>
+        <div class="cell" contenteditable="true">Analytics nodes · velocity reporting</div>
+      </div>
+    </div>
+  </main>
+  <footer class="aires-footer"><span>© Aires Technology Inc.</span><span>Service blueprint · v0.3</span><span>Confidential</span></footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>function exportPDF(){const el=document.getElementById('doc'),b=document.querySelector('.btn');b.style.display='none';html2pdf().set({margin:[.25,.3],filename:'aires-service-blueprint.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'in',format:'letter',orientation:'landscape'}}).from(el).save().then(()=>{b.style.display=''})}</script>
+</body>
+</html>

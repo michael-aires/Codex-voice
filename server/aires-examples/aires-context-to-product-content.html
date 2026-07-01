@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>From context to product content — Aires</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{--black:#2D2C2D;--white:#fff;--volt:#F0DE4A;--volt-bg:#FBF7CF;--grey:#F0F2EB;--mgrey:#9C9C9C;--orange:#EE7437;--sky:#B1CDD6;--blue:#2563EB;
+--ink-700:#3F3F46;--ink-600:#52525B;--ink-500:#71717A;--ink-300:#D4D4D8;--ink-200:#E4E4E7;--ink-100:#F4F4F5;--ink-50:#FAFAFA;
+--success:#059669;--success-bg:#ECFDF5;--error:#DC2626;--fd:'Urbanist',sans-serif;--fb:'Inter',sans-serif;--fs:'Instrument Serif',Georgia,serif;--fm:'IBM Plex Mono',monospace;
+--sh-xs:0 1px 2px rgba(16,24,40,.05);--sh-md:0 4px 8px -2px rgba(16,24,40,.10),0 2px 4px -2px rgba(16,24,40,.06)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--fb);color:var(--black);background:var(--grey);line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:28px auto;background:var(--white);box-shadow:var(--sh-md);border-radius:10px;overflow:hidden;border:1px solid var(--ink-200)}
+.aires-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:26px 48px;background:var(--black);color:#fff;border-bottom:3px solid var(--volt)}
+.brand{display:flex;align-items:center;gap:11px;padding-top:4px}.brand svg{width:24px;height:24px;display:block}.brand .wm{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:.02em}
+.hd-meta{flex:1}.hd-meta h1{font-family:var(--fd);font-weight:600;font-size:30px;line-height:1.08}
+.hd-meta .sub{font-family:var(--fm);font-size:10.5px;color:var(--mgrey);margin-top:7px;letter-spacing:.03em}
+.btn{font-family:var(--fb);font-size:12px;font-weight:600;color:var(--black);background:var(--white);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}.btn:hover{opacity:.88}
+main{padding:14px 48px 22px}
+.callout{border-radius:6px;padding:15px 18px 15px 20px;margin:22px 0;font-size:14.5px;line-height:1.5;background:var(--grey);border:1px solid var(--ink-200);border-left:3px solid var(--volt)}
+.callout .lab{font-family:var(--fm);font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-500);display:block;margin-bottom:6px}
+.callout.ok{border-left-color:var(--success);background:var(--success-bg);border-color:#A7F3D0}
+.callout.link{border-left-color:var(--sky)}
+section{padding:26px 0;border-bottom:1px solid var(--ink-200)}section:last-child{border-bottom:none}
+.num{font-family:var(--fm);font-size:11px;color:var(--orange);font-weight:600;letter-spacing:.04em}
+h2{font-family:var(--fd);font-weight:600;font-size:26px;line-height:1.12;margin:4px 0 12px}
+h3{font-size:13px;font-weight:700;margin:18px 0 6px;font-family:var(--fd)}
+p{font-size:15px;color:var(--ink-700);margin-bottom:12px}p strong{color:var(--black);font-weight:600}
+ul{margin:0 0 12px 0;padding-left:18px}ul li{font-size:14.5px;color:var(--ink-700);margin-bottom:6px}
+.pipeline{display:flex;align-items:stretch;gap:0;margin:18px 0;flex-wrap:wrap}
+.pstage{flex:1;min-width:135px;background:var(--white);border:1px solid var(--ink-200);border-top:3px solid var(--volt);border-radius:8px;padding:14px;margin:4px;box-shadow:var(--sh-xs)}
+.pstage .s{font-family:var(--fm);font-size:9.5px;color:var(--orange);letter-spacing:.06em;font-weight:600}
+.pstage h4{font-family:var(--fd);font-size:15px;font-weight:600;margin:5px 0 6px}
+.pstage p{font-size:12px;color:var(--ink-600);margin:0}
+.pstage .out{font-family:var(--fm);font-size:9.5px;color:var(--black);margin-top:9px;display:block;font-weight:500}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th{background:var(--black);color:#fff;text-align:left;padding:10px 12px;font-weight:600;font-size:12.5px;font-family:var(--fd)}
+th:first-child{border-radius:6px 0 0 0}th:last-child{border-radius:0 6px 0 0}
+td{padding:9px 12px;border-bottom:1px solid var(--ink-200);color:var(--ink-700);vertical-align:top}
+tr:nth-child(even) td{background:var(--grey)}
+td code{font-family:var(--fm);font-size:12px;color:var(--black);background:var(--volt-bg);padding:1px 6px;border-radius:4px;font-weight:500}
+.check{padding-left:0}.check li{list-style:none;position:relative;padding-left:26px}
+.check li:before{content:"";position:absolute;left:0;top:3px;width:14px;height:14px;border:1.5px solid var(--mgrey);border-radius:3px}
+.anti{padding-left:0}.anti li{list-style:none;position:relative;padding-left:24px}
+.anti li:before{content:"\00D7";position:absolute;left:0;top:-1px;color:var(--error);font-weight:700;font-family:var(--fm);font-size:15px}
+.aires-footer{display:flex;justify-content:space-between;padding:18px 48px;background:var(--grey);border-top:1px solid var(--ink-200);font-size:10.5px;color:var(--ink-500);font-family:var(--fm);letter-spacing:.03em}
+@media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0;border:none}.btn{display:none}section{page-break-inside:avoid}}
+@media(max-width:720px){main,.aires-header,.aires-footer{padding-left:24px;padding-right:24px}}
+</style>
+</head>
+<body>
+<div class="wrap" id="doc">
+  <header class="aires-header">
+    <div class="brand"><svg viewBox="0 0 32 32"><path d="M16 1.5 30.5 16 16 30.5 1.5 16Z" fill="#fff"/><path d="M16 6.5l1.9 6.1 6.1 1.9-6.1 1.9L16 22.5l-1.9-6.1L8 14.5l6.1-1.9Z" fill="#2D2C2D"/></svg><span class="wm">Aires</span></div>
+    <div class="hd-meta"><h1>From context to product content</h1><p class="sub">Process · June 2026 · Upstream companion to "Requirements gathering &amp; defining scope" · A living document</p></div>
+    <button class="btn" onclick="exportPDF()">Export PDF</button>
+  </header>
+  <main>
+    <div class="callout"><span class="lab">What this is</span>How we turn a <strong>raw context dump</strong> — a brain dump, a sales call, a client signal — into structured product content: a thesis, a diagram pack, and scoped tickets. This sits <em>upstream</em> of <strong>Requirements gathering &amp; defining scope</strong> and hands off to it.</div>
+
+    <section>
+      <span class="num">01</span><h2>Why this matters</h2>
+      <p>Our richest product input is unstructured: a founder's stream of consciousness, a thing a client said, the texture of how a rep actually works. That raw context is gold — and it usually dies. It rots in a Slack thread, or it gets "cleaned up" into something tidy that has lost the very insight that made it valuable.</p>
+      <p>Good context work does three things:</p>
+      <ul>
+        <li><strong>Preserves the texture</strong> — the offhand line ("needle in a haystack") is often the whole thesis.</li>
+        <li><strong>Forces a thesis</strong> — a point of view, not just a feature list, so everything downstream has a spine.</li>
+        <li><strong>Connects to delivery</strong> — context that never becomes a ticket was entertainment, not product work.</li>
+      </ul>
+      <div class="callout"><span class="lab">Principle</span><strong>Distill before you decorate.</strong> Find the argument first. Diagrams and docs are how you <em>communicate</em> a thesis — they are not a substitute for having one.</div>
+    </section>
+
+    <section>
+      <span class="num">02</span><h2>The pipeline</h2>
+      <p>Five stages, each producing a concrete artifact and feeding the next. Run it linearly the first time; iterate freely after.</p>
+      <div class="pipeline">
+        <div class="pstage"><span class="s">Stage 01</span><h4>Capture</h4><p>Get the raw context down without tidying it. Keep the verbatim phrases.</p><span class="out">→ Context note</span></div>
+        <div class="pstage"><span class="s">Stage 02</span><h4>Distill</h4><p>Extract the core bet. Problem before solution. One point of view.</p><span class="out">→ Thesis doc</span></div>
+        <div class="pstage"><span class="s">Stage 03</span><h4>Visualize</h4><p>Draw each beat of the thesis as the right diagram type.</p><span class="out">→ Diagram pack</span></div>
+        <div class="pstage"><span class="s">Stage 04</span><h4>Scope</h4><p>Hand to requirements gathering: MoSCoW, vertical slices, INVEST.</p><span class="out">→ Scoped tickets</span></div>
+        <div class="pstage"><span class="s">Stage 05</span><h4>Ship &amp; learn</h4><p>Build the thin slice, watch the metric, feed learnings back to the thesis.</p><span class="out">→ Working software</span></div>
+      </div>
+    </section>
+
+    <section>
+      <span class="num">03</span><h2>Principles</h2>
+      <ul>
+        <li><strong>Problem before solution.</strong> Context usually arrives as solutions ("saved filters", "a dashboard"). Dig back to the underlying job before committing to a "how" — the same instinct as the 5 whys in requirements gathering.</li>
+        <li><strong>One thesis, many artifacts.</strong> Every diagram and doc should trace to a single line in the thesis. If it doesn't, it's noise.</li>
+        <li><strong>Preserve the texture.</strong> Carry the user's own words through. A vivid phrase out-communicates a paragraph of abstraction.</li>
+        <li><strong>Diagrams are arguments.</strong> A diagram should make a claim, not just inventory boxes. Pick the type that makes the claim.</li>
+        <li><strong>Make the implicit explicit.</strong> The dump assumes context you must write down — stakeholders, surfaces, edge cases — or it can't be scoped.</li>
+        <li><strong>Stop at "ready to slice."</strong> Context work is done when requirements gathering can take over, not before and not after.</li>
+      </ul>
+    </section>
+
+    <section>
+      <span class="num">04</span><h2>Choosing the right diagram for the beat</h2>
+      <p>Each thesis beat has a natural diagram. Match the claim you're making to the form that carries it.</p>
+      <table>
+        <tr><th>Thesis beat / claim</th><th>Diagram</th><th>Why this form</th></tr>
+        <tr><td>"Here's the user's real job"</td><td><code>JTBD canvas</code></td><td>Separates functional / emotional / social jobs from solutions</td></tr>
+        <tr><td>"This compounds / self-reinforces"</td><td><code>Flywheel</code></td><td>Shows a loop, not a line</td></tr>
+        <tr><td>"Two stakeholders, one truth"</td><td><code>Personas</code></td><td>Holds two viewpoints side by side</td></tr>
+        <tr><td>"This is the daily flow / decisions"</td><td><code>User flow</code></td><td>Branches, loops, and the "done" state</td></tr>
+        <tr><td>"Surfaces + the engine beneath"</td><td><code>Service blueprint</code></td><td>Frontstage vs backstage vs support</td></tr>
+        <tr><td>"Same capability, different needs"</td><td><code>Capability matrix</code></td><td>Capabilities × segments, priority per cell</td></tr>
+        <tr><td>"What to build first"</td><td><code>Impact-effort / MoSCoW</code></td><td>Forces prioritization, not a wish-list</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <span class="num">05</span><h2>Handoffs</h2>
+      <div class="callout link"><span class="lab">The chain</span><strong>This doc → requirements gathering &amp; defining scope → definition of done.</strong> Context work produces the <em>thesis</em> and the <em>diagram pack</em>; requirements gathering turns them into scoped, sliced, INVEST tickets; definition of done governs when each ticket is actually finished. Don't skip the middle step — a thesis is not a ticket.</div>
+    </section>
+
+    <section>
+      <span class="num">06</span><h2>Anti-patterns</h2>
+      <ul class="anti">
+        <li><strong>Thesis-less diagrams</strong> — pretty boxes with no argument; decoration mistaken for thinking.</li>
+        <li><strong>The diagram zoo</strong> — ten diagrams that each say a little; pick the few that each carry one beat.</li>
+        <li><strong>Tidying away the gold</strong> — sanding off the vivid phrase that was the actual insight.</li>
+        <li><strong>Solutioning in the thesis</strong> — locking the "how" before the "why" is even written.</li>
+        <li><strong>Context that never ships</strong> — a beautiful deck that never reaches a ticket or a metric.</li>
+        <li><strong>Skipping scope</strong> — jumping from thesis straight to building, with no in / out / non-goals.</li>
+      </ul>
+    </section>
+
+    <section>
+      <span class="num">07</span><h2>Quick checklist</h2>
+      <ul class="check">
+        <li>The raw context is captured verbatim, texture intact</li>
+        <li>A single thesis / core bet is written as a point of view</li>
+        <li>Every diagram traces to one beat of that thesis</li>
+        <li>The implicit is explicit: users, surfaces, stakeholders, edge cases</li>
+        <li>It's been handed to requirements gathering for slicing</li>
+        <li>A success metric is named so "ship &amp; learn" can close the loop</li>
+      </ul>
+    </section>
+
+    <section>
+      <span class="num">08</span><h2>Worked example — this very exercise</h2>
+      <div class="callout ok"><span class="lab">Meta</span>This process produced what you're reading.</div>
+      <ul>
+        <li><strong>Capture:</strong> a founder brain dump — "highest impact in least time", "data in / data out", "needle in a haystack", PATH / Peterson / Creo, three surfaces.</li>
+        <li><strong>Distill:</strong> → the rep velocity thesis (results lag, so velocity is the currency; the day must be self-directing).</li>
+        <li><strong>Visualize:</strong> → JTBD canvas, data flywheel, personas, daily flow, service blueprint, client capability matrix — one per beat.</li>
+        <li><strong>Scope:</strong> → rep velocity — scoped requirements: MoSCoW + 11 vertically-sliced INVEST tickets with acceptance criteria.</li>
+        <li><strong>Ship &amp; learn:</strong> → pull the thin slice (saved filters → Smart List → reportable activity), watch time-to-first-action and velocity, feed back.</li>
+      </ul>
+      <h3>When new context extends the thesis</h3>
+      <p>A second brain dump arrived — the <em>pull</em> job: intent-driven filtering and outreach ("everyone who opened the two-bedroom promo," "Jason's A &amp; B prospects while he's away"). The right move wasn't to start over; it was to <strong>extend</strong>. We distilled the new beat (push vs. pull), drew the artifacts that carry it (an intent JTBD canvas and an intent → list → outreach capability map), scoped it (intent-driven lists &amp; outreach requirements), and then <strong>threaded that scope back through the original set</strong> so the thesis, personas, flow, blueprint, and matrix all reflect both modes. Same pipeline, run as an amendment rather than a rewrite.</p>
+    </section>
+
+    <div class="callout"><span class="lab">Grounding</span>Built on the same practice base as our requirements work: problem-before-solution and the 5 whys; specification by example; jobs-to-be-done; story mapping; and the principle that clarity is cheapest at the front of the funnel.</div>
+  </main>
+  <footer class="aires-footer"><span>© Aires Technology Inc.</span><span>Context → product content · v0.2</span><span>Confidential</span></footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>function exportPDF(){const el=document.getElementById('doc'),b=document.querySelector('.btn');b.style.display='none';html2pdf().set({margin:[.3,.35],filename:'aires-context-to-product-content.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'in',format:'letter',orientation:'portrait'}}).from(el).save().then(()=>{b.style.display=''})}</script>
+</body>
+</html>

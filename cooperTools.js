@@ -243,6 +243,45 @@ export const cooperToolDefinitions = [
   },
   {
     type: "function",
+    name: "present_aires_example",
+    description: "Show one of the prebuilt AIRES example flows on Cooper's live canvas while explaining or teaching it. Use for Jobs to be Done, service blueprint, data flywheel, capability matrix, personas, daily rep flow, context-to-product-content, product thesis, or scoped requirements examples.",
+    parameters: {
+      type: "object",
+      properties: {
+        example_id: {
+          type: "string",
+          enum: [
+            "client_capability_matrix",
+            "context_to_product_content",
+            "daily_rep_flow",
+            "data_flywheel",
+            "jtbd_canvas",
+            "personas_manager_rep",
+            "scoped_requirements_rep_velocity",
+            "service_blueprint",
+            "thesis_rep_velocity"
+          ],
+          description: "The AIRES example to display on the canvas."
+        },
+        mode: {
+          type: "string",
+          enum: ["show", "educate", "compare", "build_from_context"],
+          description: "How Cooper should use the example. Defaults to educate."
+        },
+        reason: {
+          type: "string",
+          description: "Short explanation for why this example is being presented."
+        },
+        context: {
+          type: "string",
+          description: "Relevant meeting or project context to connect to the example during the spoken explanation."
+        }
+      },
+      required: ["example_id"]
+    }
+  },
+  {
+    type: "function",
     name: "run_aires_requirements_framework",
     description: "Use the AIRES Requirements Framework to explain its document library, workshop a selected framework document against provided context, run interview-style requirements discovery, or queue an AIRES-branded scoped requirements artifact from live meeting/project context.",
     parameters: {

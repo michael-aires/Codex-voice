@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jobs to be done — the sales rep — Aires</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{--black:#2D2C2D;--white:#fff;--volt:#F0DE4A;--grey:#F0F2EB;--mgrey:#9C9C9C;--orange:#EE7437;--sky:#B1CDD6;--blue:#2563EB;
+--ink-700:#3F3F46;--ink-600:#52525B;--ink-500:#71717A;--ink-300:#D4D4D8;--ink-200:#E4E4E7;--ink-100:#F4F4F5;--ink-50:#FAFAFA;
+--fd:'Urbanist',sans-serif;--fb:'Inter',sans-serif;--fs:'Instrument Serif',Georgia,serif;--fm:'IBM Plex Mono',monospace;
+--sh-xs:0 1px 2px rgba(16,24,40,.05);--sh-md:0 4px 8px -2px rgba(16,24,40,.10),0 2px 4px -2px rgba(16,24,40,.06)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--fb);color:var(--black);background:var(--grey);line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1320px;margin:24px auto;background:var(--white);box-shadow:var(--sh-md);border-radius:10px;overflow:hidden;border:1px solid var(--ink-200)}
+.aires-header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:20px 36px;background:var(--black);color:#fff;border-bottom:3px solid var(--volt)}
+.brand{display:flex;align-items:center;gap:11px}.brand svg{width:24px;height:24px;display:block}.brand .wm{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:.02em}
+.hd-meta{flex:1}.hd-meta h1{font-family:var(--fd);font-weight:600;font-size:26px;line-height:1.08}
+.hd-meta .sub{font-family:var(--fm);font-size:10.5px;color:var(--mgrey);margin-top:6px;letter-spacing:.03em}
+.btn{font-family:var(--fb);font-size:12px;font-weight:600;color:var(--black);background:var(--white);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}.btn:hover{opacity:.88}
+.content{padding:26px 36px 12px}
+.job-banner{background:var(--black);color:#fff;border-radius:8px;padding:22px 26px;margin-bottom:22px;display:flex;gap:20px;align-items:flex-start;border-left:3px solid var(--volt)}
+.job-banner .lab{font-family:var(--fm);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--volt);flex:0 0 90px;padding-top:5px;line-height:1.5}
+.job-banner .stmt{font-family:var(--fs);font-size:24px;line-height:1.32}
+.job-banner .stmt b{font-family:var(--fd);font-weight:600;font-style:normal;font-size:21px}
+.row{display:grid;gap:14px;margin-bottom:14px}.r3{grid-template-columns:repeat(3,1fr)}.r2{grid-template-columns:1fr 1fr}
+.q{border:1px solid var(--ink-200);border-radius:8px;overflow:hidden;background:var(--white);box-shadow:var(--sh-xs)}
+.q .hd{padding:12px 16px;font-family:var(--fd);font-weight:600;font-size:14.5px;color:#fff;background:var(--black);display:flex;align-items:center;gap:10px;border-bottom:2px solid transparent}
+.q .hd .ey{font-family:var(--fm);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--mgrey);font-weight:500;margin-left:auto}
+.q .bd{padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.item{font-size:13.5px;color:var(--ink-700);padding:10px 12px 10px 14px;background:var(--grey);border-radius:6px;position:relative}
+.item:before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:6px 0 0 6px;background:var(--ink-300)}
+.item:focus{outline:2px solid var(--blue);background:var(--white)}
+.hd.fn{border-bottom-color:var(--black)} .fn .item:before{background:var(--black)}
+.hd.em{border-bottom-color:var(--orange)} .em .item:before{background:var(--orange)}
+.hd.so{border-bottom-color:var(--sky)} .so .item:before{background:var(--sky)}
+.hd.cur{border-bottom-color:var(--mgrey)} .cur .item:before{background:var(--mgrey)}
+.hd.out{border-bottom-color:var(--volt)} .out .item:before{background:var(--volt)}
+.hd.ctx{border-bottom-color:var(--ink-300)} .ctx .item:before{background:var(--ink-300)}
+.aires-footer{display:flex;justify-content:space-between;padding:16px 36px;background:var(--grey);border-top:1px solid var(--ink-200);font-size:10.5px;color:var(--ink-500);font-family:var(--fm);letter-spacing:.03em}
+@media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0;border:none}.btn{display:none}.row{page-break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap" id="doc">
+  <header class="aires-header">
+    <div class="brand"><svg viewBox="0 0 32 32"><path d="M16 1.5 30.5 16 16 30.5 1.5 16Z" fill="#fff"/><path d="M16 6.5l1.9 6.1 6.1 1.9-6.1 1.9L16 22.5l-1.9-6.1L8 14.5l6.1-1.9Z" fill="#2D2C2D"/></svg><span class="wm">Aires</span></div>
+    <div class="hd-meta"><h1>Jobs to be done — the sales rep</h1><p class="sub">JTBD canvas · June 2026 · Rep velocity thesis</p></div>
+    <button class="btn" onclick="exportPDF()">Export PDF</button>
+  </header>
+  <main class="content">
+    <div class="job-banner">
+      <div class="lab">Job<br>statement</div>
+      <div class="stmt">When I start my day facing <b>thousands of leads,</b> I want to know exactly what to work and when I'm done — so I can get the <b>highest impact in the least time.</b></div>
+    </div>
+
+    <div class="row r2">
+      <div class="q"><div class="hd ctx">Context — when does this job arise?<span class="ey">situation</span></div><div class="bd">
+        <div class="item ctx" contenteditable="true">Pre-sale real estate; a single project can carry thousands of leads — above human scale.</div>
+        <div class="item ctx" contenteditable="true">Results lag by weeks or months, so today's effort can't be judged by today's closings.</div>
+        <div class="item ctx" contenteditable="true">A manager is watching output; the rep has to prove they are effective now.</div>
+      </div></div>
+      <div class="q"><div class="hd cur">Current solutions, and why they fall short<span class="ey">workarounds</span></div><div class="bd">
+        <div class="item cur" contenteditable="true">Generic CRM that shows everything and prioritizes nothing — rep becomes the query engine.</div>
+        <div class="item cur" contenteditable="true">Memory, gut feel, and hand-built spreadsheets remade every morning.</div>
+        <div class="item cur" contenteditable="true">Data entry feels like a tax with no rebate — feeds a report, not the rep.</div>
+        <div class="item cur" contenteditable="true">When I have a reason to reach a segment, I export to a spreadsheet and message from another tool — slow, and nothing gets logged back.</div>
+      </div></div>
+    </div>
+
+    <div class="row r3">
+      <div class="q"><div class="hd fn">Functional jobs<span class="ey">does</span></div><div class="bd">
+        <div class="item fn" contenteditable="true">Find the needle in the haystack — the few leads that matter today.</div>
+        <div class="item fn" contenteditable="true">Respond to hot leads as fast as possible, before they cool.</div>
+        <div class="item fn" contenteditable="true">Turn an intent into a precise list — compose interest, recency, owner, grade, engagement — when I already know who I want.</div>
+        <div class="item fn" contenteditable="true">Communicate with a whole segment in place (bulk or sequenced) and have it logged.</div>
+        <div class="item fn" contenteditable="true">Follow up on the right contacts at the right time.</div>
+        <div class="item fn" contenteditable="true">Log activity without it slowing me down.</div>
+        <div class="item fn" contenteditable="true">Know when the day's work is actually complete.</div>
+      </div></div>
+      <div class="q"><div class="hd em">Emotional jobs<span class="ey">feels</span></div><div class="bd">
+        <div class="item em" contenteditable="true">Feel in control, not buried by volume.</div>
+        <div class="item em" contenteditable="true">Feel the closure of "done" — not an endless, formless list.</div>
+        <div class="item em" contenteditable="true">Feel my effort counts and is credited, not invisible.</div>
+        <div class="item em" contenteditable="true">Trust the list — believe the system surfaced the right things.</div>
+      </div></div>
+      <div class="q"><div class="hd so">Social jobs<span class="ey">seen as</span></div><div class="bd">
+        <div class="item so" contenteditable="true">Be seen by my manager as productive — today, not next quarter.</div>
+        <div class="item so" contenteditable="true">Prove my velocity with legible, self-evident numbers.</div>
+        <div class="item so" contenteditable="true">Be recognized as a top performer on the team.</div>
+      </div></div>
+    </div>
+
+    <div class="row">
+      <div class="q"><div class="hd out">Desired outcomes — what "hiring the product" looks like<span class="ey">success</span></div>
+        <div class="bd" style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
+          <div class="item out" contenteditable="true">A short, ranked, trustworthy list waiting every morning — "what should I do today" answered for me.</div>
+          <div class="item out" contenteditable="true">A same-day rebate: data I enter this morning changes what the tool tells me this afternoon.</div>
+          <div class="item out" contenteditable="true">Every meaningful action captured as reportable, attributable activity — credit, not surveillance.</div>
+          <div class="item out" contenteditable="true">Velocity visible to me and my manager — "done" is a number that moves, not a feeling.</div>
+          <div class="item out" contenteditable="true">When I arrive with an intent, intent → list in seconds → outreach in place → auto-logged, even on a teammate's book.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer class="aires-footer"><span>© Aires Technology Inc.</span><span>JTBD canvas · sales rep · v0.3</span><span>Confidential</span></footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>function exportPDF(){const el=document.getElementById('doc'),b=document.querySelector('.btn');b.style.display='none';html2pdf().set({margin:[.3,.4],filename:'aires-jtbd-sales-rep.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'in',format:'letter',orientation:'landscape'}}).from(el).save().then(()=>{b.style.display=''})}</script>
+</body>
+</html>

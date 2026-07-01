@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Same engine, three needles — Aires</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{--black:#2D2C2D;--white:#fff;--volt:#F0DE4A;--volt-bg:#FBF7CF;--grey:#F0F2EB;--mgrey:#9C9C9C;--orange:#EE7437;--sky:#B1CDD6;--blue:#2563EB;
+--ink-700:#3F3F46;--ink-600:#52525B;--ink-500:#71717A;--ink-300:#D4D4D8;--ink-200:#E4E4E7;--ink-100:#F4F4F5;--ink-50:#FAFAFA;
+--fd:'Urbanist',sans-serif;--fb:'Inter',sans-serif;--fs:'Instrument Serif',Georgia,serif;--fm:'IBM Plex Mono',monospace;
+--sh-xs:0 1px 2px rgba(16,24,40,.05);--sh-md:0 4px 8px -2px rgba(16,24,40,.10),0 2px 4px -2px rgba(16,24,40,.06)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--fb);color:var(--black);background:var(--grey);line-height:1.4;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1280px;margin:24px auto;background:var(--white);box-shadow:var(--sh-md);border-radius:10px;overflow:hidden;border:1px solid var(--ink-200)}
+.aires-header{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:20px 36px;background:var(--black);color:#fff;border-bottom:3px solid var(--volt)}
+.brand{display:flex;align-items:center;gap:11px}.brand svg{width:24px;height:24px;display:block}.brand .wm{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:.02em}
+.hd-meta{flex:1}.hd-meta h1{font-family:var(--fd);font-weight:600;font-size:26px;line-height:1.08}
+.hd-meta .sub{font-family:var(--fm);font-size:10.5px;color:var(--mgrey);margin-top:6px;letter-spacing:.03em}
+.btn{font-family:var(--fb);font-size:12px;font-weight:600;color:var(--black);background:var(--white);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}.btn:hover{opacity:.88}
+.content{padding:26px 36px 12px}
+.intro{color:var(--ink-600);font-size:15px;max-width:780px;margin-bottom:18px}.intro b{color:var(--black)}
+table{width:100%;border-collapse:separate;border-spacing:6px}
+th,td{vertical-align:top}
+thead th{background:var(--black);color:#fff;border-radius:6px;padding:12px 12px;text-align:left;font-family:var(--fd);font-size:14px;font-weight:600}
+thead th .need{display:block;font-family:var(--fm);font-size:9.5px;color:var(--volt);letter-spacing:.05em;margin-top:4px;font-weight:500}
+thead th.cap-col{background:transparent;color:var(--ink-500);font-family:var(--fb);font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:600}
+.caprow th{background:var(--grey);color:var(--black);border-radius:6px;padding:12px 14px;width:215px;font-family:var(--fd);font-size:14px;font-weight:600}
+.caprow th small{display:block;font-family:var(--fb);font-weight:400;color:var(--ink-500);font-size:11.5px;margin-top:3px}
+td{border:1px solid var(--ink-200);border-radius:6px;padding:10px 12px;font-size:12px;color:var(--ink-700);background:var(--white)}
+td .dot{font-size:13px;margin-right:7px;font-weight:700}
+.crit{background:var(--volt-bg);border-color:var(--volt);border-width:1px;border-left:3px solid var(--volt)}
+.crit .dot{color:#B9991F}
+.imp .dot{color:var(--orange)}
+.base .dot{color:var(--mgrey)}
+td b{color:var(--black)}
+.key{display:flex;gap:22px;margin-top:16px;font-size:12px;color:var(--ink-600);flex-wrap:wrap}
+.key span .dot{font-size:14px;margin-right:6px;font-weight:700}
+.key .crit .dot{color:#B9991F}.key .imp .dot{color:var(--orange)}.key .base .dot{color:var(--mgrey)}
+.aires-footer{display:flex;justify-content:space-between;padding:16px 36px;background:var(--grey);border-top:1px solid var(--ink-200);font-size:10.5px;color:var(--ink-500);font-family:var(--fm);letter-spacing:.03em}
+@media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0;border:none}.btn{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap" id="doc">
+  <header class="aires-header">
+    <div class="brand"><svg viewBox="0 0 32 32"><path d="M16 1.5 30.5 16 16 30.5 1.5 16Z" fill="#fff"/><path d="M16 6.5l1.9 6.1 6.1 1.9-6.1 1.9L16 22.5l-1.9-6.1L8 14.5l6.1-1.9Z" fill="#2D2C2D"/></svg><span class="wm">Aires</span></div>
+    <div class="hd-meta"><h1>Same engine, three needles</h1><p class="sub">Capability matrix · June 2026 · Filter dimensions &amp; outreach × clients</p></div>
+    <button class="btn" onclick="exportPDF()">Export PDF</button>
+  </header>
+  <main class="content">
+    <p class="intro">One engine — eight <b>composable filter dimensions</b> that AND/OR together, save as a <b>Smart List &#10022;</b>, and feed <b>outreach</b> — solves three different client problems. The matrix shows which dimensions do the heavy lifting for each, so we build the shared engine but ship the right <b>default</b> per tenant.</p>
+    <table>
+      <thead>
+        <tr>
+          <th class="cap-col">Capability ↓ &nbsp; Client →</th>
+          <th>PATH Developments<span class="need">Manage many projects</span></th>
+          <th>Peterson Group<span class="need">Timely follow-up of hot leads</span></th>
+          <th>Creo<span class="need">Exclude investors / past buyers</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="caprow">
+          <th>Attribute <small>unit interest, beds, status</small></th>
+          <td class="imp"><span class="dot">◐</span>Match the right unit mix per project.</td>
+          <td class="imp"><span class="dot">◐</span>Who's interested in the unit that's hot now.</td>
+          <td class="imp"><span class="dot">◐</span>Narrow to the relevant buyer profile.</td>
+        </tr>
+        <tr class="caprow">
+          <th>Recency window <small>showed interest in last N</small></th>
+          <td class="imp"><span class="dot">◐</span>Fresh interest, per active effort.</td>
+          <td class="crit"><span class="dot">●</span><b>Recency is the game</b> — last 24h / last week is the hot pool.</td>
+          <td class="base"><span class="dot">○</span>Optional time-boxing.</td>
+        </tr>
+        <tr class="caprow">
+          <th>Contact gap <small>not contacted since date / event</small></th>
+          <td class="imp"><span class="dot">◐</span>No lead dropped across many projects.</td>
+          <td class="crit"><span class="dot">●</span><b>Follow up before it cools</b> — the core follow-up hole.</td>
+          <td class="base"><span class="dot">○</span>Avoid re-touching the wrong people.</td>
+        </tr>
+        <tr class="caprow">
+          <th>Event / behavior <small>attended event, visited pres-center</small></th>
+          <td class="imp"><span class="dot">◐</span>Per-project event turnout.</td>
+          <td class="crit"><span class="dot">●</span><b>Strong intent signal</b> — strike while warm.</td>
+          <td class="base"><span class="dot">○</span>Contextual.</td>
+        </tr>
+        <tr class="caprow">
+          <th>Source <small>online ads, referral, organic</small></th>
+          <td class="imp"><span class="dot">◐</span>Route paid leads per project; prove ROI.</td>
+          <td class="imp"><span class="dot">◐</span>Qualify inbound fast.</td>
+          <td class="imp"><span class="dot">◐</span>Spot investors by how they came in.</td>
+        </tr>
+        <tr class="caprow">
+          <th>Owner <small>whose book; act-on-behalf</small></th>
+          <td class="crit"><span class="dot">●</span><b>Many reps × many projects</b> — coverage and working an away rep's book.</td>
+          <td class="imp"><span class="dot">◐</span>Cover a teammate during a push.</td>
+          <td class="base"><span class="dot">○</span>Usually a single book.</td>
+        </tr>
+        <tr class="caprow">
+          <th>Grade <small>A / B / C rating</small></th>
+          <td class="imp"><span class="dot">◐</span>Prioritize top prospects per project.</td>
+          <td class="imp"><span class="dot">◐</span>A &amp; B first when speed matters.</td>
+          <td class="imp"><span class="dot">◐</span>Focus the clean pool.</td>
+        </tr>
+        <tr class="caprow">
+          <th>Engagement <small>opened / clicked a promo</small></th>
+          <td class="imp"><span class="dot">◐</span>Who engaged, by project campaign.</td>
+          <td class="crit"><span class="dot">●</span><b>Opened the promo = warm</b> — the follow-up list.</td>
+          <td class="base"><span class="dot">○</span>Secondary signal.</td>
+        </tr>
+        <tr class="caprow">
+          <th>Save as Smart List &#10022; <small>re-runnable segment</small></th>
+          <td class="crit"><span class="dot">●</span><b>Per-project lists, portfolio roll-up.</b></td>
+          <td class="crit"><span class="dot">●</span><b>Living "hot &amp; aging" list.</b></td>
+          <td class="crit"><span class="dot">●</span><b>A saved clean pool, exclusions baked in.</b></td>
+        </tr>
+        <tr class="caprow">
+          <th>Exclusion <small>find the needle by subtraction</small></th>
+          <td class="base"><span class="dot">○</span>Optional per-project exclusions.</td>
+          <td class="base"><span class="dot">○</span>Exclude already-contacted.</td>
+          <td class="crit"><span class="dot">●</span><b>The core job</b> — remove investors &amp; past buyers first.</td>
+        </tr>
+        <tr class="caprow">
+          <th>Bulk outreach + consent <small>message the segment in place</small></th>
+          <td class="imp"><span class="dot">◐</span>Campaign a project's segment, logged.</td>
+          <td class="crit"><span class="dot">●</span><b>Timely outreach</b> to the whole hot list at once.</td>
+          <td class="imp"><span class="dot">◐</span>Careful, consent-gated outreach to the clean pool.</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="key">
+      <span class="crit"><span class="dot">●</span>Primary need — ship as the tenant default</span>
+      <span class="imp"><span class="dot">◐</span>Important — supports the primary</span>
+      <span class="base"><span class="dot">○</span>Baseline — every rep gets it</span>
+    </div>
+  </main>
+  <footer class="aires-footer"><span>© Aires Technology Inc.</span><span>Client capability matrix · v0.3</span><span>Confidential</span></footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>function exportPDF(){const el=document.getElementById('doc'),b=document.querySelector('.btn');b.style.display='none';html2pdf().set({margin:[.3,.4],filename:'aires-client-capability-matrix.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'in',format:'letter',orientation:'landscape'}}).from(el).save().then(()=>{b.style.display=''})}</script>
+</body>
+</html>

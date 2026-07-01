@@ -15,6 +15,10 @@ import {
   explainAiresFrameworkDocuments,
   workshopAiresFrameworkDocument
 } from "./server/airesFramework.js";
+import {
+  getAiresExampleDocument,
+  getAiresExampleList
+} from "./server/airesExamples.js";
 import { runGstackSkill } from "./server/tools/runGstackSkill.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +31,7 @@ const workModel = process.env.COOPER_WORK_MODEL || "gpt-5.4";
 const fallbackWorkModel = process.env.COOPER_FALLBACK_WORK_MODEL || "";
 const jobDelayMs = Number(process.env.COOPER_JOB_DELAY_MS || 15000);
 const jobMaxAttempts = Number(process.env.COOPER_JOB_MAX_ATTEMPTS || 3);
-const jobMaxOutputTokens = Number(process.env.COOPER_JOB_MAX_OUTPUT_TOKENS || 6500);
+const jobMaxOutputTokens = Number(process.env.COOPER_JOB_MAX_OUTPUT_TOKENS || 9000);
 const projectContextChars = Number(process.env.COOPER_PROJECT_CONTEXT_CHARS || 18000);
 const projectSourceMaxChars = Number(process.env.COOPER_PROJECT_SOURCE_MAX_CHARS || 250000);
 const projectUploadMaxBytes = Number(process.env.COOPER_PROJECT_UPLOAD_MAX_MB || 20) * 1024 * 1024;
@@ -213,6 +217,7 @@ const artifactRecipes = {
   html_prototype: {
     title: "HTML prototype",
     outputType: "html",
+    maxOutputTokens: 12000,
     steps: [
       "Extract the prototype request from the transcript and any additional instruction. Define the product concept, audience, primary workflow, required screens, content hierarchy, states, and mobile-first constraints.",
       "Turn the prototype brief into an implementation-ready interaction plan. Include mobile defaults, desktop expansion behavior, sample data, key UI states, and any lightweight JavaScript interactions needed for a believable prototype.",
@@ -230,6 +235,7 @@ const artifactRecipes = {
   ui_wireframe: {
     title: "UI wireframe",
     outputType: "html",
+    maxOutputTokens: 10000,
     steps: [
       "Extract the interface, workflow, or prototype idea Michael wants to visualize. Define the target user, primary job, core screens, content hierarchy, states, and mobile-first constraints.",
       "Build a complete standalone HTML wireframe with inline CSS and small inline JavaScript if useful. Default to a mobile viewport, use a deliberate low-fidelity grayscale wireframe style, include realistic labels/content, and add responsive desktop rules. Use no external assets, no external scripts, and no markdown fences. Return only the full HTML document starting with <!doctype html>."
@@ -238,6 +244,7 @@ const artifactRecipes = {
   aires_requirements: {
     title: "AIRES scoped requirements",
     outputType: "html",
+    maxOutputTokens: 14000,
     steps: [
       "Capture and distill the source context using the AIRES Requirements Framework. Preserve vivid user phrases, identify the core problem, goal, stakeholders, current state, desired state, constraints, source material, success metric, and a short 5-whys check. Mark assumptions clearly.",
       "Scope and slice the work. Produce in scope, out of scope now, and non-goals; data, edge cases, failure modes, constraints, and non-functionals; MoSCoW prioritization with real Won't/deferred boundaries; vertical INVEST slices that are small, valuable, and testable; Given/When/Then acceptance criteria; and a Definition of Ready checklist.",
@@ -298,6 +305,23 @@ app.post("/session", async (req, res) => {
 app.get("/api/state", async (_req, res) => {
   const db = await readDb();
   res.json(publicState(db));
+});
+
+app.get("/api/aires/examples", (_req, res) => {
+  res.json({ examples: getAiresExampleList() });
+});
+
+app.get("/api/aires/examples/:id", async (req, res) => {
+  try {
+    const example = await getAiresExampleDocument(req.params.id);
+    if (!example) {
+      res.status(404).json({ error: "AIRES example not found." });
+      return;
+    }
+    res.json({ example });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not load AIRES example." });
+  }
 });
 
 app.post("/api/projects", async (req, res) => {
@@ -733,6 +757,7 @@ app.post("/api/jobs/:id/retry", async (req, res) => {
 async function enqueueArtifactJob(callId, kind, customPrompt = "", options = {}) {
   const now = new Date().toISOString();
   const recipe = artifactRecipes[kind];
+  const maxOutputTokens = outputTokenBudget(recipe);
 
   const job = await updateDb((db) => {
     const call = db.calls.find((item) => item.id === callId);
@@ -753,6 +778,18 @@ async function enqueueArtifactJob(callId, kind, customPrompt = "", options = {})
       attempts: 0,
       failures: 0,
       maxAttempts: jobMaxAttempts,
+      model: workModel,
+      fallbackModel: fallbackWorkModel,
+      maxOutputTokens,
+      reasoningEffort: "medium",
+      apiStatus: "queued",
+      activeStepSummary: "",
+      lastActivityAt: now,
+      lastApiStartedAt: null,
+      lastApiCompletedAt: null,
+      lastApiDurationMs: null,
+      lastOutputChars: 0,
+      draftCharCount: 0,
       draft: "",
       artifactId: null,
       error: null,
@@ -855,30 +892,68 @@ async function runJob(jobId) {
       await updateDb((nextDb) => {
         const nextJob = nextDb.jobs.find((item) => item.id === jobId);
         if (!nextJob) return;
+        const stepSummary = summarizeStep(recipe.steps[nextJob.stepIndex]);
         nextJob.attempts = attempt;
         nextJob.progress = `Running step ${nextJob.stepIndex + 1} of ${nextJob.stepCount}.`;
+        nextJob.apiStatus = "preparing_request";
+        nextJob.activeStepSummary = stepSummary;
         nextJob.lastStartedAt = new Date().toISOString();
         appendJobLog(
           nextJob,
           "step_start",
-          `Step ${nextJob.stepIndex + 1}/${nextJob.stepCount}: ${summarizeStep(recipe.steps[nextJob.stepIndex])}`
+          `Step ${nextJob.stepIndex + 1}/${nextJob.stepCount}: ${stepSummary}`
         );
         nextJob.updatedAt = new Date().toISOString();
       });
 
       const stepPrompt = buildWorkPrompt(call, job, recipe.steps[job.stepIndex]);
-      const output = await createResponse(stepPrompt, { attempt, outputType: recipe.outputType || "markdown" });
+      const requestStartedAt = new Date().toISOString();
+      const model = modelForAttempt(attempt);
+      const maxOutputTokens = outputTokenBudget(recipe);
+      await updateDb((nextDb) => {
+        const nextJob = nextDb.jobs.find((item) => item.id === jobId);
+        if (!nextJob) return;
+        nextJob.model = model;
+        nextJob.maxOutputTokens = maxOutputTokens;
+        nextJob.apiStatus = "waiting_for_openai";
+        nextJob.lastApiStartedAt = requestStartedAt;
+        nextJob.requestInputChars = JSON.stringify(stepPrompt).length;
+        nextJob.progress = `Waiting on OpenAI for step ${nextJob.stepIndex + 1} of ${nextJob.stepCount}.`;
+        appendJobLog(
+          nextJob,
+          "api_request",
+          `OpenAI request sent to ${model} with ${maxOutputTokens.toLocaleString()} output tokens.`
+        );
+        nextJob.updatedAt = requestStartedAt;
+      });
+      const responseResult = await createResponse(stepPrompt, {
+        attempt,
+        outputType: recipe.outputType || "markdown",
+        maxOutputTokens
+      });
+      const output = responseResult.output;
       lastGenerationAt = Date.now();
 
       await updateDb((nextDb) => {
         const nextJob = nextDb.jobs.find((item) => item.id === jobId);
         if (!nextJob) return;
+        nextJob.apiStatus = "response_received";
+        nextJob.lastApiCompletedAt = responseResult.completedAt;
+        nextJob.lastApiDurationMs = responseResult.durationMs;
+        nextJob.lastOutputChars = output.length;
         nextJob.draft = [
           nextJob.draft,
           `\n\n<!-- Cooper step ${nextJob.stepIndex + 1}: ${new Date().toISOString()} -->\n\n${output}`
         ].join("").trim();
+        nextJob.draftCharCount = nextJob.draft.length;
+        appendJobLog(
+          nextJob,
+          "api_response",
+          `OpenAI response received in ${formatRetryDelay(responseResult.durationMs)} with ${output.length.toLocaleString()} characters.`
+        );
         nextJob.stepIndex += 1;
-        nextJob.progress = nextJob.stepIndex >= nextJob.stepCount ? "Finalizing Markdown artifact." : `Waiting before step ${nextJob.stepIndex + 1}.`;
+        nextJob.apiStatus = nextJob.stepIndex >= nextJob.stepCount ? "finalizing" : "waiting_between_steps";
+        nextJob.progress = nextJob.stepIndex >= nextJob.stepCount ? "Finalizing artifact file." : `Waiting before step ${nextJob.stepIndex + 1}.`;
         appendJobLog(
           nextJob,
           "step_complete",
@@ -906,10 +981,12 @@ async function runJob(jobId) {
           const retryAt = new Date(Date.now() + (error.retryAfterMs || jobDelayMs * 2)).toISOString();
           job.status = "queued";
           job.retryAt = retryAt;
+          job.apiStatus = "retry_scheduled";
           job.progress = `Retrying after ${formatRetryDelay(error.retryAfterMs || jobDelayMs * 2)}.`;
           appendJobLog(job, "retry", `${error.message} Retrying at ${new Date(retryAt).toLocaleTimeString()}.`);
         } else {
           job.status = "failed";
+          job.apiStatus = "failed";
           job.progress = "Failed. Manual retry is available.";
           job.failedAt = new Date().toISOString();
           appendJobLog(job, "failed", error.message);
@@ -954,9 +1031,12 @@ async function completeArtifact(job, call) {
     db.artifacts.push(artifact);
     if (nextJob) {
       nextJob.status = "completed";
+      nextJob.apiStatus = "completed";
       nextJob.artifactId = artifactId;
       nextJob.completedAt = now;
       nextJob.progress = "Artifact ready.";
+      nextJob.activeStepSummary = "";
+      nextJob.draftCharCount = nextJob.draft?.length || 0;
       appendJobLog(nextJob, "completed", `${outputType === "html" ? "HTML prototype" : "Markdown artifact"} saved: ${safeTitle}.`);
       nextJob.updatedAt = now;
     }
@@ -997,12 +1077,13 @@ async function createMcpAppArtifact(callId, payload) {
   });
 }
 
-async function createResponse(input, { attempt = 1, outputType = "markdown" } = {}) {
+async function createResponse(input, { attempt = 1, outputType = "markdown", maxOutputTokens = jobMaxOutputTokens } = {}) {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("Missing OPENAI_API_KEY on the server.");
   }
 
-  const model = workModels[Math.min(attempt - 1, workModels.length - 1)] || workModel;
+  const model = modelForAttempt(attempt);
+  const startedAt = Date.now();
   const instructions = outputType === "html"
     ? "You are Cooper, Michael's AIRES CTO/CPO executive assistant. Produce implementation-grade planning and, when asked for a prototype, a complete standalone HTML document with inline CSS and small inline JavaScript. Use no external assets, external scripts, hidden reasoning, or markdown fences for final HTML."
     : "You are Cooper, Michael's AIRES CTO/CPO executive assistant. Produce high-signal Markdown. Be precise, opinionated, and practical.";
@@ -1019,7 +1100,7 @@ async function createResponse(input, { attempt = 1, outputType = "markdown" } = 
       instructions,
       input,
       reasoning: { effort: "medium" },
-      max_output_tokens: jobMaxOutputTokens,
+      max_output_tokens: maxOutputTokens,
       text: { format: { type: "text" } }
     })
   });
@@ -1037,11 +1118,37 @@ async function createResponse(input, { attempt = 1, outputType = "markdown" } = 
   }
 
   const output = extractOutputText(payload);
+  const completedAt = new Date().toISOString();
+  const durationMs = Date.now() - startedAt;
   if (payload?.status === "incomplete") {
     const reason = payload?.incomplete_details?.reason || "unknown";
-    return `${output}\n\n> Cooper note: this step ended incomplete (${reason}). Raise COOPER_JOB_MAX_OUTPUT_TOKENS or narrow the artifact request if this happens repeatedly.`;
+    return {
+      output: `${output}\n\n> Cooper note: this step ended incomplete (${reason}). Raise COOPER_JOB_MAX_OUTPUT_TOKENS or narrow the artifact request if this happens repeatedly.`,
+      model,
+      maxOutputTokens,
+      completedAt,
+      durationMs,
+      status: payload?.status || "incomplete",
+      incompleteReason: reason
+    };
   }
-  return output;
+  return {
+    output,
+    model,
+    maxOutputTokens,
+    completedAt,
+    durationMs,
+    status: payload?.status || "completed",
+    incompleteReason: ""
+  };
+}
+
+function modelForAttempt(attempt = 1) {
+  return workModels[Math.min(Number(attempt || 1) - 1, workModels.length - 1)] || workModel;
+}
+
+function outputTokenBudget(recipe = {}) {
+  return Math.max(jobMaxOutputTokens, Number(recipe.maxOutputTokens || 0) || 0);
 }
 
 function buildWorkPrompt(call, job, step) {
@@ -1122,6 +1229,10 @@ async function executeCooperTool(name, args, context = {}) {
 
   if (name === "render_mcp_app") {
     return executeMcpAppTool(args, context);
+  }
+
+  if (name === "present_aires_example") {
+    return executePresentAiresExampleTool(args, context);
   }
 
   if (name === "run_aires_requirements_framework") {
@@ -1307,6 +1418,96 @@ async function executeMcpAppTool(args, context = {}) {
     source,
     resourceStatus,
     message: `${title} is on Cooper's canvas as an MCP App surface.`
+  };
+}
+
+async function executePresentAiresExampleTool(args, context = {}) {
+  const callId = cleanText(context.callId);
+  const exampleId = cleanText(args.example_id || args.example || args.document_key || args.topic);
+  const mode = cleanText(args.mode) || "educate";
+  const reason = cleanText(args.reason);
+  const suppliedContext = limitText(args.context, 3000);
+
+  if (!callId) {
+    return {
+      status: "error",
+      tool: "present_aires_example",
+      message: "No active call is available for the AIRES example canvas.",
+      retryable: false
+    };
+  }
+
+  const example = await getAiresExampleDocument(exampleId);
+  if (!example) {
+    return {
+      status: "not_found",
+      tool: "present_aires_example",
+      message: "I could not find that AIRES example. Ask for Jobs to be Done, service blueprint, data flywheel, capability matrix, personas, daily rep flow, context-to-product-content, product thesis, or scoped requirements.",
+      availableExamples: getAiresExampleList().map((item) => ({
+        id: item.id,
+        title: item.title,
+        category: item.category
+      }))
+    };
+  }
+
+  const payload = {
+    version: "cooper-mcp-app-1",
+    title: example.title,
+    description: reason || example.description,
+    serverId: "cooper-local",
+    transport: "local",
+    resourceUri: `aires-example://${example.id}`,
+    toolName: "present_aires_example",
+    source: "aires_example",
+    resourceStatus: "ready",
+    state: {
+      exampleId: example.id,
+      category: example.category,
+      flow: example.flow,
+      mode,
+      contextIncluded: Boolean(suppliedContext.text),
+      contextTruncated: suppliedContext.truncated
+    },
+    html: normalizeHtml(example.html),
+    htmlMimeType: "text/html",
+    aguiEvents: [
+      {
+        type: "TOOL_CALL_START",
+        toolCallId: `cooper-${randomUUID()}`,
+        toolCallName: "present_aires_example",
+        at: new Date().toISOString()
+      },
+      {
+        type: "STATE_SNAPSHOT",
+        snapshot: {
+          status: "ready",
+          exampleId: example.id,
+          title: example.title,
+          mode
+        },
+        at: new Date().toISOString()
+      }
+    ],
+    messages: [
+      `Presented ${example.title} from the AIRES example library.`,
+      suppliedContext.text ? "Connected this example to the active meeting context." : "No additional context was provided with the presentation request."
+    ],
+    createdAt: new Date().toISOString()
+  };
+
+  const artifact = await createMcpAppArtifact(callId, payload);
+
+  return {
+    status: "completed",
+    tool: "present_aires_example",
+    riskLevel: "advisory",
+    artifactId: artifact.id,
+    exampleId: example.id,
+    title: artifact.title,
+    mode,
+    message: `${example.title} is on Cooper's canvas.`,
+    voice_summary: `${example.title} is now on the canvas. It is useful when you need to ${example.flow.toLowerCase()}`
   };
 }
 
@@ -2338,7 +2539,11 @@ function publicProjectSource(source) {
 
 function publicJob(job) {
   const { draft: _draft, ...rest } = job;
-  return { ...rest, logs: Array.isArray(rest.logs) ? rest.logs.slice(-40) : [] };
+  return {
+    ...rest,
+    draftCharCount: Number(rest.draftCharCount || _draft?.length || 0),
+    logs: Array.isArray(rest.logs) ? rest.logs.slice(-40) : []
+  };
 }
 
 function publicToolCall(toolCall) {
@@ -2483,6 +2688,7 @@ function toolRiskLevel(name) {
   if (name === "create_followup_action") return "write";
   if (name === "create_canvas_artifact") return "advisory";
   if (name === "render_mcp_app") return "advisory";
+  if (name === "present_aires_example") return "advisory";
   if (name === "run_aires_requirements_framework") return "advisory";
   return "read";
 }
@@ -2507,6 +2713,7 @@ function toolLabel(name) {
     inspect_engineering_context: "Engineering context",
     create_followup_action: "Follow-up actions",
     render_mcp_app: "MCP App canvas",
+    present_aires_example: "AIRES example canvas",
     run_aires_requirements_framework: "AIRES requirements"
   }[name] || name;
 }
@@ -2800,6 +3007,17 @@ function safeToolArguments(name, args) {
     };
   }
 
+  if (name === "present_aires_example") {
+    const context = cleanText(args.context);
+    return {
+      exampleId: cleanText(args.example_id),
+      mode: cleanText(args.mode) || "educate",
+      reason: cleanText(args.reason),
+      contextLength: context.length,
+      inputRedacted: containsSensitiveText(context)
+    };
+  }
+
   if (name === "run_aires_requirements_framework") {
     const sourceContext = cleanText(args.source_context);
     return {
@@ -3052,12 +3270,14 @@ function wait(ms) {
 
 function appendJobLog(job, type, message) {
   if (!job.logs) job.logs = [];
+  const at = new Date().toISOString();
   job.logs.push({
     id: randomUUID(),
-    at: new Date().toISOString(),
+    at,
     type,
     message
   });
+  job.lastActivityAt = at;
   job.logs = job.logs.slice(-80);
 }
 
@@ -3128,11 +3348,21 @@ await updateDb((db) => {
     artifact.file = artifact.file || `data/artifacts/${artifact.id}.${artifact.extension}`;
   });
   db.jobs.forEach((job) => {
+    const recipe = artifactRecipes[job.kind] || {};
+    job.model = cleanText(job.model) || workModel;
+    job.fallbackModel = cleanText(job.fallbackModel) || fallbackWorkModel;
+    job.maxOutputTokens = Number(job.maxOutputTokens || outputTokenBudget(recipe));
+    job.reasoningEffort = cleanText(job.reasoningEffort) || "medium";
+    job.apiStatus = cleanText(job.apiStatus) || (job.status === "completed" ? "completed" : job.status === "failed" ? "failed" : "queued");
+    job.activeStepSummary = cleanText(job.activeStepSummary);
+    job.lastActivityAt = job.lastActivityAt || job.updatedAt || job.createdAt || new Date().toISOString();
+    job.draftCharCount = Number(job.draftCharCount || job.draft?.length || 0);
     if (!Array.isArray(job.logs) || job.logs.length === 0) {
       appendJobLog(job, job.status || "state", `Recovered existing ${job.title || "job"} in ${job.status || "unknown"} state.`);
     }
     if (job.status === "running") {
       job.status = "queued";
+      job.apiStatus = "queued";
       job.progress = "Recovered after restart.";
       appendJobLog(job, "recovered", "Server restarted while this job was running. Cooper queued it again.");
       job.updatedAt = new Date().toISOString();

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rep velocity — scoped requirements — Aires</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+:root{--black:#2D2C2D;--white:#fff;--volt:#F0DE4A;--volt-bg:#FBF7CF;--grey:#F0F2EB;--mgrey:#9C9C9C;--orange:#EE7437;--sky:#B1CDD6;--blue:#2563EB;
+--ink-700:#3F3F46;--ink-600:#52525B;--ink-500:#71717A;--ink-300:#D4D4D8;--ink-200:#E4E4E7;--ink-100:#F4F4F5;--ink-50:#FAFAFA;
+--success:#059669;--success-bg:#ECFDF5;--warning:#A16207;--warning-bg:#FEFCE8;--error:#DC2626;--error-bg:#FEF2F2;--info:#2563EB;--info-bg:#EFF6FF;
+--fd:'Urbanist',sans-serif;--fb:'Inter',sans-serif;--fs:'Instrument Serif',Georgia,serif;--fm:'IBM Plex Mono',monospace;
+--sh-xs:0 1px 2px rgba(16,24,40,.05);--sh-md:0 4px 8px -2px rgba(16,24,40,.10),0 2px 4px -2px rgba(16,24,40,.06)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--fb);color:var(--black);background:var(--grey);line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:28px auto;background:var(--white);box-shadow:var(--sh-md);border-radius:10px;overflow:hidden;border:1px solid var(--ink-200)}
+.aires-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding:26px 48px;background:var(--black);color:#fff;border-bottom:3px solid var(--volt)}
+.brand{display:flex;align-items:center;gap:11px;padding-top:4px}.brand svg{width:24px;height:24px;display:block}.brand .wm{font-family:var(--fd);font-weight:700;font-size:17px;letter-spacing:.02em}
+.hd-meta{flex:1}.hd-meta h1{font-family:var(--fd);font-weight:600;font-size:30px;line-height:1.08}
+.hd-meta .sub{font-family:var(--fm);font-size:10.5px;color:var(--mgrey);margin-top:7px;letter-spacing:.03em}
+.btn{font-family:var(--fb);font-size:12px;font-weight:600;color:var(--black);background:var(--white);border:none;padding:9px 14px;border-radius:6px;cursor:pointer;white-space:nowrap}.btn:hover{opacity:.88}
+main{padding:14px 48px 22px}
+.callout{border-radius:6px;padding:15px 18px 15px 20px;margin:22px 0;font-size:14.5px;line-height:1.5;background:var(--grey);border:1px solid var(--ink-200);border-left:3px solid var(--volt)}
+.callout .lab{font-family:var(--fm);font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-500);display:block;margin-bottom:6px}
+.callout.note{border-left-color:var(--volt)}
+.callout.ok{border-left-color:var(--success);background:var(--success-bg);border-color:#A7F3D0}
+.callout.ask{border-left-color:var(--orange);background:#FEF6F1;border-color:#FBD9C4}
+section{padding:26px 0;border-bottom:1px solid var(--ink-200)}section:last-child{border-bottom:none}
+.num{font-family:var(--fm);font-size:11px;color:var(--orange);font-weight:600;letter-spacing:.04em}
+h2{font-family:var(--fd);font-weight:600;font-size:26px;line-height:1.12;margin:4px 0 12px}
+h3{font-size:13px;font-weight:700;margin:18px 0 6px;font-family:var(--fd)}
+p{font-size:15px;color:var(--ink-700);margin-bottom:12px}p strong{color:var(--black);font-weight:600}
+ul{margin:0 0 12px 0;padding-left:18px}ul li{font-size:14.5px;color:var(--ink-700);margin-bottom:5px}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px}
+th{background:var(--black);color:#fff;text-align:left;padding:10px 12px;font-weight:600;font-size:12.5px;font-family:var(--fd)}
+th:first-child{border-radius:6px 0 0 0}th:last-child{border-radius:0 6px 0 0}
+td{padding:9px 12px;border-bottom:1px solid var(--ink-200);color:var(--ink-700);vertical-align:top}
+tr:nth-child(even) td{background:var(--grey)}
+.pill{display:inline-block;font-family:var(--fm);font-size:9.5px;font-weight:600;padding:3px 9px;border-radius:9999px;letter-spacing:.03em;border:1px solid}
+.must{background:var(--error-bg);color:var(--error);border-color:#FCA5A5}
+.should{background:var(--warning-bg);color:var(--warning);border-color:#FDE68A}
+.could{background:var(--info-bg);color:var(--info);border-color:#BFDBFE}
+.wont{background:var(--ink-100);color:var(--ink-500);border-color:var(--ink-300)}
+.scopegrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:14px 0}
+.scopecard{border:1px solid var(--ink-200);border-radius:8px;overflow:hidden;box-shadow:var(--sh-xs)}
+.scopecard .h{padding:10px 14px;font-family:var(--fd);font-weight:600;font-size:13px;color:#fff}
+.scopecard.in .h{background:var(--success)}.scopecard.out .h{background:var(--mgrey)}.scopecard.non .h{background:var(--error)}
+.scopecard .b{padding:12px 14px}.scopecard li{font-size:13px;margin-bottom:6px}
+.gwt{background:var(--grey);border-left:3px solid var(--volt);border-radius:0 6px 6px 0;padding:14px 18px;margin:10px 0;font-size:14px}
+.gwt code{font-family:var(--fm);font-size:12px;color:var(--white);background:var(--black);padding:1px 6px;border-radius:4px;font-weight:500}
+.gwt .given{font-family:var(--fd);color:var(--black);font-weight:600}
+.check{padding-left:0}.check li{list-style:none;position:relative;padding-left:26px}
+.check li:before{content:"";position:absolute;left:0;top:3px;width:14px;height:14px;border:1.5px solid var(--mgrey);border-radius:3px}
+.aires-footer{display:flex;justify-content:space-between;padding:18px 48px;background:var(--grey);border-top:1px solid var(--ink-200);font-size:10.5px;color:var(--ink-500);font-family:var(--fm);letter-spacing:.03em}
+@media print{body{background:#fff}.wrap{box-shadow:none;margin:0;max-width:100%;border-radius:0;border:none}.btn{display:none}section{page-break-inside:avoid}}
+@media(max-width:720px){main,.aires-header,.aires-footer{padding-left:24px;padding-right:24px}.scopegrid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap" id="doc">
+  <header class="aires-header">
+    <div class="brand"><svg viewBox="0 0 32 32"><path d="M16 1.5 30.5 16 16 30.5 1.5 16Z" fill="#fff"/><path d="M16 6.5l1.9 6.1 6.1 1.9-6.1 1.9L16 22.5l-1.9-6.1L8 14.5l6.1-1.9Z" fill="#2D2C2D"/></svg><span class="wm">Aires</span></div>
+    <div class="hd-meta"><h1>Rep velocity — scoped requirements</h1><p class="sub">Requirements &amp; scope · June 2026 · Companion to the rep velocity thesis · Confidential</p></div>
+    <button class="btn" onclick="exportPDF()">Export PDF</button>
+  </header>
+  <main>
+    <div class="callout note"><span class="lab">How to read this</span>This runs the <strong>rep velocity thesis</strong> through our <strong>Requirements gathering &amp; defining scope</strong> process — turning the narrative into scoped, vertically-sliced, INVEST tickets a team can pull. Problem before solution; scope defined by what we exclude.</div>
+
+    <section>
+      <span class="num">01</span><h2>Problem &amp; goal — the why</h2>
+      <p><strong>Problem.</strong> A rep faces thousands of leads per project — above human scale — with no trustworthy answer to "what should I do today" or "how do I know I'm done." Because results lag by weeks, their effort is invisible and uncoachable in the moment, and data entry costs time while giving nothing back.</p>
+      <p><strong>Goal.</strong> Make the haystack permanently workable and the day self-directing: a ranked list waiting each morning, a same-day rebate on every input, and every action captured as reportable velocity.</p>
+      <h3>Success metrics</h3>
+      <ul>
+        <li>Lower time-to-first-meaningful-action after login (rep isn't hunting).</li>
+        <li>Higher daily and weekly activity velocity per rep, and team coverage of the right leads.</li>
+        <li>Lower median response time to hot and aging leads.</li>
+        <li>Higher share of meaningful actions captured as attributable, reportable events.</li>
+      </ul>
+      <div class="callout ask"><span class="lab">5 whys check</span>"Build better filters" → why? → reps can't find what to work → why does that matter? → results lag, so they need to <em>prove velocity now</em> → the real ask isn't filters, it's a <strong>self-directing, reportable day.</strong></div>
+    </section>
+
+    <section>
+      <span class="num">02</span><h2>Users &amp; stakeholders</h2>
+      <table>
+        <tr><th>Who</th><th>Role in this work</th></tr>
+        <tr><td><strong>Sales rep</strong></td><td>Primary user. Wants highest impact in least time; works the ranked list, logs activity, watches their velocity.</td></tr>
+        <tr><td><strong>Sales manager</strong></td><td>Drives team output; manages by the leading edge. Strong candidate for feature sign-off (accepts "done").</td></tr>
+        <tr><td><strong>Clients (PATH / Peterson / Creo)</strong></td><td>Shape the per-tenant defaults — many-projects, hot-lead speed, exclusion-first.</td></tr>
+        <tr><td><strong>QA (Malinka)</strong></td><td>Validates acceptance criteria; owns the test pass on each slice.</td></tr>
+        <tr><td><strong>Downstream</strong></td><td>Cooper (consumes and feeds the same data), reporting / analytics nodes, support.</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <span class="num">03</span><h2>Current state → desired state</h2>
+      <h3>Today (the real workflow)</h3>
+      <ul>
+        <li>Rep opens a generic contact table that shows everything and ranks nothing.</li>
+        <li>They rebuild the same mental or manual filter every morning; prioritize by gut and memory.</li>
+        <li>They act, then maybe log it — entry feels like a tax that only feeds a manager's report.</li>
+      </ul>
+      <h3>Desired</h3>
+      <ul>
+        <li>Dashboard opens to velocity + a ranked "today" list — direction, pre-built.</li>
+        <li>Contact table offers search → filter → <strong>saved filters</strong> → <strong>Smart Lists</strong>; the haystack is narrowed for them.</li>
+        <li><strong>Pull mode:</strong> when the rep arrives with an intent (a promo, an event, a teammate away), they compose a filter across eight dimensions, save the segment, and run outreach in place — every touch logged.</li>
+        <li>Contact profile makes responding fast and logging near-frictionless; every action becomes a reportable event that moves a visible number the same day.</li>
+      </ul>
+    </section>
+
+    <section>
+      <span class="num">04</span><h2>Scope — in / out / non-goals</h2>
+      <div class="scopegrid">
+        <div class="scopecard in"><div class="h">In scope</div><div class="b"><ul>
+          <li>Search + filter on the contact table</li>
+          <li>Eight composable filter dimensions (attribute, recency, contact gap, event, source, owner, grade, engagement)</li>
+          <li>Saved filters &amp; Smart Lists (per rep / tenant)</li>
+          <li>Rules-based Smart "today" list</li>
+          <li>Bulk / sequenced outreach from a list + consent gate</li>
+          <li>Reportable activity event model + dashboard velocity</li>
+          <li>Per-tenant exclusion defaults</li>
+        </ul></div></div>
+        <div class="scopecard out"><div class="h">Out of scope (now)</div><div class="b"><ul>
+          <li>ML-based lead scoring (start rules-based)</li>
+          <li>Full marketing journey / automation builder</li>
+          <li>New channels beyond current stack</li>
+          <li>Expanded two-way external sync</li>
+          <li>Configurable list-rules UI (hard-code v1 rules)</li>
+        </ul></div></div>
+        <div class="scopecard non"><div class="h">Non-goals</div><div class="b"><ul>
+          <li>Not a BI / analytics replacement</li>
+          <li>Not replacing or re-scoping Cooper</li>
+          <li>Not a full manager analytics suite (velocity roll-up only)</li>
+          <li>Not cross-tenant data sharing</li>
+        </ul></div></div>
+      </div>
+      <div class="callout note" style="margin-top:16px"><span class="lab">Companion</span>The <strong>pull</strong> half — intent-driven list-building &amp; outreach — has its own detailed scope in <em>"Intent-driven lists &amp; outreach — scoped requirements."</em> This doc carries the umbrella; that one carries the full filter-dimension and outreach decomposition.</div>
+    </section>
+
+    <section>
+      <span class="num">05</span><h2>Data, edge cases &amp; constraints</h2>
+      <h3>Data</h3>
+      <ul>
+        <li><strong>Source of truth:</strong> contacts and leads in MongoDB; signals (recency, intent, source) per contact.</li>
+        <li><strong>For the filter dimensions:</strong> lead grade, owner, lead source / attribution, event-attendance &amp; presentation-center records, and campaign engagement (opens / clicks via SendGrid).</li>
+        <li><strong>New shape needed:</strong> an attributable <strong>activity event</strong> model (who, what, when, which contact, which rep) — the spine of "reportable."</li>
+        <li><strong>Per-tenant config:</strong> exclusion rules, list definitions, project scoping.</li>
+        <li><strong>Scale:</strong> thousands of leads per project today; design headroom for 10× in 12 months.</li>
+      </ul>
+      <h3>Edge cases &amp; failure modes</h3>
+      <ul>
+        <li>Empty list (new project) and huge list (perf / pagination) both render usefully.</li>
+        <li>Duplicate or merged contacts don't double-count velocity.</li>
+        <li>Excluded contacts must never reappear in a working list.</li>
+        <li>Concurrent edits and activity writes are idempotent — no double attribution.</li>
+        <li><strong>Pull mode:</strong> double-contact suppression across overlapping lists; act-on-behalf attribution + clean hand-back; promo-window lists that go stale.</li>
+      </ul>
+      <h3>Constraints &amp; non-functionals</h3>
+      <ul>
+        <li><strong>Multi-tenant isolation</strong> with per-tenant defaults (PATH / Peterson / Creo).</li>
+        <li>Performance: list builds and ranking stay responsive at thousands of leads.</li>
+        <li>Runs on the existing stack — Railway / Cloudflare / Vercel, MongoDB; <strong>no AWS</strong>.</li>
+        <li><strong>Compliance:</strong> bulk outreach respects consent / opt-out (CASL) and SMS A2P 10DLC limits — a filter dimension and a hard send-time gate.</li>
+      </ul>
+    </section>
+
+    <section>
+      <span class="num">06</span><h2>Prioritization — MoSCoW</h2>
+      <table>
+        <tr><th>Requirement</th><th>Priority</th></tr>
+        <tr><td>Search + filter on contact table (baseline narrowing)</td><td><span class="pill must">Must</span></td></tr>
+        <tr><td>Saved filters (persist a working view)</td><td><span class="pill must">Must</span></td></tr>
+        <tr><td>Composable filter dimensions (attribute, recency, owner, grade, source)</td><td><span class="pill must">Must</span></td></tr>
+        <tr><td>Bulk outreach from a list + consent / opt-out gate</td><td><span class="pill must">Must</span></td></tr>
+        <tr><td>Reportable activity event model + low-friction capture</td><td><span class="pill must">Must</span></td></tr>
+        <tr><td>Rules-based Smart "today" list</td><td><span class="pill must">Must</span></td></tr>
+        <tr><td>Dashboard velocity widget (rep view)</td><td><span class="pill must">Must</span></td></tr>
+        <tr><td>Per-tenant exclusion logic (Creo default)</td><td><span class="pill should">Should</span></td></tr>
+        <tr><td>Per-project scoping + portfolio roll-up (PATH)</td><td><span class="pill should">Should</span></td></tr>
+        <tr><td>"Hot &amp; aging" surfacing + follow-up nudge (Peterson)</td><td><span class="pill should">Should</span></td></tr>
+        <tr><td>Engagement &amp; event/behavior filters (opened promo; attended event; pres-center)</td><td><span class="pill should">Should</span></td></tr>
+        <tr><td>Contact-gap filter + double-contact suppression</td><td><span class="pill should">Should</span></td></tr>
+        <tr><td>Act-on-behalf (work a teammate's book, attributed)</td><td><span class="pill should">Should</span></td></tr>
+        <tr><td>Manager velocity roll-up view</td><td><span class="pill could">Could</span></td></tr>
+        <tr><td>Suggested next step / Cooper draft in profile</td><td><span class="pill could">Could</span></td></tr>
+        <tr><td>ML lead scoring; configurable list-rules UI</td><td><span class="pill wont">Won't (this time)</span></td></tr>
+      </table>
+    </section>
+
+    <section>
+      <span class="num">07</span><h2>Decomposition — vertical slices (INVEST)</h2>
+      <p>The epic — <strong>"make the haystack workable and the day self-directing"</strong> — sliced into thin, independently-valuable, testable tickets. Each is roughly 1–2 days and ships usable value end-to-end.</p>
+      <table>
+        <tr><th>Ticket</th><th>Slice / pattern</th></tr>
+        <tr><td>Spike: design the reportable activity-event model &amp; attribution</td><td>De-risk the unknown first</td></tr>
+        <tr><td>Search + filter the contact table (one tenant, happy path)</td><td>Workflow step · core narrowing</td></tr>
+        <tr><td>Save &amp; reload a filter as a named view</td><td>Workflow step · "remember"</td></tr>
+        <tr><td>Composable multi-dimension filter UI (AND / OR) + engagement &amp; event dimensions</td><td>Pull · the filter engine</td></tr>
+        <tr><td>Bulk outreach from a list → reportable events, with consent gate</td><td>Pull · the payoff + compliance</td></tr>
+        <tr><td>Act-on-behalf attribution + double-contact suppression</td><td>Pull · business-rule variations</td></tr>
+        <tr><td>Exclusion logic inside saved filters (Creo default)</td><td>Business-rule variation</td></tr>
+        <tr><td>Rules-based Smart "today" list (recency + intent rank)</td><td>Core value · the answer to "what do I do today"</td></tr>
+        <tr><td>Capture activity on the profile → write a reportable event</td><td>Workflow step · the rebate spine</td></tr>
+        <tr><td>Dashboard velocity widget reads the event stream</td><td>Workflow step · close the loop</td></tr>
+        <tr><td>Per-project scoping + portfolio roll-up (PATH)</td><td>Data / input variation</td></tr>
+        <tr><td>"Hot &amp; aging" list + follow-up nudge (Peterson)</td><td>Business-rule variation</td></tr>
+        <tr><td>Manager velocity roll-up view</td><td>Separate persona slice</td></tr>
+        <tr><td>Harden list build + ranking for 10× scale</td><td>Deferred non-functional</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <span class="num">08</span><h2>Sample acceptance criteria</h2>
+      <p>Expressed given / when / then, so each doubles as a test case (per the definition of done doc).</p>
+      <div class="gwt"><span class="given">Smart "today" list</span><br><code>Given</code> a project with 3,000 leads and rules for recency + intent, <code>When</code> a rep opens the dashboard, <code>Then</code> they see a ranked "today" list of ≤ N items, highest-priority first, built in under [target] ms.</div>
+      <div class="gwt"><span class="given">Exclusion logic (Creo)</span><br><code>Given</code> a tenant configured to exclude investors and past buyers, <code>When</code> any working list is built, <code>Then</code> no excluded contact appears — verified across saved filters and Smart Lists.</div>
+      <div class="gwt"><span class="given">Reportable activity</span><br><code>Given</code> a rep logs a call on a contact profile, <code>When</code> the event is written, <code>Then</code> it is attributed to that rep and contact exactly once, and their dashboard velocity reflects it the same session.</div>
+      <div class="gwt"><span class="given">Pull — intent to outreach</span><br><code>Given</code> a rep composes "opened the two-bedroom promo" + grade ∈ {A, B} and saves it, <code>When</code> they launch bulk outreach, <code>Then</code> opted-out and recently-contacted contacts are suppressed, the rest are messaged, and every touch is logged and attributed.</div>
+    </section>
+
+    <section>
+      <span class="num">09</span><h2>Definition of ready</h2>
+      <div class="callout ok"><span class="lab">Gate</span>Before any ticket above is pulled into work, it must clear this checklist.</div>
+      <ul class="check">
+        <li>Problem, goal, and the success metric it moves are written down</li>
+        <li>Affected users and the sign-off person are named</li>
+        <li>In / out / non-goals are explicit for that slice</li>
+        <li>Edge cases, failure modes, data shape &amp; scale understood</li>
+        <li>Constraints captured (tenant isolation, perf, stack)</li>
+        <li>Acceptance criteria written, testable, agreed with QA</li>
+        <li>The slice is vertical, INVEST, and roughly 1–2 days</li>
+      </ul>
+    </section>
+  </main>
+  <footer class="aires-footer"><span>© Aires Technology Inc.</span><span>Scoped requirements · rep velocity · v0.3</span><span>Confidential</span></footer>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>function exportPDF(){const el=document.getElementById('doc'),b=document.querySelector('.btn');b.style.display='none';html2pdf().set({margin:[.3,.35],filename:'aires-scoped-requirements-rep-velocity.pdf',image:{type:'jpeg',quality:.98},html2canvas:{scale:2,useCORS:true},jsPDF:{unit:'in',format:'letter',orientation:'portrait'}}).from(el).save().then(()=>{b.style.display=''})}</script>
+</body>
+</html>
