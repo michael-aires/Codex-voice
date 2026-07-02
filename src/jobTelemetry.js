@@ -61,6 +61,12 @@ export function jobApiLine(job = {}, now = Date.now()) {
   return `API: ${String(job.apiStatus).replace(/_/g, " ")}.`;
 }
 
+export function jobOpenArtifactId(job = {}) {
+  if (job.status !== "completed") return "";
+  if (typeof job.artifactId !== "string") return "";
+  return job.artifactId.trim();
+}
+
 export function collectJobLogs(jobs = []) {
   return jobs
     .flatMap((job) =>

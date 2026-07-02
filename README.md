@@ -84,6 +84,12 @@ npm test
 
 The test suite currently locks Cooper's wake phrase behavior so direct invitations wake him and casual mentions do not.
 
+## Planning Docs
+
+- [Technical overview](docs/01-technical-overview.md)
+- [Visual collaboration canvas plan](docs/canvas-collaboration-plan.md)
+- [Operator agent factory plan](docs/06-operator-agent-factory-plan.md)
+
 ## What Is Included
 
 - Splash entry and mobile-first Cooper workspace.

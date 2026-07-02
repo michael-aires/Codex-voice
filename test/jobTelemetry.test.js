@@ -4,6 +4,7 @@ import {
   collectJobLogs,
   formatDurationMs,
   jobApiLine,
+  jobOpenArtifactId,
   jobStatusLine,
   progressPercent
 } from "../src/jobTelemetry.js";
@@ -63,6 +64,13 @@ test("jobApiLine describes waiting and response-received states", () => {
     }, now),
     "API: response received in 2s, 4,200 chars."
   );
+});
+
+test("jobOpenArtifactId only opens completed jobs with saved artifacts", () => {
+  assert.equal(jobOpenArtifactId({ status: "completed", artifactId: " artifact-1 " }), "artifact-1");
+  assert.equal(jobOpenArtifactId({ status: "running", artifactId: "artifact-1" }), "");
+  assert.equal(jobOpenArtifactId({ status: "failed", artifactId: "artifact-1" }), "");
+  assert.equal(jobOpenArtifactId({ status: "completed" }), "");
 });
 
 test("collectJobLogs flattens logs newest-first with job titles", () => {
