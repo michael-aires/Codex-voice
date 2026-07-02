@@ -1175,8 +1175,13 @@ Ended: ${call.endedAt || "unknown"}
 Artifact type: ${recipe.title || job.kind}
 Output type: ${recipe.outputType || "markdown"}
 
-Attached project context:
-${call.projectContextSnapshot || "(none attached)"}
+Source priority:
+- If Michael provided an additional instruction or pasted source context, treat it as the primary source of truth for this artifact.
+- Use the transcript and any attached project context only as supporting context.
+- If the sources conflict, follow Michael's additional instruction or pasted source context.
+
+Primary instruction/source context from Michael:
+${job.customPrompt || "(none)"}
 
 Current draft:
 ${job.draft || "(none yet)"}
@@ -1184,8 +1189,8 @@ ${job.draft || "(none yet)"}
 Current step:
 ${step}
 
-Additional instruction from Michael:
-${job.customPrompt || "(none)"}
+Attached project context (supporting only):
+${call.projectContextSnapshot || "(none attached)"}
 
 Transcript:
 ${transcript}

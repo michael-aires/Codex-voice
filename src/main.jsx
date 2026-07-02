@@ -6,9 +6,12 @@ import { cooperInstructions } from "../cooperPrompt.js";
 import { cooperToolDefinitions } from "../cooperTools.js";
 import { createAudioResponseEvent } from "./realtimeEvents.js";
 import { isCooperWakePhrase } from "./wakeWords.js";
+import { buildCanvasCustomPrompt } from "./canvasPrompt.js";
+import { resolveSelectedProject } from "./projectSelection.js";
 import {
   collectJobLogs,
   jobApiLine,
+  jobOpenArtifactId,
   jobStatusLine,
   progressPercent
 } from "./jobTelemetry.js";
@@ -153,6 +156,21 @@ function App() {
   const lastResponseEventRef = React.useRef(null);
   const knownCompletedJobsRef = React.useRef(new Set());
   const didLoadStateRef = React.useRef(false);
+  const selectedCallIdRef = React.useRef(null);
+  const selectedProjectIdRef = React.useRef(null);
+  const selectedArtifactIdRef = React.useRef(null);
+
+  React.useEffect(() => {
+    selectedCallIdRef.current = selectedCallId;
+  }, [selectedCallId]);
+
+  React.useEffect(() => {
+    selectedProjectIdRef.current = selectedProjectId;
+  }, [selectedProjectId]);
+
+  React.useEffect(() => {
+    selectedArtifactIdRef.current = selectedArtifactId;
+  }, [selectedArtifactId]);
 
   React.useEffect(() => {
     let active = true;
@@ -224,14 +242,12 @@ function App() {
       const next = await response.json();
       setState(next);
       handleWorkNotifications(next);
-      if (!selectedCallId && next.calls.length) {
+      if (!selectedCallIdRef.current && next.calls.length) {
+        selectedCallIdRef.current = next.calls[0].id;
         setSelectedCallId(next.calls[0].id);
       }
-      if (!selectedProjectId && next.projects?.length) {
-        setSelectedProjectId(next.projects[0].id);
-      }
-      if (!selectedArtifactId && next.artifacts.length) {
-        setSelectedArtifactId(next.artifacts[0].id);
+      if (!selectedArtifactIdRef.current && next.artifacts.length) {
+        selectArtifact(next.artifacts[0].id);
       }
     } catch {
       addEvent("Sync", "State refresh failed.");
@@ -274,7 +290,9 @@ function App() {
     setState({ calls: [], projects: [], artifacts: [], jobs: [], recipes: [], limits: {}, arcade: emptyArcadeState(), mcpApps: { servers: [] } });
     setSelectedCallId(null);
     setSelectedProjectId(null);
-    setSelectedArtifactId(null);
+    selectArtifact(null);
+    selectedCallIdRef.current = null;
+    selectedProjectIdRef.current = null;
     setArtifactContent("");
     setEvents([]);
     setTranscripts([]);
@@ -285,6 +303,31 @@ function App() {
   function enterApp() {
     localStorage.setItem("cooper.entered", "true");
     setEntered(true);
+  }
+
+  function selectArtifact(id) {
+    selectedArtifactIdRef.current = id;
+    setSelectedArtifactId(id);
+  }
+
+  function selectCall(id) {
+    selectedCallIdRef.current = id;
+    setSelectedCallId(id);
+  }
+
+  function selectProject(id) {
+    selectedProjectIdRef.current = id;
+    setSelectedProjectId(id);
+  }
+
+  function openCall(id) {
+    selectCall(id);
+    setView("library");
+  }
+
+  function openArtifact(id) {
+    selectArtifact(id);
+    setView("artifacts");
   }
 
   function addEvent(label, detail) {
@@ -404,7 +447,7 @@ function App() {
         };
       }
       if (payload.output?.artifactId) {
-        setSelectedArtifactId(payload.output.artifactId);
+        selectArtifact(payload.output.artifactId);
         await refreshState();
       }
       return payload.output;
@@ -865,14 +908,12 @@ function App() {
       return;
     }
 
-    const promptText = request.trim() || defaultCanvasPrompt(kind);
-    const contextText = activeProjectContextRef.current
-      ? `Use the active project context already loaded into this Cooper session.\n\n${activeProjectContextRef.current}`
-      : "";
-    const transcriptText = transcriptsRef.current.length
-      ? `Recent live transcript:\n${transcriptsRef.current.slice(-8).map((entry) => `- ${entry.speaker}: ${entry.text}`).join("\n")}`
-      : "";
-    const customPrompt = [promptText, contextText, transcriptText].filter(Boolean).join("\n\n");
+    const customPrompt = buildCanvasCustomPrompt({
+      request,
+      projectContext: activeProjectContextRef.current,
+      transcriptEntries: transcriptsRef.current,
+      fallbackPrompt: defaultCanvasPrompt(kind)
+    });
 
     await generateArtifact(call.id, kind, customPrompt, { stay: true });
   }
@@ -902,7 +943,7 @@ function App() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "Could not present AIRES example.");
-      if (payload.output?.artifactId) setSelectedArtifactId(payload.output.artifactId);
+      if (payload.output?.artifactId) selectArtifact(payload.output.artifactId);
       await refreshState();
       addEvent("Canvas", payload.output?.message || "AIRES example is on the canvas.");
     } catch (error) {
@@ -924,7 +965,7 @@ function App() {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Could not create a live context project.");
-    setSelectedProjectId(payload.project.id);
+    selectProject(payload.project.id);
     return payload.project.id;
   }
 
@@ -1009,7 +1050,7 @@ function App() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "Could not create project.");
-      setSelectedProjectId(payload.project.id);
+      selectProject(payload.project.id);
       addEvent("Project", `${payload.project.title} created.`);
       await refreshState();
     } catch (error) {
@@ -1111,7 +1152,7 @@ function App() {
   }
 
   const selectedCall = state.calls.find((call) => call.id === selectedCallId) || state.calls[0] || null;
-  const selectedProject = state.projects.find((project) => project.id === selectedProjectId) || state.projects[0] || null;
+  const selectedProject = resolveSelectedProject(state.projects, selectedProjectId);
   const selectedArtifact = state.artifacts.find((artifact) => artifact.id === selectedArtifactId) || state.artifacts[0] || null;
   const latestCall = state.calls.find((call) => call.status === "ended") || state.calls[0] || null;
   const activeJobs = state.jobs.filter((job) => ["queued", "running"].includes(job.status));
@@ -1150,7 +1191,7 @@ function App() {
         onConnect={connect}
         onEndCall={() => endCall()}
         onCallCooper={() => requestCooper("", "manual_ask")}
-        onSelectArtifact={setSelectedArtifactId}
+        onSelectArtifact={selectArtifact}
         onGenerateCanvas={generateLiveCanvasArtifact}
         onPresentExample={presentAiresExample}
         onAddContext={addLiveContext}
@@ -1169,23 +1210,23 @@ function App() {
           <span>Cooper</span>
         </button>
         <nav className="nav">
-          <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}>
+          <button className={view === "home" ? "active" : ""} onClick={() => setView("home")} aria-label="Home">
             <Sparkles size={18} />
             <span>Home</span>
           </button>
-          <button className={view === "projects" ? "active" : ""} onClick={() => setView("projects")}>
+          <button className={view === "projects" ? "active" : ""} onClick={() => setView("projects")} aria-label="Projects">
             <FolderKanban size={18} />
             <span>Projects</span>
           </button>
-          <button className={view === "library" ? "active" : ""} onClick={() => setView("library")}>
+          <button className={view === "library" ? "active" : ""} onClick={() => setView("library")} aria-label="Calls">
             <Library size={18} />
             <span>Calls</span>
           </button>
-          <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
+          <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")} aria-label="Work">
             <Files size={18} />
             <span>Work</span>
           </button>
-          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
+          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")} aria-label="Settings">
             <Settings size={18} />
             <span>Settings</span>
           </button>
@@ -1210,6 +1251,8 @@ function App() {
           onOpenProjects={() => setView("projects")}
           onOpenCalls={() => setView("library")}
           onOpenWork={() => setView("artifacts")}
+          onOpenCall={openCall}
+          onOpenArtifact={openArtifact}
           onGenerate={generateArtifact}
           onEnableNotifications={enableNotifications}
           onRetryJob={retryJob}
@@ -1220,7 +1263,7 @@ function App() {
         <ProjectsView
           projects={state.projects}
           selectedProject={selectedProject}
-          onSelectProject={setSelectedProjectId}
+          onSelectProject={selectProject}
           onCreateProject={createProject}
           onAddText={addProjectText}
           onUploadFile={uploadProjectFile}
@@ -1234,7 +1277,8 @@ function App() {
           artifacts={state.artifacts}
           jobs={state.jobs}
           selectedCall={selectedCall}
-          onSelectCall={setSelectedCallId}
+          onSelectCall={selectCall}
+          onOpenArtifact={openArtifact}
           onGenerate={generateArtifact}
           onRetryJob={retryJob}
         />
@@ -1247,7 +1291,7 @@ function App() {
           calls={state.calls}
           selectedArtifact={selectedArtifact}
           artifactContent={artifactContent}
-          onSelectArtifact={setSelectedArtifactId}
+          onSelectArtifact={selectArtifact}
           onGenerate={generateArtifact}
           onRefresh={refreshState}
           onRetryJob={retryJob}
@@ -1422,6 +1466,8 @@ function HomeView({
   onOpenProjects,
   onOpenCalls,
   onOpenWork,
+  onOpenCall,
+  onOpenArtifact,
   onGenerate,
   onEnableNotifications,
   onRetryJob
@@ -1489,7 +1535,7 @@ function HomeView({
         </div>
         <div className="compact-list">
           {calls.slice(0, 4).map((call) => (
-            <CallRow key={call.id} call={call} />
+            <CallRow key={call.id} call={call} onOpen={onOpenCall} />
           ))}
           {!calls.length && <p className="muted">Call transcripts will appear here.</p>}
         </div>
@@ -1505,7 +1551,7 @@ function HomeView({
         <p className="engine-line">
           {limits.workModel || "model"} - {limits.jobMaxOutputTokens || 0} tokens - {Math.round((limits.jobDelayMs || 0) / 1000)}s cadence
         </p>
-        <JobList jobs={jobs.slice(0, 5)} onRetry={onRetryJob} />
+        <JobList jobs={jobs.slice(0, 5)} onRetry={onRetryJob} onOpenArtifact={onOpenArtifact} />
         <ActivityStream jobs={jobs} />
       </section>
     </section>
@@ -1680,6 +1726,17 @@ function CallCanvas({
     const visibleArtifact = selectedArtifact?.callId === callId ? selectedArtifact : callArtifacts[0] || null;
     const visibleContent = visibleArtifact?.id === selectedArtifact?.id ? artifactContent : "";
     const selectedExample = examples.find((example) => example.id === selectedExampleId) || examples[0] || null;
+    const hasTypedBuildContext = Boolean(canvasPrompt.trim());
+    const sourceTitle = hasTypedBuildContext
+      ? "Typed context is primary"
+      : project?.title
+        ? `Fallback: ${project.title}`
+        : "Fallback: live transcript only";
+    const sourceDetail = hasTypedBuildContext
+      ? "Cooper will build from this text first. Selected project context and transcript are only supporting material."
+      : project?.title
+        ? "Leave the prompt blank to use this selected project plus the current call transcript."
+        : "Paste context, add live context, or select a project if this artifact needs more than the conversation.";
 
   React.useEffect(() => {
     if (visibleArtifact?.id && selectedArtifact?.id !== visibleArtifact.id) {
@@ -1904,7 +1961,7 @@ function CallCanvas({
             <textarea
               value={canvasPrompt}
               onChange={(event) => setCanvasPrompt(event.target.value)}
-              placeholder="Describe the artifact, or leave blank and Cooper will use the live transcript and loaded project context."
+              placeholder="Paste the exact context or ask for the artifact. Typed text is primary. Leave blank to use the live transcript and any explicitly selected project."
               rows={5}
             />
             <button type="submit" disabled={!callId}>
@@ -1912,6 +1969,11 @@ function CallCanvas({
               <span>Generate</span>
             </button>
           </form>
+
+          <div className="context-mode-card source-card">
+            <strong>{sourceTitle}</strong>
+            <span>{sourceDetail}</span>
+          </div>
 
           <div className="flow-grid">
             {examples.map((example) => (
@@ -2201,24 +2263,31 @@ function ProjectsView({ projects, selectedProject, onSelectProject, onCreateProj
   );
 }
 
-function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onGenerate, onRetryJob }) {
+function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onOpenArtifact, onGenerate, onRetryJob }) {
   const callArtifacts = artifacts.filter((artifact) => artifact.callId === selectedCall?.id);
   const callJobs = jobs.filter((job) => job.callId === selectedCall?.id);
+  const selectedTranscriptCount = selectedCall?.transcript?.length || 0;
 
   return (
-    <section className="split-view">
+    <section className="split-view calls-view">
       <aside className="list-rail">
-        <h1>Calls</h1>
+        <div className="rail-head">
+          <div>
+            <p className="eyebrow">Call library</p>
+            <h1>Calls</h1>
+          </div>
+          <span className="rail-count">{calls.length}</span>
+        </div>
         <div className="rail-list">
           {calls.map((call) => (
-            <button
+            <CallLibraryRow
               key={call.id}
-              className={selectedCall?.id === call.id ? "rail-item active" : "rail-item"}
-              onClick={() => onSelectCall(call.id)}
-            >
-              <span>{call.title}</span>
-              <small>{formatDate(call.startedAt)}</small>
-            </button>
+              call={call}
+              artifactCount={artifacts.filter((artifact) => artifact.callId === call.id).length}
+              jobCount={jobs.filter((job) => job.callId === call.id).length}
+              active={selectedCall?.id === call.id}
+              onSelect={onSelectCall}
+            />
           ))}
           {!calls.length && <p className="muted">No saved calls.</p>}
         </div>
@@ -2233,7 +2302,15 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onGen
                 <h1>{selectedCall.title}</h1>
                 {selectedCall.projectTitle && <p className="project-link-line">{selectedCall.projectTitle}</p>}
               </div>
-              <span className="time-pill">{formatDuration(selectedCall.durationSeconds)}</span>
+              <div className="detail-actions">
+                <span className="time-pill">{formatDuration(selectedCall.durationSeconds)}</span>
+              </div>
+            </div>
+
+            <div className="call-kpi-strip">
+              <Metric label="Turns" value={selectedTranscriptCount} />
+              <Metric label="Artifacts" value={callArtifacts.length} />
+              <Metric label="Work items" value={callJobs.length} />
             </div>
 
             <div className="suggestion-grid horizontal">
@@ -2252,7 +2329,10 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onGen
 
             <div className="two-column">
               <section className="panel">
-                <h2>Transcript</h2>
+                <div className="panel-head tight">
+                  <h2>Transcript</h2>
+                  <span className="section-count">{selectedTranscriptCount}</span>
+                </div>
                 <div className="transcript-list">
                   {(selectedCall.transcript || []).map((entry) => (
                     <article className={`transcript-row ${speakerClass(entry.speaker)}`} key={entry.id}>
@@ -2268,8 +2348,11 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onGen
               </section>
 
               <section className="panel">
-                <h2>Artifacts</h2>
-                <ArtifactMiniList artifacts={callArtifacts} jobs={callJobs} onRetry={onRetryJob} />
+                <div className="panel-head tight">
+                  <h2>Artifacts</h2>
+                  <span className="section-count">{callArtifacts.length + callJobs.length}</span>
+                </div>
+                <ArtifactMiniList artifacts={callArtifacts} jobs={callJobs} onRetry={onRetryJob} onOpenArtifact={onOpenArtifact} />
               </section>
             </div>
           </>
@@ -2310,7 +2393,12 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
             <RefreshCw size={18} />
           </button>
         </div>
-        <JobList jobs={jobs} onRetry={onRetryJob} />
+        <JobList
+          jobs={jobs}
+          onRetry={onRetryJob}
+          onOpenArtifact={onSelectArtifact}
+          selectedArtifactId={selectedArtifact?.id}
+        />
         <ActivityStream jobs={jobs} compact />
         {latestCall && (
           <section className="work-launcher">
@@ -2612,8 +2700,12 @@ function McpAppDocument({ mode, onModeChange, content, title }) {
 
 function HtmlPrototypeDocument({ artifactKind, mode, onModeChange, html, title }) {
   const [copied, setCopied] = React.useState(false);
-  const isDocumentArtifact = artifactKind === "aires_requirements";
+  const isDocumentArtifact = String(artifactKind || "").toLowerCase() === "aires_requirements";
   const [viewport, setViewport] = React.useState(isDocumentArtifact ? "document" : "mobile");
+  const previewHtml = React.useMemo(
+    () => isDocumentArtifact ? enhanceDocumentPreviewHtml(html) : html,
+    [html, isDocumentArtifact]
+  );
 
   React.useEffect(() => {
     setViewport(isDocumentArtifact ? "document" : "mobile");
@@ -2665,7 +2757,7 @@ function HtmlPrototypeDocument({ artifactKind, mode, onModeChange, html, title }
           <iframe
             className="prototype-frame"
             title={title}
-            srcDoc={html || "<!doctype html><html><body></body></html>"}
+            srcDoc={previewHtml || "<!doctype html><html><body></body></html>"}
             sandbox="allow-forms allow-modals allow-popups allow-scripts"
           />
         </div>
@@ -2674,6 +2766,46 @@ function HtmlPrototypeDocument({ artifactKind, mode, onModeChange, html, title }
       )}
     </section>
   );
+}
+
+function enhanceDocumentPreviewHtml(html = "") {
+  if (!html.trim()) return html;
+
+  const previewCss = `
+<style id="cooper-document-preview-fit">
+  html,
+  body {
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+  }
+
+  body {
+    margin: 0 !important;
+  }
+
+  .page {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .document {
+    width: 100% !important;
+    min-height: 100vh !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+</style>`;
+
+  if (html.includes("</head>")) {
+    return html.replace("</head>", `${previewCss}\n</head>`);
+  }
+
+  return `${previewCss}\n${html}`;
 }
 
 function SoundWave({ active, speaking }) {
@@ -2695,49 +2827,122 @@ function Metric({ label, value }) {
   );
 }
 
-function CallRow({ call }) {
-  return (
-    <article className="compact-row">
-      <FileText size={18} />
+function CallRow({ call, onOpen }) {
+  const content = (
+    <>
+      <Phone size={18} />
       <div>
         <strong>{call.title}</strong>
-        <span>{formatDate(call.startedAt)} - {call.transcript?.length || 0} turns</span>
+        <span>{formatDate(call.startedAt)} - {formatDuration(call.durationSeconds)} - {call.transcript?.length || 0} turns</span>
         {call.projectTitle && <span>{call.projectTitle}</span>}
       </div>
-    </article>
+    </>
+  );
+
+  if (!onOpen) {
+    return <article className="compact-row">{content}</article>;
+  }
+
+  return (
+    <button className="compact-row compact-row-button" type="button" onClick={() => onOpen(call.id)} aria-label={`Open ${call.title}`}>
+      {content}
+    </button>
   );
 }
 
-function JobList({ jobs, onRetry }) {
+function CallLibraryRow({ call, artifactCount, jobCount, active, onSelect }) {
+  const transcriptCount = call.transcript?.length || 0;
+
+  return (
+    <button
+      type="button"
+      className={active ? "call-library-row active" : "call-library-row"}
+      onClick={() => onSelect(call.id)}
+      aria-current={active ? "true" : undefined}
+    >
+      <span className="call-row-icon">
+        <Phone size={16} />
+      </span>
+      <span className="call-row-main">
+        <strong>{call.title}</strong>
+        <small>{formatDate(call.startedAt)} - {formatDuration(call.durationSeconds)}</small>
+        {call.projectTitle && <small>{call.projectTitle}</small>}
+      </span>
+      <span className={`status-pill mini ${statusClass(call.status)}`}>{statusLabel(call.status)}</span>
+      <span className="call-row-meta">
+        <span>{transcriptCount} turns</span>
+        <span>{artifactCount} artifacts</span>
+        <span>{jobCount} work</span>
+      </span>
+    </button>
+  );
+}
+
+function JobList({ jobs, onRetry, onOpenArtifact, selectedArtifactId }) {
   const hasActiveJobs = jobs.some((job) => ["queued", "running"].includes(job.status));
   const now = useNow(hasActiveJobs);
   if (!jobs.length) return <p className="muted">Queue is clear.</p>;
 
   return (
     <div className="job-list">
-      {jobs.map((job) => (
-        <article className="job-row" key={job.id}>
-          {job.status === "completed" ? <CheckCircle2 size={18} /> : job.status === "failed" ? <AlertTriangle size={18} /> : <Clock size={18} />}
-          <div>
-            <strong>{job.title}</strong>
-            <span>{jobStatusLine(job, now)}</span>
-            <div className="job-progress" aria-label={`${job.title} progress`}>
-              <span style={{ width: `${progressPercent(job)}%` }} />
+      {jobs.map((job) => {
+        const artifactId = jobOpenArtifactId(job);
+        const isOpenable = Boolean(artifactId && onOpenArtifact);
+        const rowClassName = [
+          "job-row",
+          isOpenable ? "job-row-button" : "",
+          artifactId && selectedArtifactId === artifactId ? "active" : ""
+        ].filter(Boolean).join(" ");
+        const icon = job.status === "completed"
+          ? <CheckCircle2 size={18} />
+          : job.status === "failed"
+            ? <AlertTriangle size={18} />
+            : <Clock size={18} />;
+        const content = (
+          <>
+            {icon}
+            <div>
+              <strong>{job.title}</strong>
+              <span>{jobStatusLine(job, now)}</span>
+              <div className="job-progress" aria-label={`${job.title} progress`}>
+                <span style={{ width: `${progressPercent(job)}%` }} />
+              </div>
+              {job.progress && <small>{job.progress}</small>}
+              {job.activeStepSummary && <small>Step: {job.activeStepSummary}</small>}
+              {jobApiLine(job, now) && <small>{jobApiLine(job, now)}</small>}
+              {job.draftCharCount ? <small>Draft: {Number(job.draftCharCount).toLocaleString()} chars captured.</small> : null}
+              {job.error && <small>{job.error}</small>}
+              {job.status === "failed" && onRetry && (
+                <button className="inline-action" onClick={() => onRetry(job.id)}>
+                  <RotateCcw size={16} />
+                  <span>Retry</span>
+                </button>
+              )}
             </div>
-            {job.progress && <small>{job.progress}</small>}
-            {job.activeStepSummary && <small>Step: {job.activeStepSummary}</small>}
-            {jobApiLine(job, now) && <small>{jobApiLine(job, now)}</small>}
-            {job.draftCharCount ? <small>Draft: {Number(job.draftCharCount).toLocaleString()} chars captured.</small> : null}
-            {job.error && <small>{job.error}</small>}
-            {job.status === "failed" && onRetry && (
-              <button className="inline-action" onClick={() => onRetry(job.id)}>
-                <RotateCcw size={16} />
-                <span>Retry</span>
-              </button>
-            )}
-          </div>
-        </article>
-      ))}
+          </>
+        );
+
+        if (isOpenable) {
+          return (
+            <button
+              type="button"
+              className={rowClassName}
+              key={job.id}
+              onClick={() => onOpenArtifact(artifactId)}
+              aria-current={selectedArtifactId === artifactId ? "true" : undefined}
+              aria-label={`Open ${job.title} artifact`}
+            >
+              {content}
+            </button>
+          );
+        }
+
+        return (
+          <article className={rowClassName} key={job.id}>
+            {content}
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -2779,17 +2984,24 @@ function ActivityStream({ jobs, compact = false }) {
   );
 }
 
-function ArtifactMiniList({ artifacts, jobs, onRetry }) {
+function ArtifactMiniList({ artifacts, jobs, onRetry, onOpenArtifact }) {
   return (
     <div className="compact-list">
       {artifacts.map((artifact) => (
-        <article className="compact-row" key={artifact.id}>
+        <button
+          className="compact-row compact-row-button"
+          key={artifact.id}
+          type="button"
+          onClick={() => onOpenArtifact?.(artifact.id)}
+          disabled={!onOpenArtifact}
+          aria-label={`Open ${artifact.title}`}
+        >
           <FileText size={18} />
           <div>
             <strong>{artifact.title}</strong>
-            <span>{formatDate(artifact.createdAt)}</span>
+            <span>{artifactLabel(artifact.kind)} - {formatDate(artifact.createdAt)}</span>
           </div>
-        </article>
+        </button>
       ))}
       <JobList jobs={jobs} onRetry={onRetry} />
       {!artifacts.length && !jobs.length && <p className="muted">No work generated for this call.</p>}
@@ -3108,6 +3320,8 @@ function describeConnectionError(error) {
 function statusLabel(status) {
   return {
     completed: "Connected",
+    ended: "Ended",
+    active: "Active",
     pending: "Pending",
     failed: "Failed",
     not_started: "Not started",
@@ -3120,8 +3334,8 @@ function statusLabel(status) {
 }
 
 function statusClass(status) {
-  if (["completed", "executed"].includes(status)) return "good";
-  if (["pending", "pending_approval", "not_started"].includes(status)) return "waiting";
+  if (["completed", "ended", "executed"].includes(status)) return "good";
+  if (["active", "pending", "pending_approval", "not_started"].includes(status)) return "waiting";
   if (["missing_api_key", "missing_mapping", "failed", "error"].includes(status)) return "bad";
   return "";
 }
