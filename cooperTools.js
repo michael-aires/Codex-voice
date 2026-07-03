@@ -1,3 +1,15 @@
+export const airesTemplateToolIds = Object.freeze([
+  "client_capability_matrix",
+  "context_to_product_content",
+  "daily_rep_flow",
+  "data_flywheel",
+  "jtbd_canvas",
+  "personas_manager_rep",
+  "scoped_requirements_rep_velocity",
+  "service_blueprint",
+  "thesis_rep_velocity"
+]);
+
 export const cooperToolDefinitions = [
   {
     type: "function",
@@ -282,6 +294,42 @@ export const cooperToolDefinitions = [
   },
   {
     type: "function",
+    name: "generate_aires_template_artifact",
+    description: "Queue one or more AIRES template documents from the live call transcript and loaded project/context while Cooper keeps talking. Use this when Michael asks to generate Jobs to be Done, service blueprint, daily rep flow, data flywheel, capability matrix, personas, context-to-product-content, product thesis, or scoped requirements from the current conversation.",
+    parameters: {
+      type: "object",
+      properties: {
+        template_id: {
+          type: "string",
+          enum: [...airesTemplateToolIds, "all"],
+          description: "Which AIRES template to generate. Use jtbd_canvas for Jobs to be Done/JTBD, data_flywheel for flywheel, service_blueprint for service map, daily_rep_flow for rep workflow, and all when Michael asks for the full document stack."
+        },
+        template_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: airesTemplateToolIds
+          },
+          description: "Optional explicit list of AIRES templates to generate when Michael asks for multiple named documents."
+        },
+        title: {
+          type: "string",
+          description: "Optional custom title for a single generated artifact."
+        },
+        instruction: {
+          type: "string",
+          description: "Specific guidance Michael gave for this generated document."
+        },
+        context: {
+          type: "string",
+          description: "Relevant recent meeting/project context, constraints, vivid phrases, or source material to prioritize."
+        }
+      },
+      required: ["template_id"]
+    }
+  },
+  {
+    type: "function",
     name: "run_aires_requirements_framework",
     description: "Use the AIRES Requirements Framework to explain its document library, workshop a selected framework document against provided context, run interview-style requirements discovery, or queue an AIRES-branded scoped requirements artifact from live meeting/project context.",
     parameters: {
@@ -343,3 +391,130 @@ export const cooperToolDefinitions = [
 ];
 
 export const cooperToolNames = new Set(cooperToolDefinitions.map((tool) => tool.name));
+
+export const operatorToolDefinitions = [
+  {
+    type: "function",
+    name: "start_operator_task",
+    description: "Start a supervised local Operator task that Michael can watch in the Operator workspace. Use this when Michael asks Cooper Operator to build artifacts, generate documents, create landing pages, create mini apps, run a Codex-style task, run browser work, debug a repo, inspect GitHub, or do SendGrid setup.",
+    parameters: {
+      type: "object",
+      properties: {
+        skill: {
+          type: "string",
+          enum: [
+            "operator_document_suite",
+            "aires_template_suite",
+            "landing_page",
+            "mini_app",
+            "large_report",
+            "html_prototype",
+            "aires_requirements",
+            "product_requirements",
+            "mermaid_diagram",
+            "sendgrid_sender_auth",
+            "github_repo_debug",
+            "codex_local_planning"
+          ],
+          description: "The local Operator skill to run. Use operator_document_suite when Michael wants several work artifacts, aires_template_suite for all AIRES template docs, landing_page for marketing pages, mini_app for interactive single-file apps, html_prototype for product prototypes, and codex_local_planning for general Codex-style planning."
+        },
+        goal: {
+          type: "string",
+          description: "Specific outcome Michael wants from the Operator task. Include the context and success criteria in plain language."
+        },
+        target_url: {
+          type: "string",
+          description: "Optional URL the local browser task should open."
+        },
+        allowed_domains: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional list of domains the local browser task may use."
+        },
+        artifact_kinds: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: [
+              "post_call_kit",
+              "execution_plan",
+              "follow_up",
+              "code_sketch",
+              "product_requirements",
+              "html_prototype",
+              "mermaid_diagram",
+              "ui_wireframe",
+              "aires_requirements",
+              "landing_page",
+              "mini_app",
+              "executive_report"
+            ]
+          },
+          description: "Optional advanced override for exactly which Cooper artifact jobs to create."
+        },
+        template_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional AIRES template ids to generate, or ['all'] for the full AIRES template suite."
+        }
+      },
+      required: ["skill", "goal"]
+    }
+  },
+  {
+    type: "function",
+    name: "stop_operator_tasks",
+    description: "Stop all active local Operator tasks immediately. Use when Michael says stop, kill, pause everything, cancel all, or end the Operator run.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "Short reason Michael gave for stopping work."
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    name: "cancel_operator_task",
+    description: "Cancel one selected local Operator task. Use when Michael asks to cancel the current task or a specific task.",
+    parameters: {
+      type: "object",
+      properties: {
+        task_id: {
+          type: "string",
+          description: "Optional Operator task id. If omitted, cancel the currently selected or active task."
+        },
+        reason: {
+          type: "string",
+          description: "Short reason Michael gave for cancellation."
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    name: "get_operator_task_status",
+    description: "Inspect the selected, latest, or specified Operator task so Cooper can explain what happened, what is blocked, what artifacts exist, and what approval or next step is required.",
+    parameters: {
+      type: "object",
+      properties: {
+        task_id: {
+          type: "string",
+          description: "Optional Operator task id. If omitted, inspect the selected task, then active task, then most recent task."
+        },
+        include_logs: {
+          type: "boolean",
+          description: "Whether to include recent execution log entries. Defaults to true."
+        },
+        include_artifacts: {
+          type: "boolean",
+          description: "Whether to include generated artifact summaries. Defaults to true."
+        }
+      }
+    }
+  }
+];
+
+export const operatorToolNames = new Set(operatorToolDefinitions.map((tool) => tool.name));

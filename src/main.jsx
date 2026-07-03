@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import { cooperInstructions } from "../cooperPrompt.js";
-import { cooperToolDefinitions } from "../cooperTools.js";
+import { cooperToolDefinitions, operatorToolDefinitions, operatorToolNames } from "../cooperTools.js";
 import { createAudioResponseEvent } from "./realtimeEvents.js";
 import { isCooperWakePhrase } from "./wakeWords.js";
 import { buildCanvasCustomPrompt } from "./canvasPrompt.js";
@@ -109,6 +109,61 @@ const realtimeSession = {
   tool_choice: "auto"
 };
 
+const operatorInstructions = `
+You are Cooper Operator, Michael's voice-controlled local task orchestrator.
+
+You are not the meeting notetaker workspace. You are the operator layer that helps Michael start, watch, approve, and stop local browser/Codex tasks.
+
+When Michael asks you to run work, start a supervised local Operator task with start_operator_task. Choose:
+- operator_document_suite when Michael wants Cooper to create multiple work artifacts from the conversation.
+- aires_template_suite when Michael asks for all AIRES templates, all requirement docs, or the full document set.
+- landing_page when Michael asks for a landing page, marketing page, website, or product page.
+- mini_app when Michael asks for a small app, calculator, internal tool, dashboard, or interactive single-file prototype.
+- large_report when Michael asks for a large report, executive report, board-style report, or polished long-form writeup.
+- html_prototype for product prototypes, clickable UI mockups, or mobile-first prototypes.
+- aires_requirements for scoped requirements, acceptance criteria, slices, and AIRES requirements artifacts.
+- product_requirements for PRDs.
+- mermaid_diagram for diagrams, architecture maps, workflows, system maps, or flowcharts.
+- codex_local_planning for general Codex tasks, implementation planning, coding plans, skill creation, repo work, or "run Codex" requests.
+- github_repo_debug for read-only GitHub/code debugging and repo inspection.
+- sendgrid_sender_auth for SendGrid sender authentication setup.
+
+Default to taking action by tool call when Michael asks you to build, generate, create, run, draft, produce, inspect, or debug something. Keep spoken responses short. Say what you are starting, what Michael will see in the Operator workspace, and where approvals will be required.
+
+If Michael says stop, kill it, cancel everything, stop Operator, or pause all work, call stop_operator_tasks immediately.
+
+When Michael asks what happened, where the work is, why it is stuck, what the delegated Codex agent did, what the result was, or whether an Operator task is done, call get_operator_task_status before answering. Explain the actual status, latest checkpoint, pending approval, artifact/result, and next action. If the task only says queued or waiting, say that precisely and identify the next visible step.
+
+Never claim that a task is finished unless the tool result or visible Operator state says it is finished. Do not perform destructive or external write actions yourself; the Operator task runner will pause for approval.
+`;
+
+const operatorRealtimeSession = {
+  type: "realtime",
+  model: "gpt-realtime-2",
+  instructions: operatorInstructions,
+  reasoning: { effort: "low" },
+  audio: {
+    input: {
+      noise_reduction: { type: "far_field" },
+      transcription: {
+        model: "gpt-4o-mini-transcribe",
+        prompt: "Voice commands for Cooper Operator, local browser automation, Codex tasks, GitHub debugging, SendGrid setup, approvals, stop all."
+      },
+      turn_detection: {
+        type: "semantic_vad",
+        eagerness: "medium",
+        create_response: true,
+        interrupt_response: true
+      }
+    },
+    output: {
+      voice: "cedar"
+    }
+  },
+  tools: operatorToolDefinitions,
+  tool_choice: "auto"
+};
+
 function buildSessionUpdate(projectContext = "") {
   return {
     type: "session.update",
@@ -119,14 +174,31 @@ function buildSessionUpdate(projectContext = "") {
   }
 }
 
+function buildOperatorSessionUpdate() {
+  return {
+    type: "session.update",
+    session: operatorRealtimeSession
+  };
+}
+
 function App() {
   const [entered, setEntered] = React.useState(() => localStorage.getItem("cooper.entered") === "true");
+  const [workspace, setWorkspace] = React.useState(() => localStorage.getItem("cooper.workspace") || "");
   const [authChecked, setAuthChecked] = React.useState(false);
   const [authenticated, setAuthenticated] = React.useState(false);
   const [authBusy, setAuthBusy] = React.useState(false);
   const [authError, setAuthError] = React.useState("");
   const [view, setView] = React.useState("home");
   const [state, setState] = React.useState({ calls: [], projects: [], artifacts: [], jobs: [], recipes: [], limits: {}, arcade: emptyArcadeState(), mcpApps: { servers: [] } });
+  const [operatorState, setOperatorState] = React.useState(emptyOperatorState);
+  const [operatorSelectedTaskId, setOperatorSelectedTaskId] = React.useState("");
+  const [operatorCallConnected, setOperatorCallConnected] = React.useState(false);
+  const [operatorCallConnecting, setOperatorCallConnecting] = React.useState(false);
+  const [operatorCallStatus, setOperatorCallStatus] = React.useState("Idle");
+  const [operatorCallSpeaking, setOperatorCallSpeaking] = React.useState(false);
+  const [operatorCallHearing, setOperatorCallHearing] = React.useState(false);
+  const [operatorPrompt, setOperatorPrompt] = React.useState("");
+  const [operatorMessages, setOperatorMessages] = React.useState([]);
   const [selectedCallId, setSelectedCallId] = React.useState(null);
   const [selectedProjectId, setSelectedProjectId] = React.useState(null);
   const [selectedArtifactId, setSelectedArtifactId] = React.useState(null);
@@ -159,6 +231,15 @@ function App() {
   const selectedCallIdRef = React.useRef(null);
   const selectedProjectIdRef = React.useRef(null);
   const selectedArtifactIdRef = React.useRef(null);
+  const operatorPcRef = React.useRef(null);
+  const operatorDcRef = React.useRef(null);
+  const operatorStreamRef = React.useRef(null);
+  const operatorAudioRef = React.useRef(null);
+  const operatorResponseInProgressRef = React.useRef(false);
+  const operatorPendingResponseRef = React.useRef(null);
+  const operatorOutputTranscriptBuffersRef = React.useRef(new Map());
+  const operatorTextTranscriptBuffersRef = React.useRef(new Map());
+  const operatorPersistedResponseIdsRef = React.useRef(new Set());
 
   React.useEffect(() => {
     selectedCallIdRef.current = selectedCallId;
@@ -192,11 +273,16 @@ function App() {
   }, []);
 
   React.useEffect(() => {
-    if (!authenticated || !entered) return;
+    if (!authenticated || !entered || !workspace) return;
+    if (workspace === "operator") {
+      refreshOperatorState();
+      const id = window.setInterval(refreshOperatorState, 3000);
+      return () => window.clearInterval(id);
+    }
     refreshState();
     const id = window.setInterval(refreshState, 4000);
     return () => window.clearInterval(id);
-  }, [authenticated, entered]);
+  }, [authenticated, entered, workspace]);
 
   React.useEffect(() => {
     if (!authenticated || !selectedArtifactId) {
@@ -223,13 +309,17 @@ function App() {
   }, []);
 
   React.useEffect(() => {
-    if (!authenticated || !entered || !("EventSource" in window)) return undefined;
+    if (!authenticated || !entered || !workspace || !("EventSource" in window)) return undefined;
     const source = new EventSource("/api/events", { withCredentials: true });
     source.addEventListener("state.updated", () => {
-      refreshState();
+      if (workspace === "operator") {
+        refreshOperatorState();
+      } else {
+        refreshState();
+      }
     });
     return () => source.close();
-  }, [authenticated, entered]);
+  }, [authenticated, entered, workspace]);
 
   async function refreshState() {
     try {
@@ -251,6 +341,104 @@ function App() {
       }
     } catch {
       addEvent("Sync", "State refresh failed.");
+    }
+  }
+
+  async function refreshOperatorState() {
+    try {
+      const next = await fetchOperatorStateSnapshot();
+      setOperatorState(next);
+      if (!operatorSelectedTaskId && next.activeTask?.id) {
+        setOperatorSelectedTaskId(next.activeTask.id);
+      }
+    } catch {
+      addEvent("Operator", "State refresh failed.");
+    }
+  }
+
+  async function fetchOperatorStateSnapshot() {
+    const response = await fetch("/api/operator/state", { credentials: "same-origin" });
+    if (response.status === 401) {
+      setAuthenticated(false);
+      throw new Error("Authentication required.");
+    }
+    if (!response.ok) throw new Error("Operator refresh failed.");
+    const next = await response.json();
+    setOperatorState(next);
+    return next;
+  }
+
+  async function startOperatorTask(input) {
+    try {
+      const response = await fetch("/api/operator/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(input)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Could not start Operator task.");
+      setOperatorSelectedTaskId(payload.task?.id || "");
+      addEvent("Operator", `${payload.task?.title || "Task"} queued.`);
+      await refreshOperatorState();
+      return payload;
+    } catch (error) {
+      addEvent("Operator", error.message);
+      throw error;
+    }
+  }
+
+  async function approveOperatorTask(taskId, approvalId) {
+    try {
+      const response = await fetch(`/api/operator/tasks/${taskId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ approvalId })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Could not approve Operator task.");
+      addEvent("Operator", "Approval sent.");
+      await refreshOperatorState();
+      return payload;
+    } catch (error) {
+      addEvent("Operator", error.message);
+      throw error;
+    }
+  }
+
+  async function cancelOperatorTask(taskId) {
+    try {
+      const response = await fetch(`/api/operator/tasks/${taskId}/cancel`, {
+        method: "POST",
+        credentials: "same-origin"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Could not cancel Operator task.");
+      addEvent("Operator", `${payload.task?.title || "Task"} cancelled.`);
+      await refreshOperatorState();
+      return payload;
+    } catch (error) {
+      addEvent("Operator", error.message);
+      throw error;
+    }
+  }
+
+  async function stopAllOperatorTasks() {
+    try {
+      const response = await fetch("/api/operator/stop-all", {
+        method: "POST",
+        credentials: "same-origin"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Could not stop Operator work.");
+      const count = payload.stopped?.length || 0;
+      addEvent("Operator", `${count} task${count === 1 ? "" : "s"} stopped.`);
+      await refreshOperatorState();
+      return payload;
+    } catch (error) {
+      addEvent("Operator", error.message);
+      throw error;
     }
   }
 
@@ -282,12 +470,22 @@ function App() {
     if (connected || connecting) {
       await endCall({ failed: true });
     }
+    if (operatorCallConnected || operatorCallConnecting) {
+      await endOperatorCall({ failed: true });
+    }
     await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
     localStorage.removeItem("cooper.entered");
+    localStorage.removeItem("cooper.workspace");
     setAuthenticated(false);
     setEntered(false);
+    setWorkspace("");
     setView("home");
     setState({ calls: [], projects: [], artifacts: [], jobs: [], recipes: [], limits: {}, arcade: emptyArcadeState(), mcpApps: { servers: [] } });
+    setOperatorState(emptyOperatorState());
+    setOperatorSelectedTaskId("");
+    setOperatorMessages([]);
+    setOperatorPrompt("");
+    setOperatorCallStatus("Idle");
     setSelectedCallId(null);
     setSelectedProjectId(null);
     selectArtifact(null);
@@ -301,8 +499,36 @@ function App() {
   }
 
   function enterApp() {
+    enterWorkspace("cooper");
+  }
+
+  function enterWorkspace(nextWorkspace) {
     localStorage.setItem("cooper.entered", "true");
+    localStorage.setItem("cooper.workspace", nextWorkspace);
     setEntered(true);
+    setWorkspace(nextWorkspace);
+    setView("home");
+    if (nextWorkspace === "operator") {
+      refreshOperatorState();
+    } else {
+      refreshState();
+    }
+  }
+
+  function switchWorkspace(nextWorkspace) {
+    localStorage.setItem("cooper.workspace", nextWorkspace);
+    setWorkspace(nextWorkspace);
+    setView("home");
+    if (nextWorkspace === "operator") {
+      refreshOperatorState();
+    } else {
+      refreshState();
+    }
+  }
+
+  function resetWorkspaceChoice() {
+    localStorage.removeItem("cooper.workspace");
+    setWorkspace("");
   }
 
   function selectArtifact(id) {
@@ -448,6 +674,8 @@ function App() {
       }
       if (payload.output?.artifactId) {
         selectArtifact(payload.output.artifactId);
+      }
+      if (payload.output?.artifactId || payload.output?.jobId || Array.isArray(payload.output?.jobs)) {
         await refreshState();
       }
       return payload.output;
@@ -880,11 +1108,402 @@ function App() {
     setPrompt("");
   }
 
+  function addOperatorMessage(role, text, meta = {}) {
+    const clean = String(text || "").trim();
+    if (!clean) return null;
+    const entry = {
+      id: meta.id || uid(),
+      role,
+      text: clean,
+      at: meta.at || new Date().toISOString(),
+      source: meta.source || "",
+      responseId: meta.responseId || ""
+    };
+    setOperatorMessages((current) => [...current, entry].slice(-80));
+    return entry;
+  }
+
+  function sendOperatorEvent(event) {
+    const dc = operatorDcRef.current;
+    if (!dc || dc.readyState !== "open") {
+      addEvent("Operator", "Data channel is closed.");
+      return false;
+    }
+    dc.send(JSON.stringify(event));
+    return true;
+  }
+
+  function requestOperator(text = "", reason = "manual") {
+    const userText = text.trim();
+    if (userText) {
+      const sentUserText = sendOperatorEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: userText }]
+        }
+      });
+      if (sentUserText) addOperatorMessage("Michael", userText, { source: "typed" });
+    }
+
+    const responseEvent = createAudioResponseEvent(userText ? "operator_typed_prompt" : reason);
+    if (operatorResponseInProgressRef.current) {
+      operatorPendingResponseRef.current = responseEvent;
+      addEvent("Operator", "Queued after current answer.");
+      return;
+    }
+
+    if (sendOperatorEvent(responseEvent)) {
+      operatorResponseInProgressRef.current = true;
+      setOperatorCallStatus("Operator thinking");
+    }
+  }
+
+  function submitOperatorPrompt(event) {
+    event.preventDefault();
+    const text = operatorPrompt.trim();
+    if (!text) return;
+    requestOperator(text, "typed_prompt");
+    setOperatorPrompt("");
+  }
+
+  async function connectOperatorCall() {
+    setOperatorCallConnecting(true);
+    setOperatorCallStatus("Starting");
+    setOperatorCallSpeaking(false);
+    setOperatorCallHearing(false);
+    setOperatorMessages([]);
+    operatorResponseInProgressRef.current = false;
+    operatorPendingResponseRef.current = null;
+    operatorOutputTranscriptBuffersRef.current = new Map();
+    operatorTextTranscriptBuffersRef.current = new Map();
+    operatorPersistedResponseIdsRef.current = new Set();
+
+    try {
+      setOperatorCallStatus("Microphone");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+      operatorStreamRef.current = stream;
+
+      const pc = new RTCPeerConnection();
+      operatorPcRef.current = pc;
+
+      const audio = new Audio();
+      audio.autoplay = true;
+      operatorAudioRef.current = audio;
+      pc.ontrack = (event) => {
+        audio.srcObject = event.streams[0];
+      };
+
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      const dc = pc.createDataChannel("oai-events");
+      operatorDcRef.current = dc;
+      dc.onopen = () => {
+        setOperatorCallConnected(true);
+        setOperatorCallConnecting(false);
+        setOperatorCallStatus("Configuring");
+        sendOperatorEvent(buildOperatorSessionUpdate());
+        addOperatorMessage("Cooper Operator", "Operator is online. Tell me what local task to start, or say stop all to halt active work.", { source: "system" });
+      };
+      dc.onmessage = (message) => {
+        try {
+          handleOperatorServerEvent(JSON.parse(message.data));
+        } catch {
+          addEvent("Operator", "Received a non-JSON data channel message.");
+        }
+      };
+      dc.onclose = () => {
+        setOperatorCallConnected(false);
+        setOperatorCallSpeaking(false);
+        setOperatorCallHearing(false);
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      const sdpResponse = await fetch("/session?workspace=operator", {
+        method: "POST",
+        body: offer.sdp,
+        headers: {
+          "Content-Type": "application/sdp"
+        }
+      });
+
+      const answerSdp = await sdpResponse.text();
+      if (!sdpResponse.ok) throw new Error(answerSdp || "Failed to create Operator session.");
+
+      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      addEvent("Operator", "Voice orchestrator connected.");
+    } catch (error) {
+      setOperatorCallStatus("Failed");
+      addEvent("Operator", describeConnectionError(error));
+      await endOperatorCall({ failed: true });
+    }
+  }
+
+  async function endOperatorCall({ failed = false } = {}) {
+    operatorDcRef.current?.close();
+    operatorPcRef.current?.close();
+    operatorStreamRef.current?.getTracks().forEach((track) => track.stop());
+    operatorDcRef.current = null;
+    operatorPcRef.current = null;
+    operatorStreamRef.current = null;
+    operatorAudioRef.current = null;
+    operatorResponseInProgressRef.current = false;
+    operatorPendingResponseRef.current = null;
+    setOperatorCallConnected(false);
+    setOperatorCallConnecting(false);
+    setOperatorCallSpeaking(false);
+    setOperatorCallHearing(false);
+    setOperatorCallStatus(failed ? "Failed" : "Idle");
+    addEvent("Operator", failed ? "Voice orchestrator stopped after failure." : "Voice orchestrator stopped.");
+  }
+
+  function handleOperatorServerEvent(event) {
+    if (event.type === "session.updated") {
+      setOperatorCallStatus("Listening");
+      addEvent("Operator", "Realtime orchestrator is online.");
+      return;
+    }
+
+    if (event.type === "input_audio_buffer.speech_started") {
+      setOperatorCallHearing(true);
+      setOperatorCallStatus("Listening");
+      return;
+    }
+
+    if (event.type === "input_audio_buffer.speech_stopped") {
+      setOperatorCallHearing(false);
+      setOperatorCallStatus("Processing");
+      return;
+    }
+
+    if (event.type === "conversation.item.input_audio_transcription.completed") {
+      const text = event.transcript || "";
+      addOperatorMessage("Michael", text, { source: "mic", id: event.item_id });
+      return;
+    }
+
+    if (event.type === "response.created") {
+      operatorResponseInProgressRef.current = true;
+      setOperatorCallStatus("Operator thinking");
+      return;
+    }
+
+    if (event.type === "response.output_audio.delta" || event.type === "response.audio.delta") {
+      setOperatorCallSpeaking(true);
+      setOperatorCallStatus("Operator speaking");
+      return;
+    }
+
+    if (event.type === "response.output_audio.done" || event.type === "response.audio.done") {
+      setOperatorCallSpeaking(false);
+      return;
+    }
+
+    if (event.type === "response.output_audio_transcript.delta" || event.type === "response.audio_transcript.delta") {
+      appendTranscriptDelta(operatorOutputTranscriptBuffersRef.current, event, event.delta);
+      return;
+    }
+
+    if (event.type === "response.output_audio_transcript.done" || event.type === "response.audio_transcript.done") {
+      finalizeOperatorTranscript(event, event.transcript, operatorOutputTranscriptBuffersRef.current);
+      return;
+    }
+
+    if (event.type === "response.output_text.delta") {
+      appendTranscriptDelta(operatorTextTranscriptBuffersRef.current, event, event.delta);
+      return;
+    }
+
+    if (event.type === "response.output_text.done") {
+      appendTranscriptDelta(operatorTextTranscriptBuffersRef.current, event, event.text, { replace: true });
+      return;
+    }
+
+    if (event.type === "response.done") {
+      operatorResponseInProgressRef.current = false;
+      setOperatorCallSpeaking(false);
+      setOperatorCallStatus("Listening");
+      const calls = event.response?.output?.filter((item) => item.type === "function_call") || [];
+      if (calls.length) {
+        operatorResponseInProgressRef.current = true;
+      }
+      calls.forEach(handleOperatorFunctionCall);
+      finalizeOperatorResponseFallback(event.response);
+      if (calls.length) return;
+      const pending = operatorPendingResponseRef.current;
+      operatorPendingResponseRef.current = null;
+      if (pending) {
+        window.setTimeout(() => {
+          if (sendOperatorEvent(pending)) {
+            operatorResponseInProgressRef.current = true;
+            setOperatorCallStatus("Operator thinking");
+          }
+        }, 80);
+      }
+      return;
+    }
+
+    if (event.type === "error") {
+      const message = event.error?.message || "Realtime error";
+      if (/active response/i.test(message)) {
+        operatorResponseInProgressRef.current = true;
+        setOperatorCallStatus("Operator thinking");
+        addEvent("Operator", "Already answering; queued the latest ask.");
+        return;
+      }
+      operatorResponseInProgressRef.current = false;
+      setOperatorCallStatus("Error");
+      addEvent("Operator", message);
+    }
+  }
+
+  function finalizeOperatorTranscript(event, transcript, buffer) {
+    const key = transcriptKey(event);
+    const buffered = buffer.get(key);
+    const responseId = event.response_id || buffered?.responseId || key;
+    if (responseId && operatorPersistedResponseIdsRef.current.has(responseId)) return;
+    const text = String(transcript || buffered?.text || "").trim();
+    if (!text) return;
+    addOperatorMessage("Cooper Operator", text, {
+      source: "operator_audio",
+      responseId
+    });
+    if (responseId) operatorPersistedResponseIdsRef.current.add(responseId);
+    buffer.delete(key);
+  }
+
+  function finalizeOperatorResponseFallback(response) {
+    const responseId = response?.id;
+    if (!responseId || operatorPersistedResponseIdsRef.current.has(responseId)) return;
+    const bufferedAudio = findBufferedTranscript(operatorOutputTranscriptBuffersRef.current, responseId);
+    const bufferedText = findBufferedTranscript(operatorTextTranscriptBuffersRef.current, responseId);
+    const text = bufferedAudio?.text || extractRealtimeResponseText(response) || bufferedText?.text || "";
+    if (!text.trim()) return;
+    addOperatorMessage("Cooper Operator", text, {
+      source: bufferedAudio ? "operator_audio_fallback" : "operator_response_done",
+      responseId
+    });
+    operatorPersistedResponseIdsRef.current.add(responseId);
+  }
+
+  async function handleOperatorFunctionCall(call) {
+    let args = {};
+    try {
+      args = JSON.parse(call.arguments || "{}");
+    } catch {
+      args = {};
+    }
+
+    const output = await executeOperatorTool(call.name, args);
+    sendOperatorEvent({
+      type: "conversation.item.create",
+      item: {
+        type: "function_call_output",
+        call_id: call.call_id,
+        output: JSON.stringify(output)
+      }
+    });
+    if (sendOperatorEvent(createAudioResponseEvent("operator_tool_result"))) {
+      operatorResponseInProgressRef.current = true;
+      setOperatorCallStatus("Operator thinking");
+    }
+  }
+
+  async function executeOperatorTool(name, args) {
+    if (!operatorToolNames.has(name)) {
+      return { status: "error", tool: name, message: "Unknown Operator tool." };
+    }
+
+    try {
+      if (name === "start_operator_task") {
+        const payload = await startOperatorTask({
+          skill: args.skill || "codex_local_planning",
+          goal: args.goal || "Run a supervised local Codex task.",
+          targetUrl: args.target_url || args.targetUrl || "",
+          allowedDomains: args.allowed_domains || args.allowedDomains || [],
+          artifactKinds: args.artifact_kinds || args.artifactKinds || [],
+          templateIds: args.template_ids || args.templateIds || []
+        });
+        return {
+          status: "queued",
+          tool: name,
+          task: payload.task,
+          message: `${payload.task?.title || "Operator task"} is queued and visible in the Operator workspace.`
+        };
+      }
+
+      if (name === "stop_operator_tasks") {
+        const payload = await stopAllOperatorTasks();
+        return {
+          status: "stopped",
+          tool: name,
+          stopped: payload.stopped || [],
+          message: `Stopped ${payload.stopped?.length || 0} active Operator task${payload.stopped?.length === 1 ? "" : "s"}.`
+        };
+      }
+
+      if (name === "cancel_operator_task") {
+        const taskId = args.task_id || args.taskId || operatorSelectedTaskId || operatorState.activeTask?.id || operatorState.tasks[0]?.id || "";
+        if (!taskId) {
+          return { status: "not_found", tool: name, message: "No Operator task is selected or active." };
+        }
+        const payload = await cancelOperatorTask(taskId);
+        return {
+          status: "cancelled",
+          tool: name,
+          task: payload.task,
+          message: `${payload.task?.title || "Operator task"} was cancelled.`
+        };
+      }
+
+      if (name === "get_operator_task_status") {
+        const latestState = await fetchOperatorStateSnapshot();
+        const taskId =
+          args.task_id ||
+          args.taskId ||
+          operatorSelectedTaskId ||
+          latestState.activeTask?.id ||
+          latestState.tasks[0]?.id ||
+          "";
+        const task = latestState.tasks.find((item) => item.id === taskId) || latestState.activeTask || latestState.tasks[0] || null;
+        if (!task) {
+          return { status: "not_found", tool: name, message: "No Operator task exists yet." };
+        }
+        return {
+          status: task.status || "found",
+          tool: name,
+          task: operatorTaskSnapshot(task, {
+            includeLogs: args.include_logs !== false,
+            includeArtifacts: args.include_artifacts !== false
+          }),
+          message: operatorTaskStatusMessage(task)
+        };
+      }
+    } catch (error) {
+      return {
+        status: "error",
+        tool: name,
+        message: error.message || "Operator tool failed."
+      };
+    }
+
+    return { status: "error", tool: name, message: "Operator tool was not implemented." };
+  }
+
   async function generateArtifact(callId, kind, customPrompt = "", options = {}) {
     const response = await fetch(`/api/calls/${callId}/artifacts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind, customPrompt })
+      body: JSON.stringify({ kind, customPrompt, title: options.title || "" })
     });
 
     if (!response.ok) {
@@ -901,7 +1520,7 @@ function App() {
     }
   }
 
-  async function generateLiveCanvasArtifact(kind, request = "") {
+  async function generateLiveCanvasArtifact(kind, request = "", options = {}) {
     const call = activeCallRef.current;
     if (!call?.id) {
       addEvent("Canvas", "Join the call before creating canvas work.");
@@ -915,7 +1534,7 @@ function App() {
       fallbackPrompt: defaultCanvasPrompt(kind)
     });
 
-    await generateArtifact(call.id, kind, customPrompt, { stay: true });
+    await generateArtifact(call.id, kind, customPrompt, { stay: true, title: options.title });
   }
 
   async function presentAiresExample(exampleId, options = {}) {
@@ -1156,6 +1775,7 @@ function App() {
   const selectedArtifact = state.artifacts.find((artifact) => artifact.id === selectedArtifactId) || state.artifacts[0] || null;
   const latestCall = state.calls.find((call) => call.status === "ended") || state.calls[0] || null;
   const activeJobs = state.jobs.filter((job) => ["queued", "running"].includes(job.status));
+  const selectedOperatorTask = operatorState.tasks.find((task) => task.id === operatorSelectedTaskId) || operatorState.activeTask || operatorState.tasks[0] || null;
 
   if (!authChecked) {
     return <LockScreen busy error="" onLogin={login} checking />;
@@ -1165,8 +1785,37 @@ function App() {
     return <LockScreen busy={authBusy} error={authError} onLogin={login} />;
   }
 
-  if (!entered) {
-    return <Splash onEnter={enterApp} />;
+  if (!entered || !workspace) {
+    return <Splash onSelectWorkspace={enterWorkspace} />;
+  }
+
+  if (workspace === "operator") {
+    return (
+      <OperatorWorkspace
+        state={operatorState}
+        selectedTask={selectedOperatorTask}
+        events={events}
+        callConnected={operatorCallConnected}
+        callConnecting={operatorCallConnecting}
+        callStatus={operatorCallStatus}
+        callSpeaking={operatorCallSpeaking}
+        callHearing={operatorCallHearing}
+        prompt={operatorPrompt}
+        messages={operatorMessages}
+        onPromptChange={setOperatorPrompt}
+        onSubmitPrompt={submitOperatorPrompt}
+        onStartCall={connectOperatorCall}
+        onStopCall={() => endOperatorCall()}
+        onSelectTask={setOperatorSelectedTaskId}
+        onStartTask={startOperatorTask}
+        onApproveTask={approveOperatorTask}
+        onCancelTask={cancelOperatorTask}
+        onStopAll={stopAllOperatorTasks}
+        onSwitchWorkspace={() => switchWorkspace("cooper")}
+        onResetWorkspace={resetWorkspaceChoice}
+        onLogout={logout}
+      />
+    );
   }
 
   if (connected || connecting || view === "call") {
@@ -1231,9 +1880,20 @@ function App() {
             <span>Settings</span>
           </button>
         </nav>
-        <button className="icon-button" onClick={logout} aria-label="Lock Cooper">
-          <LogOut size={18} />
-        </button>
+        <div className="topbar-actions">
+          <button className="new-call-action" onClick={connect}>
+            <Plus size={18} />
+            <span>New call</span>
+          </button>
+          <button className="secondary-action workspace-jump" onClick={() => switchWorkspace("operator")}>
+            <Monitor size={18} />
+            <span>Operator</span>
+          </button>
+          <button className="icon-button" onClick={logout} aria-label="Lock Cooper">
+            <LogOut size={18} />
+          </button>
+          <span className="user-avatar" aria-label="Michael workspace">MM</span>
+        </div>
       </header>
 
       {view === "home" && (
@@ -1310,20 +1970,1078 @@ function App() {
   );
 }
 
-function Splash({ onEnter }) {
+function Splash({ onSelectWorkspace }) {
   return (
     <main className="splash">
-      <section className="splash-card">
+      <section className="splash-card workspace-picker">
         <div className="splash-mark">C</div>
         <p className="eyebrow">AIRES</p>
         <h1>Cooper</h1>
-        <p className="splash-line">Executive operator for calls, plans, follow-ups, and software delivery.</p>
-        <button className="primary-action" onClick={onEnter}>
-          <LogIn size={20} />
-          <span>Enter</span>
-        </button>
+        <p className="splash-line">Choose the workspace for the session. Cooper handles calls and artifacts; Operator runs supervised local web-operation skills.</p>
+        <div className="workspace-choice-grid">
+          <button className="workspace-choice-card" onClick={() => onSelectWorkspace("cooper")}>
+            <span className="choice-icon"><Radio size={20} /></span>
+            <strong>Cooper</strong>
+            <span>Realtime voice chief of staff for meetings, project context, documents, and call artifacts.</span>
+          </button>
+          <button className="workspace-choice-card" onClick={() => onSelectWorkspace("operator")}>
+            <span className="choice-icon"><Monitor size={20} /></span>
+            <strong>Operator</strong>
+            <span>Local-first supervised browser and Codex task runner with approvals, budgets, and replayable work.</span>
+          </button>
+        </div>
+        <p className="workspace-picker-foot">
+          <LogIn size={16} />
+          <span>Private workspace unlocked</span>
+        </p>
       </section>
     </main>
+  );
+}
+
+function OperatorWorkspace({
+  state,
+  selectedTask,
+  events,
+  callConnected,
+  callConnecting,
+  callStatus,
+  callSpeaking,
+  callHearing,
+  prompt,
+  messages,
+  onPromptChange,
+  onSubmitPrompt,
+  onStartCall,
+  onStopCall,
+  onSelectTask,
+  onStartTask,
+  onApproveTask,
+  onCancelTask,
+  onStopAll,
+  onSwitchWorkspace,
+  onResetWorkspace,
+  onLogout
+}) {
+  const presets = state.presets?.length ? state.presets : [];
+  const firstPreset = presets[0]?.id || "sendgrid_sender_auth";
+  const [skill, setSkill] = React.useState(firstPreset);
+  const selectedPreset = presets.find((preset) => preset.id === skill) || presets[0] || null;
+  const [goal, setGoal] = React.useState("");
+  const [targetUrl, setTargetUrl] = React.useState(selectedPreset?.targetUrl || "");
+  const [domains, setDomains] = React.useState((selectedPreset?.defaultDomains || state.runtime?.defaultAllowedDomains || []).join(", "));
+  const [operatorTab, setOperatorTab] = React.useState("watch");
+
+  React.useEffect(() => {
+    if (!presets.length) return;
+    if (!presets.some((preset) => preset.id === skill)) {
+      setSkill(presets[0].id);
+    }
+  }, [presets, skill]);
+
+  React.useEffect(() => {
+    if (!selectedPreset) return;
+    setTargetUrl(selectedPreset.targetUrl || "");
+    setDomains((selectedPreset.defaultDomains || []).join(", "));
+  }, [selectedPreset?.id]);
+
+  function submitTask(event) {
+    event.preventDefault();
+    const defaultGoal = selectedPreset?.description || "Run a supervised local Operator task.";
+    onStartTask({
+      skill,
+      goal: goal.trim() || defaultGoal,
+      targetUrl,
+      allowedDomains: domains.split(",").map((item) => item.trim()).filter(Boolean)
+    });
+    setGoal("");
+    setOperatorTab("watch");
+  }
+
+  const activeCount = state.limits?.activeTasks || 0;
+  const pendingApprovals = selectedTask?.approvals?.filter((approval) => approval.status === "pending") || [];
+  const logs = selectedTask?.logs || [];
+  const artifacts = selectedTask?.artifacts || [];
+  const generatedArtifacts = selectedTask?.generatedArtifacts || [];
+  const latestLog = logs[logs.length - 1] || null;
+  const elapsed = selectedTask?.startedAt ? formatElapsed(Date.now() - Date.parse(selectedTask.startedAt)) : "0:00";
+  const operatorTabs = [
+    { id: "watch", label: "Watch", detail: selectedTask ? `${statusLabel(selectedTask.status)} preview` : "Worker viewport" },
+    { id: "delegate", label: "Delegate", detail: "Start work" },
+    { id: "task", label: "Task", detail: selectedTask ? `${selectedTask.progress || 0}% complete` : "No task" },
+    { id: "activity", label: "Activity", detail: `${logs.length} events` },
+    { id: "artifacts", label: "Artifacts", detail: `${artifacts.length + generatedArtifacts.length} ready` }
+  ];
+
+  return (
+    <main className="operator-page">
+      <header className="operator-console-topbar">
+        <button className="brand-button" onClick={onResetWorkspace}>
+          <span className="brand-mark">C</span>
+          <span>Cooper Operator</span>
+        </button>
+        <span className="operator-console-mode">Cooper · Operator</span>
+        <span className="operator-console-title">{selectedTask?.title || "No delegated task selected"}</span>
+        <span className="operator-console-id">{selectedTask?.id?.slice(0, 12) || "standby"}</span>
+        <nav className="nav workspace-nav operator-console-nav">
+          <button onClick={onSwitchWorkspace} aria-label="Cooper workspace">
+            <Radio size={18} />
+            <span>Cooper</span>
+          </button>
+          <button className="active" aria-label="Operator workspace">
+            <Monitor size={18} />
+            <span>Operator</span>
+          </button>
+        </nav>
+        <div className="operator-top-actions">
+          <button className="danger-action" onClick={onStopAll} disabled={!activeCount}>
+            <PhoneOff size={18} />
+            <span>STOP ALL</span>
+          </button>
+          <button className="icon-button" onClick={onLogout} aria-label="Lock Cooper">
+            <LogOut size={18} />
+          </button>
+        </div>
+      </header>
+
+      <section className="operator-console">
+        <aside className="operator-voice-rail">
+          <OperatorOrchestratorPanel
+            connected={callConnected}
+            connecting={callConnecting}
+            status={callStatus}
+            speaking={callSpeaking}
+            hearing={callHearing}
+            tasks={state.tasks}
+            selectedTask={selectedTask}
+            prompt={prompt}
+            messages={messages}
+            onPromptChange={onPromptChange}
+            onSubmitPrompt={onSubmitPrompt}
+            onStartCall={onStartCall}
+            onStopCall={onStopCall}
+            onSelectTask={onSelectTask}
+            onStopAll={onStopAll}
+            activeCount={activeCount}
+          />
+          <div className={`operator-rail-approval ${pendingApprovals.length ? "on" : ""}`}>
+            <p className="eyebrow">Approval pending</p>
+            <strong>{pendingApprovals[0]?.title || "No approval needed"}</strong>
+            <span>{pendingApprovals[0]?.description || "Operator will continue when the runner reaches the next checkpoint."}</span>
+          </div>
+        </aside>
+
+        {pendingApprovals.length > 0 && selectedTask && (
+          <div className="operator-approval-popover" role="dialog" aria-modal="false" aria-labelledby="operator-approval-title">
+            <div>
+              <p className="eyebrow">Approval required</p>
+              <h2 id="operator-approval-title">{pendingApprovals[0].title}</h2>
+              <p>{pendingApprovals[0].description}</p>
+              <span>{selectedTask.title}</span>
+            </div>
+            <div className="operator-approval-actions">
+              <button className="primary-action" onClick={() => onApproveTask(selectedTask.id, pendingApprovals[0].id)}>
+                Approve
+              </button>
+              <button className="ghost-action" onClick={() => onCancelTask(selectedTask.id)}>
+                Cancel task
+              </button>
+            </div>
+          </div>
+        )}
+
+        <section className="operator-work-surface">
+          <div className="operator-phase-ribbon">
+            {operatorPhases(selectedTask).map((phase) => (
+              <span key={phase.label} className={`operator-phase ${phase.state}`}>
+                <i />
+                {phase.label}
+              </span>
+            ))}
+            <span className="operator-elapsed">Elapsed <b>{elapsed}</b></span>
+          </div>
+
+          <section className="operator-status-grid">
+            <Metric label="Status" value={statusLabel(selectedTask?.status || "idle")} />
+            <Metric label="Progress" value={`${selectedTask?.progress || 0}%`} />
+            <Metric label="Approvals" value={state.limits?.approvalQueue || 0} />
+            <Metric label="Artifacts" value={artifacts.length + generatedArtifacts.length} />
+          </section>
+
+          <nav className="operator-work-tabs" aria-label="Operator workspace views">
+            {operatorTabs.map((tab) => (
+              <button
+                key={tab.id}
+                className={operatorTab === tab.id ? "active" : ""}
+                onClick={() => setOperatorTab(tab.id)}
+                type="button"
+              >
+                <span>{tab.label}</span>
+                <small>{tab.detail}</small>
+              </button>
+            ))}
+          </nav>
+
+          <section className={`operator-tab-stage ${operatorTab}`}>
+            {operatorTab === "watch" && (
+              <section className="operator-browser-panel">
+                <div className="operator-browser-chrome">
+                  <span className="operator-dots"><i /><i /><i /></span>
+                  <span className="operator-address">{selectedTask?.targetUrl || state.runtime?.codexWorkspace || "local operator workspace"}</span>
+                  <span className="operator-live-flag">{selectedTask ? statusLabel(selectedTask.status) : "Idle"}</span>
+                </div>
+                <div className="operator-browser-body">
+                  <OperatorRunPreview task={selectedTask} latestLog={latestLog} runtime={state.runtime} />
+                </div>
+              </section>
+            )}
+
+            {operatorTab === "delegate" && (
+              <form className="operator-compose panel operator-tab-card" onSubmit={submitTask}>
+                <div className="panel-head">
+                  <div>
+                    <p className="eyebrow">Delegate work</p>
+                    <h2>Start supervised documents, apps, pages, or browser work</h2>
+                  </div>
+                  <button className="primary-action" type="submit">
+                    <Send size={18} />
+                    <span>Start task</span>
+                  </button>
+                </div>
+                <div className="operator-form-grid">
+                  <label>
+                    <span>Skill</span>
+                    <select value={skill} onChange={(event) => setSkill(event.target.value)}>
+                      {presets.map((preset) => (
+                        <option key={preset.id} value={preset.id}>{preset.title}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Target URL</span>
+                    <input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} placeholder="https://app.example.com" />
+                  </label>
+                  <label className="operator-wide-field">
+                    <span>Allowed domains</span>
+                    <input value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="github.com, app.sendgrid.com" />
+                  </label>
+                  <label className="operator-wide-field">
+                    <span>Goal or call context</span>
+                    <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="Tell Operator what outcome Cooper should coordinate." />
+                  </label>
+                </div>
+                {selectedPreset && <p className="operator-preset-note">{selectedPreset.description}</p>}
+              </form>
+            )}
+
+            {operatorTab === "task" && (
+              <OperatorTaskDetail task={selectedTask} onApproveTask={onApproveTask} onCancelTask={onCancelTask} pendingApprovals={pendingApprovals} />
+            )}
+
+            {operatorTab === "activity" && (
+              <OperatorActivityPanel task={selectedTask} events={events} />
+            )}
+
+            {operatorTab === "artifacts" && (
+              <OperatorArtifactPanel task={selectedTask} />
+            )}
+          </section>
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function OperatorOrchestratorPanel({
+  connected,
+  connecting,
+  status,
+  speaking,
+  hearing,
+  tasks = [],
+  selectedTask,
+  prompt,
+  messages,
+  onPromptChange,
+  onSubmitPrompt,
+  onStartCall,
+  onStopCall,
+  onSelectTask,
+  onStopAll,
+  activeCount
+}) {
+  const live = connected || connecting;
+  const stateLabel = connecting ? "Starting" : connected ? status : "Idle";
+
+  return (
+    <section className="panel operator-orchestrator-panel">
+      <div className="operator-orchestrator-head">
+        <div>
+          <p className="eyebrow">Voice orchestrator</p>
+          <h2>Tell Cooper Operator what to run</h2>
+          <p className="muted">Start the orchestrator call, then ask for Codex work, browser work, repo debugging, or stop all active tasks.</p>
+        </div>
+        <span className={`status-badge ${connected ? "good" : connecting ? "waiting" : ""}`}>
+          {stateLabel}
+        </span>
+      </div>
+
+      <div className="operator-call-controls">
+        <button className="primary-action" onClick={onStartCall} disabled={live}>
+          <Mic size={18} />
+          <span>{connecting ? "Starting" : connected ? "Live" : "Start Operator call"}</span>
+        </button>
+        <button className="ghost-action" onClick={onStopCall} disabled={!live}>
+          <PhoneOff size={18} />
+          <span>Stop call</span>
+        </button>
+        <button className="danger-action" onClick={onStopAll} disabled={!activeCount}>
+          <PhoneOff size={18} />
+          <span>Stop all tasks</span>
+        </button>
+      </div>
+
+      <div className="operator-task-select">
+        <label htmlFor="operator-task-current">
+          <span>Current task</span>
+          <b>{tasks.length}</b>
+        </label>
+        <select
+          id="operator-task-current"
+          value={selectedTask?.id || ""}
+          onChange={(event) => onSelectTask(event.target.value)}
+          disabled={!tasks.length}
+        >
+          {!tasks.length && <option value="">No Operator tasks yet</option>}
+          {tasks.map((task) => (
+            <option key={task.id} value={task.id}>
+              {task.title} - {statusLabel(task.status)} - {task.progress || 0}%
+            </option>
+          ))}
+        </select>
+        {selectedTask ? (
+          <div className="operator-selected-task-summary">
+            <span className={`status-dot ${statusClass(selectedTask.status)}`} />
+            <span>
+              <strong>{selectedTask.title}</strong>
+              <small>{statusLabel(selectedTask.status)} · {selectedTask.progress || 0}% · {selectedTask.riskLevel}</small>
+            </span>
+          </div>
+        ) : (
+          <p className="muted">Start a task and Cooper will keep the active run selected here.</p>
+        )}
+      </div>
+
+      <div className="operator-signal-strip" aria-label="Operator call signal">
+        <span className={hearing ? "active" : ""}>Listening</span>
+        <span className={speaking ? "active" : ""}>Speaking</span>
+        <span className={connected ? "active" : ""}>Can start tasks</span>
+      </div>
+
+      <form className="operator-chat-form" onSubmit={onSubmitPrompt}>
+        <input
+          value={prompt}
+          onChange={(event) => onPromptChange(event.target.value)}
+          disabled={!connected}
+          placeholder={connected ? "Ask Cooper Operator to start a task..." : "Start Operator to chat"}
+        />
+        <button className="primary-action" disabled={!connected || !prompt.trim()}>
+          <Send size={18} />
+          <span>Ask</span>
+        </button>
+      </form>
+
+      <div className="operator-message-list">
+        {messages.slice(-5).map((message) => (
+          <div key={message.id} className={message.role === "Michael" ? "operator-message michael" : "operator-message cooper"}>
+            <strong>{message.role}</strong>
+            <p>{message.text}</p>
+          </div>
+        ))}
+        {!messages.length && <p className="muted">Try: “Cooper, build a landing page and a mini app from what we discussed, then let me watch the work.”</p>}
+      </div>
+    </section>
+  );
+}
+
+function OperatorTaskDetail({ task, onApproveTask, onCancelTask, pendingApprovals }) {
+  if (!task) {
+    return (
+      <section className="panel operator-task-detail">
+        <p className="eyebrow">Selected task</p>
+        <h2>No task selected</h2>
+        <p className="muted">Start a task to see approvals, progress, and checkpoints.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel operator-task-detail">
+      <div className="panel-head">
+        <div>
+          <p className="eyebrow">{task.skill}</p>
+          <h2>{task.title}</h2>
+        </div>
+        <span className={`status-badge ${statusClass(task.status)}`}>{statusLabel(task.status)}</span>
+      </div>
+      <p>{task.goal}</p>
+      <div className="operator-progress">
+        <span style={{ width: `${task.progress}%` }} />
+      </div>
+      <div className="operator-step-list">
+        {task.steps.map((step, index) => (
+          <div key={`${task.id}-${step}`} className={index < task.stepIndex ? "done" : index === task.stepIndex && ["running", "waiting_approval"].includes(task.status) ? "current" : ""}>
+            <CheckCircle2 size={16} />
+            <span>{step}</span>
+          </div>
+        ))}
+      </div>
+      <div className="operator-approval-list">
+        {pendingApprovals.map((approval) => (
+          <div className="operator-approval" key={approval.id}>
+            <AlertTriangle size={18} />
+            <span>
+              <strong>{approval.title}</strong>
+              <small>{approval.description}</small>
+            </span>
+            <button className="primary-action" onClick={() => onApproveTask(task.id, approval.id)}>Approve</button>
+          </div>
+        ))}
+      </div>
+      {["queued", "running", "waiting_approval"].includes(task.status) && (
+        <div className="operator-inline-actions">
+          <button className="ghost-action" onClick={() => onCancelTask(task.id)}>
+            <PhoneOff size={18} />
+            <span>Cancel task</span>
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function OperatorRunPreview({ task, latestLog, runtime = {} }) {
+  if (!task) {
+    return (
+      <div className="operator-empty-preview">
+        <Monitor size={34} />
+        <strong>No delegated work selected</strong>
+        <p>Start an Operator call or use the form above. Cooper will show browser checkpoints, Codex summaries, approvals, and artifacts here.</p>
+      </div>
+    );
+  }
+
+  const currentStep = task.steps[Math.min(task.stepIndex, task.steps.length - 1)] || "Completed";
+  const pendingApproval = task.approvals.find((approval) => approval.status === "pending");
+  const lastArtifact = task.artifacts[task.artifacts.length - 1] || null;
+  const generatedJobs = task.generatedJobs || [];
+  const generatedArtifacts = task.generatedArtifacts || [];
+  const latestGeneratedArtifact = generatedArtifacts[0] || null;
+  const logs = task.logs || [];
+  const latestLogs = logs.slice(-5).reverse();
+  const viewportDoc = operatorViewportDocument({ task, latestLog, runtime, currentStep, pendingApproval, lastArtifact });
+  const liveStreamAttached = Boolean(task.browserStreamUrl || task.livePreviewUrl);
+  const resultSummary = previewText(
+    pendingApproval?.description ||
+      (latestGeneratedArtifact ? `${latestGeneratedArtifact.title} is ready in the Work library.` : "") ||
+      lastArtifact?.content ||
+      latestLog?.detail ||
+      "No artifact has been generated yet.",
+    300
+  );
+  const jobSummary = generatedJobs.length
+    ? generatedJobs.reduce((parts, job) => {
+        parts[job.status] = (parts[job.status] || 0) + 1;
+        return parts;
+      }, {})
+    : null;
+  const jobSummaryText = jobSummary
+    ? Object.entries(jobSummary).map(([status, count]) => `${count} ${statusLabel(status).toLowerCase()}`).join(", ")
+    : "";
+
+  return (
+    <div className="operator-viewport-grid">
+      <div className="operator-viewport-shell">
+        <div className="operator-viewport-toolbar">
+          <div>
+            <span className={`operator-recording-dot ${["queued", "running", "waiting_approval"].includes(task.status) ? "on" : ""}`} />
+            <strong>{liveStreamAttached ? "Live browser stream" : "Replayable worker viewport"}</strong>
+          </div>
+          <span>{liveStreamAttached ? "Attached" : "Stream not attached yet"}</span>
+        </div>
+        <div className="operator-viewport-frame">
+          <iframe
+            title={`${task.title} operator viewport`}
+            sandbox=""
+            srcDoc={viewportDoc}
+          />
+        </div>
+        <div className="operator-checkpoint-strip" aria-label="Operator checkpoints">
+          {task.steps.map((step, index) => (
+            <span key={`${task.id}-checkpoint-${step}`} className={index < task.stepIndex ? "done" : index === Math.min(task.stepIndex, task.steps.length - 1) ? "now" : ""}>
+              <i />
+              <b>{index + 1}</b>
+              <small>{step}</small>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <aside className="operator-viewport-side">
+        <article className={`operator-result-card ${pendingApproval ? "needs-approval" : ""}`}>
+          <p className="eyebrow">{pendingApproval ? "Approval gate" : task.status === "completed" ? "Result" : "Checkpoint"}</p>
+          <strong>{pendingApproval?.title || latestGeneratedArtifact?.title || lastArtifact?.title || statusLabel(task.status)}</strong>
+          <span>{resultSummary}</span>
+          {latestGeneratedArtifact && (
+            <a className="operator-artifact-link" href={`/api/artifacts/${latestGeneratedArtifact.id}/content`} target="_blank" rel="noreferrer">
+              Open artifact
+            </a>
+          )}
+        </article>
+        {generatedJobs.length > 0 && (
+          <article className="operator-result-card">
+            <p className="eyebrow">Cooper work queue</p>
+            <strong>{jobSummaryText}</strong>
+            <span>{generatedArtifacts.length} generated artifact{generatedArtifacts.length === 1 ? "" : "s"} linked to this Operator task.</span>
+          </article>
+        )}
+        <article className="operator-result-card operator-generated-list">
+          <p className="eyebrow">Generated artifacts</p>
+          {generatedArtifacts.slice(0, 6).map((artifact) => (
+            <a key={artifact.id} href={`/api/artifacts/${artifact.id}/content`} target="_blank" rel="noreferrer">
+              <strong>{artifact.title}</strong>
+              <small>{artifactLabel(artifact.kind)} · {formatDate(artifact.createdAt)}</small>
+            </a>
+          ))}
+          {!generatedArtifacts.length && <span>No generated artifacts linked yet.</span>}
+        </article>
+        <article className="operator-result-card">
+          <p className="eyebrow">Now watching</p>
+          <strong>{currentStep}</strong>
+          <span>{latestLog ? `${latestLog.title}: ${latestLog.detail}` : "Waiting for the runner to emit activity."}</span>
+        </article>
+        <article className="operator-result-card operator-mini-log">
+          <p className="eyebrow">Recent trace</p>
+          {latestLogs.map((log) => (
+            <span key={log.id}>
+              <b>{log.title}</b>
+              <small>{formatTime(log.at)} · {log.detail}</small>
+            </span>
+          ))}
+          {!latestLogs.length && <span>No trace events yet.</span>}
+        </article>
+      </aside>
+    </div>
+  );
+}
+
+function operatorViewportDocument({ task, latestLog, runtime = {}, currentStep, pendingApproval, lastArtifact }) {
+  const isBrowser = Boolean(task.targetUrl);
+  const isCodex = task.skill === "codex_local_planning";
+  const isGithub = task.skill === "github_repo_debug";
+  const generatedJobs = task.generatedJobs || [];
+  const generatedArtifacts = task.generatedArtifacts || [];
+  const queueStatus = generatedJobs.length
+    ? generatedJobs.reduce((parts, job) => {
+        parts[job.status] = (parts[job.status] || 0) + 1;
+        return parts;
+      }, {})
+    : {};
+  const title = escapeHtmlText(task.title || "Operator task");
+  const goal = escapeHtmlText(task.goal || "");
+  const target = escapeHtmlText(task.targetUrl || runtime.codexWorkspace || "local operator workspace");
+  const status = escapeHtmlText(statusLabel(task.status));
+  const step = escapeHtmlText(currentStep || "Waiting for work.");
+  const activity = escapeHtmlText(latestLog ? `${latestLog.title}: ${latestLog.detail}` : "Waiting for the runner to emit activity.");
+  const result = escapeHtmlText(previewText(
+    pendingApproval?.description ||
+      (generatedArtifacts[0] ? `${generatedArtifacts[0].title} is ready in the Work library.` : "") ||
+      lastArtifact?.content ||
+      "No artifact has been generated yet.",
+    380
+  ));
+  const progress = Math.max(0, Math.min(100, Number(task.progress || 0)));
+  const domains = (task.allowedDomains || []).map(escapeHtmlText).join("</span><span>");
+  const isArtifactWork = Boolean(generatedJobs.length || task.artifactKinds?.length || task.templateIds?.length);
+  const frameMode = isArtifactWork ? "artifact" : isCodex ? "codex" : isGithub ? "github" : isBrowser ? "browser" : "workspace";
+  const queueStatusText = Object.entries(queueStatus)
+    .map(([statusName, count]) => `${count} ${statusLabel(statusName).toLowerCase()}`)
+    .join(", ");
+  const artifactList = generatedArtifacts.slice(0, 6)
+    .map((artifact) => `<span>${escapeHtmlText(artifact.title)} · ${escapeHtmlText(artifactLabel(artifact.kind))}</span>`)
+    .join("");
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: light;
+      --black: #252425;
+      --ink: #222623;
+      --muted: #6b756f;
+      --line: #dfe4dc;
+      --paper: #fbfcfa;
+      --grey: #eff3ec;
+      --volt: #f0de4a;
+      --green: #dff8e7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #e9eee6;
+      color: var(--ink);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .stage {
+      display: grid;
+      min-height: 100vh;
+      grid-template-rows: auto minmax(0, 1fr);
+      background:
+        linear-gradient(90deg, rgba(37,36,37,.05) 1px, transparent 1px),
+        linear-gradient(rgba(37,36,37,.05) 1px, transparent 1px),
+        var(--grey);
+      background-size: 42px 42px;
+    }
+    .top {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      min-height: 56px;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(251, 252, 250, .94);
+    }
+    .lights { display: flex; gap: 6px; }
+    .lights i { width: 9px; height: 9px; border-radius: 999px; background: #cfd7ce; }
+    .lights i:first-child { background: #ff6860; }
+    .lights i:nth-child(2) { background: #f7c85a; }
+    .lights i:nth-child(3) { background: #67d483; }
+    .address {
+      min-width: 0;
+      overflow: hidden;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      font: 700 12px "IBM Plex Mono", ui-monospace, monospace;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .status {
+      padding: 8px 11px;
+      border: 1px solid rgba(37,36,37,.12);
+      background: ${task.status === "completed" ? "var(--green)" : task.status === "waiting_approval" ? "#fff7bf" : "#fff"};
+      color: var(--black);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 18px;
+      min-height: 0;
+      padding: 24px;
+    }
+    .canvas {
+      position: relative;
+      overflow: hidden;
+      min-height: 430px;
+      border: 1px solid var(--line);
+      background: #fff;
+      box-shadow: 0 18px 42px rgba(37,36,37,.12);
+    }
+    .mode {
+      display: grid;
+      min-height: 100%;
+      padding: 28px;
+    }
+    .mode.browser {
+      grid-template-rows: auto auto minmax(0, 1fr);
+      background: linear-gradient(#fbfcfa, #ffffff);
+    }
+    .mode.codex,
+    .mode.artifact {
+      grid-template-columns: 210px minmax(0, 1fr);
+      gap: 18px;
+      background: #151514;
+      color: #f7f7f2;
+    }
+    .mode.github {
+      grid-template-rows: auto minmax(0, 1fr);
+      background: #f6f8fa;
+    }
+    .hero h1 {
+      max-width: 760px;
+      margin: 0;
+      font-size: clamp(32px, 6vw, 72px);
+      line-height: .92;
+      letter-spacing: -.02em;
+    }
+    .hero p {
+      max-width: 760px;
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+    .progress {
+      height: 10px;
+      margin: 24px 0 0;
+      overflow: hidden;
+      background: #edf0ed;
+    }
+    .progress span { display: block; width: ${progress}%; height: 100%; background: var(--volt); }
+    .browser-card-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 24px;
+    }
+    .browser-card-grid article {
+      min-height: 132px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+    .browser-card-grid b { display: block; margin-bottom: 8px; }
+    .browser-card-grid span { color: var(--muted); line-height: 1.45; }
+    .file-tree {
+      border-right: 1px solid rgba(255,255,255,.12);
+      padding-right: 18px;
+      color: #babdb4;
+      font: 700 12px "IBM Plex Mono", ui-monospace, monospace;
+    }
+    .file-tree strong {
+      display: block;
+      margin-bottom: 14px;
+      color: var(--volt);
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+    .file-tree span { display: block; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.08); }
+    .terminal {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-width: 0;
+      border: 1px solid rgba(255,255,255,.12);
+      background: #0e0e0d;
+    }
+    .terminal header {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255,255,255,.12);
+      color: #d9dbc9;
+      font: 800 12px "IBM Plex Mono", ui-monospace, monospace;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .terminal pre {
+      margin: 0;
+      padding: 18px;
+      overflow: auto;
+      color: #edf2df;
+      font: 13px/1.6 "IBM Plex Mono", ui-monospace, monospace;
+      white-space: pre-wrap;
+    }
+    .repo-board {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .repo-board article {
+      min-height: 150px;
+      padding: 16px;
+      border: 1px solid #d0d7de;
+      background: #fff;
+    }
+    .cursor {
+      position: absolute;
+      right: 26%;
+      bottom: 28%;
+      width: 30px;
+      height: 30px;
+      filter: drop-shadow(0 12px 16px rgba(0,0,0,.25));
+      transform: rotate(-18deg);
+      animation: cursorDrift 2.6s ease-in-out infinite;
+    }
+    .cursor:before {
+      content: "";
+      display: block;
+      width: 0;
+      height: 0;
+      border-left: 0 solid transparent;
+      border-right: 18px solid transparent;
+      border-bottom: 28px solid var(--black);
+    }
+    .cursor:after {
+      content: "";
+      position: absolute;
+      left: 19px;
+      top: 20px;
+      width: 9px;
+      height: 14px;
+      background: var(--black);
+      transform: rotate(36deg);
+    }
+    .side {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+    .side article {
+      padding: 16px;
+      border: 1px solid var(--line);
+      background: rgba(251,252,250,.9);
+    }
+    .side p {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font: 800 11px "IBM Plex Mono", ui-monospace, monospace;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .side strong { display: block; font-size: 18px; line-height: 1.15; }
+    .side span { display: block; margin-top: 8px; color: var(--muted); line-height: 1.45; }
+    .domains { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .domains span { margin: 0; padding: 5px 7px; border: 1px solid var(--line); background: #fff; font-size: 11px; }
+    @keyframes cursorDrift {
+      0%, 100% { transform: translate3d(0, 0, 0) rotate(-18deg); }
+      50% { transform: translate3d(-22px, -18px, 0) rotate(-18deg); }
+    }
+    @media (max-width: 820px) {
+      .body { grid-template-columns: 1fr; padding: 14px; }
+      .mode.codex, .mode.artifact { grid-template-columns: 1fr; }
+      .browser-card-grid, .repo-board { grid-template-columns: 1fr; }
+      .canvas { min-height: 390px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="stage">
+    <header class="top">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="address">${target}</div>
+      <div class="status">${status}</div>
+    </header>
+    <section class="body">
+      <div class="canvas">
+        ${operatorViewportModeMarkup({ frameMode, title, goal, step, activity, result, progress })}
+        <div class="cursor" aria-hidden="true"></div>
+      </div>
+      <aside class="side">
+        <article>
+          <p>Current step</p>
+          <strong>${step}</strong>
+          <span>${activity}</span>
+        </article>
+        <article>
+          <p>Result signal</p>
+          <strong>${escapeHtmlText(pendingApproval?.title || lastArtifact?.title || status)}</strong>
+          <span>${result}</span>
+        </article>
+        <article>
+          <p>Cooper queue</p>
+          <strong>${generatedJobs.length ? `${generatedJobs.length} jobs` : "No jobs yet"}</strong>
+          <span>${escapeHtmlText(queueStatusText || "Waiting for Operator to queue background work.")}</span>
+        </article>
+        <article>
+          <p>Generated artifacts</p>
+          <strong>${generatedArtifacts.length} ready</strong>
+          <div class="domains">${artifactList || "<span>none yet</span>"}</div>
+        </article>
+        <article>
+          <p>Allowed domains</p>
+          <strong>${task.allowedDomains?.length || 0} domains</strong>
+          <div class="domains"><span>${domains || "local workspace only"}</span></div>
+        </article>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
+function operatorViewportModeMarkup({ frameMode, title, goal, step, activity, result }) {
+  if (frameMode === "codex" || frameMode === "artifact") {
+    return `
+      <section class="mode ${frameMode}">
+        <nav class="file-tree">
+          <strong>${frameMode === "artifact" ? "Cooper work queue" : "Codex workspace"}</strong>
+          <span>voice-brief.md</span>
+          <span>job-contract.json</span>
+          <span>artifact-draft.${frameMode === "artifact" ? "html/md" : "md"}</span>
+          <span>runner-trace.log</span>
+        </nav>
+        <section class="terminal">
+          <header>${frameMode === "artifact" ? "cooper jobs · background" : "codex exec · supervised"}</header>
+          <pre>$ cooper-operator run
+task: ${title}
+goal: ${goal}
+
+current_step:
+${step}
+
+latest_activity:
+${activity}
+
+result:
+${result}</pre>
+        </section>
+      </section>`;
+  }
+
+  if (frameMode === "github") {
+    return `
+      <section class="mode github">
+        <div class="hero">
+          <h1>${title}</h1>
+          <p>${goal}</p>
+          <div class="progress"><span></span></div>
+        </div>
+        <div class="repo-board">
+          <article><b>Files inspected</b><span>${step}</span></article>
+          <article><b>Hypothesis stream</b><span>${activity}</span></article>
+          <article><b>Risk notes</b><span>Read-only repo debugging. No writes are allowed without a separate approval gate.</span></article>
+          <article><b>Output</b><span>${result}</span></article>
+        </div>
+      </section>`;
+  }
+
+  return `
+    <section class="mode browser">
+      <div class="hero">
+        <h1>${title}</h1>
+        <p>${goal}</p>
+        <div class="progress"><span></span></div>
+      </div>
+      <div class="browser-card-grid">
+        <article><b>Visible action</b><span>${step}</span></article>
+        <article><b>Latest checkpoint</b><span>${activity}</span></article>
+        <article><b>Runner output</b><span>${result}</span></article>
+      </div>
+    </section>`;
+}
+
+function previewText(value, maxLength = 280) {
+  const clean = String(value || "").replace(/\s+/g, " ").trim();
+  if (clean.length <= maxLength) return clean;
+  return `${clean.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
+}
+
+function OperatorRuntimePanel({ runtime = {} }) {
+  return (
+    <section className="panel operator-runtime-panel">
+      <p className="eyebrow">Runtime</p>
+      <h2>Local execution boundaries</h2>
+      <dl>
+        <div>
+          <dt>Browser profile</dt>
+          <dd>{runtime.browserProfile || "Not configured"}</dd>
+        </div>
+        <div>
+          <dt>Codex workspace</dt>
+          <dd>{runtime.codexWorkspace || "Not configured"}</dd>
+        </div>
+        <div>
+          <dt>Codex runtime</dt>
+          <dd>{runtime.codexRuntime || "codex exec"}</dd>
+        </div>
+        <div>
+          <dt>Browser launch</dt>
+          <dd>{runtime.browserLaunchEnabled ? "Enabled for local sessions" : "Disabled in this environment"}</dd>
+        </div>
+        <div>
+          <dt>Budgets</dt>
+          <dd>{runtime.budgets?.maxSteps || 40} steps, {runtime.budgets?.maxCodexInvocations || 3} Codex passes, 15 min</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+function OperatorActivityPanel({ task, events }) {
+  const logs = task?.logs || [];
+  return (
+    <section className="panel operator-activity-panel">
+      <div className="panel-head">
+        <div>
+          <p className="eyebrow">Activity</p>
+          <h2>Execution stream</h2>
+        </div>
+        <Activity size={20} />
+      </div>
+      <div className="operator-log-list">
+        {logs.slice().reverse().map((log) => (
+          <div key={log.id} className="operator-log-row">
+            <Clock size={16} />
+            <span>
+              <strong>{log.title}</strong>
+              <small>{formatTime(log.at)} - {log.detail}</small>
+            </span>
+          </div>
+        ))}
+        {!logs.length && <p className="muted">No task logs yet.</p>}
+      </div>
+      {!!events.length && (
+        <div className="operator-session-events">
+          <p className="eyebrow">Session events</p>
+          {events.slice(0, 4).map((event) => (
+            <small key={event.id}>{event.label}: {event.detail}</small>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function OperatorArtifactPanel({ task }) {
+  const artifacts = task?.artifacts || [];
+  const generatedArtifacts = task?.generatedArtifacts || [];
+  const generatedJobs = task?.generatedJobs || [];
+  return (
+    <section className="panel operator-artifact-panel">
+      <div className="panel-head">
+        <div>
+          <p className="eyebrow">Artifacts</p>
+          <h2>Generated work</h2>
+        </div>
+        <Files size={20} />
+      </div>
+      {generatedArtifacts.map((artifact) => (
+        <article key={artifact.id} className="operator-artifact generated">
+          <strong>{artifact.title}</strong>
+          <small>{artifactLabel(artifact.kind)} - {formatDate(artifact.createdAt)}</small>
+          <a className="secondary-link" href={`/api/artifacts/${artifact.id}/content`} target="_blank" rel="noreferrer">
+            Open artifact
+          </a>
+        </article>
+      ))}
+      {generatedJobs.map((job) => (
+        <article key={job.id} className="operator-artifact job">
+          <strong>{job.title}</strong>
+          <small>{statusLabel(job.status)} - {job.progress || job.apiStatus || "Queued"}</small>
+          <div className="operator-progress"><span style={{ width: `${progressPercent(job)}%` }} /></div>
+          {job.logs?.slice(-3).map((log) => (
+            <small key={log.id}>{formatTime(log.at)} - {log.message}</small>
+          ))}
+        </article>
+      ))}
+      {artifacts.map((artifact) => (
+        <article key={artifact.id} className="operator-artifact">
+          <strong>{artifact.title}</strong>
+          <small>{artifact.type} - {formatDate(artifact.createdAt)}</small>
+          <pre>{artifact.content}</pre>
+        </article>
+      ))}
+      {!artifacts.length && !generatedArtifacts.length && !generatedJobs.length && <p className="muted">Generated work and completed task summaries will appear here.</p>}
+    </section>
   );
 }
 
@@ -1472,19 +3190,34 @@ function HomeView({
   onEnableNotifications,
   onRetryJob
 }) {
+  const recentCalls = calls.slice(0, 5);
+  const recentArtifacts = artifacts.slice(0, 5);
+  const visibleJobs = jobs.slice(0, 5);
+  const runningJobs = activeJobs?.length ? activeJobs : jobs.filter((job) => ["queued", "running"].includes(job.status));
+  const focusCall = latestCall || calls[0] || null;
+  const artifactCount = focusCall ? artifacts.filter((artifact) => artifact.callId === focusCall.id).length : 0;
+  const focusSuggestions = focusCall?.suggestions || [];
+  const decisionRows = [
+    focusCall ? `${focusCall.title} has ${focusCall.transcript?.length || 0} captured turns and ${artifactCount} artifacts.` : "Start a call to create the first decision record.",
+    runningJobs.length ? `${runningJobs.length} background work item${runningJobs.length === 1 ? "" : "s"} running.` : "No background work is currently running.",
+    activeProject ? `${activeProject.title} is loaded as active project context.` : "No active project context is selected."
+  ];
+
   return (
-    <section className="home-grid">
-      <div className="hero-slab">
-        <p className="eyebrow">Executive mode</p>
-        <h1>Quiet in the room. Useful on command.</h1>
-        <div className="hero-actions">
-          <button className="primary-action" onClick={onStartCall}>
-            <Phone size={20} />
-            <span>Start Call</span>
-          </button>
-          <button className="ghost-action" onClick={onOpenCalls}>
-            <Library size={20} />
-            <span>Library</span>
+    <section className="home-dashboard">
+      <section className="home-command-panel">
+        <div className="home-command-copy">
+          <p className="eyebrow">Human command center</p>
+          <h1>Run the meeting. Capture the decision. Ship the artifact.</h1>
+          <p>
+            Cooper is the live partner for meetings, requirements, follow-ups, and visual work.
+            Start with a call, add project context, then turn the conversation into deliverables.
+          </p>
+        </div>
+        <div className="home-command-actions">
+          <button className="new-call-action large" onClick={onStartCall}>
+            <Plus size={18} />
+            <span>New call</span>
           </button>
           <button className="ghost-action" onClick={onOpenProjects}>
             <FolderKanban size={20} />
@@ -1492,67 +3225,122 @@ function HomeView({
           </button>
           <button className="ghost-action" onClick={onEnableNotifications}>
             {notificationPermission === "granted" ? <BellRing size={20} /> : <Bell size={20} />}
-            <span>{notificationPermission === "granted" ? "Notifications On" : "Notify Me"}</span>
+            <span>{notificationPermission === "granted" ? "Notifications on" : "Notify me"}</span>
           </button>
         </div>
-      </div>
 
-      <div className="metric-strip">
-        <Metric label="Calls" value={calls.length} />
+        <button className="home-focus-card" onClick={() => focusCall && onOpenCall(focusCall.id)} disabled={!focusCall}>
+          <span className="status-pill good">Latest meeting</span>
+          <strong>{focusCall?.title || "No meetings yet"}</strong>
+          <small>{focusCall ? `${formatDate(focusCall.startedAt)} · ${formatDuration(focusCall.durationSeconds)} · ${artifactCount} artifacts` : "Start a call to create a meeting record."}</small>
+        </button>
+      </section>
+
+      <section className="home-stat-strip">
+        <Metric label="Meetings" value={calls.length} />
         <Metric label="Projects" value={projects.length} />
         <Metric label="Artifacts" value={artifacts.length} />
-      </div>
+        <Metric label="Running" value={runningJobs.length} />
+      </section>
 
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Cooper Suggestions</h2>
-          <button className="icon-button" onClick={onOpenWork} aria-label="Open work">
-            <Files size={18} />
-          </button>
-        </div>
-        <div className="suggestion-grid">
-          {(latestCall?.suggestions || []).map((suggestion) => (
-            <button
-              className="suggestion"
-              key={suggestion.kind}
-              onClick={() => onGenerate(latestCall.id, suggestion.kind)}
-              disabled={!latestCall || !latestCall.transcript?.length}
-            >
-              <Wand2 size={18} />
-              <span>{suggestion.label}</span>
+      <section className="home-board">
+        <section className="panel home-meetings-panel">
+          <div className="panel-head">
+            <div>
+              <p className="eyebrow">Meetings</p>
+              <h2>Recent calls</h2>
+            </div>
+            <button className="icon-button" onClick={onOpenCalls} aria-label="Open calls">
+              <Library size={18} />
             </button>
-          ))}
-          {!latestCall && <p className="muted">No calls yet.</p>}
-        </div>
-      </section>
+          </div>
+          <div className="compact-list">
+            {recentCalls.map((call) => (
+              <CallRow key={call.id} call={call} onOpen={onOpenCall} />
+            ))}
+            {!recentCalls.length && <p className="muted">Call transcripts will appear here.</p>}
+          </div>
+        </section>
 
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Recent Calls</h2>
-          <button className="icon-button" onClick={onOpenCalls} aria-label="Open calls">
-            <Library size={18} />
-          </button>
-        </div>
-        <div className="compact-list">
-          {calls.slice(0, 4).map((call) => (
-            <CallRow key={call.id} call={call} onOpen={onOpenCall} />
-          ))}
-          {!calls.length && <p className="muted">Call transcripts will appear here.</p>}
-        </div>
-      </section>
+        <section className="panel home-decisions-panel">
+          <div className="panel-head">
+            <div>
+              <p className="eyebrow">Decisions</p>
+              <h2>Operating context</h2>
+            </div>
+            <button className="icon-button" onClick={onOpenWork} aria-label="Open work">
+              <Files size={18} />
+            </button>
+          </div>
+          <div className="decision-list">
+            {decisionRows.map((row) => (
+              <article className="decision-row" key={row}>
+                <CheckCircle2 size={17} />
+                <p>{row}</p>
+              </article>
+            ))}
+          </div>
+          <div className="suggestion-grid compact">
+            {focusSuggestions.slice(0, 4).map((suggestion) => (
+              <button
+                className="suggestion"
+                key={suggestion.kind}
+                onClick={() => onGenerate(focusCall.id, suggestion.kind)}
+                disabled={!focusCall || !focusCall.transcript?.length}
+              >
+                <Wand2 size={18} />
+                <span>{suggestion.label}</span>
+              </button>
+            ))}
+            {!focusSuggestions.length && <p className="muted">Cooper suggestions appear after a call.</p>}
+          </div>
+        </section>
 
-      <section className="panel">
+        <section className="panel home-work-panel">
+          <div className="panel-head">
+            <div>
+              <p className="eyebrow">Work</p>
+              <h2>Generated artifacts</h2>
+            </div>
+            <button className="icon-button" onClick={onOpenWork} aria-label="Open artifacts">
+              <Files size={18} />
+            </button>
+          </div>
+          <div className="compact-list">
+            {recentArtifacts.map((artifact) => (
+              <button
+                className="compact-row compact-row-button"
+                key={artifact.id}
+                type="button"
+                onClick={() => onOpenArtifact(artifact.id)}
+              >
+                <FileText size={18} />
+                <div>
+                  <strong>{artifact.title}</strong>
+                  <span>{artifactLabel(artifact.kind)} · {formatDate(artifact.createdAt)}</span>
+                </div>
+              </button>
+            ))}
+            {!recentArtifacts.length && <p className="muted">Generated documents, diagrams, and prototypes will appear here.</p>}
+          </div>
+        </section>
+
+        <section className="panel home-queue-panel">
         <div className="panel-head">
-          <h2>Work Queue</h2>
-          <button className="icon-button" onClick={onOpenWork} aria-label="Open artifacts">
+          <div>
+            <p className="eyebrow">Execution</p>
+            <h2>Work queue</h2>
+          </div>
+          <button className="icon-button" onClick={onOpenWork} aria-label="Open work">
             <RefreshCw size={18} />
           </button>
         </div>
         <p className="engine-line">
           {limits.workModel || "model"} - {limits.jobMaxOutputTokens || 0} tokens - {Math.round((limits.jobDelayMs || 0) / 1000)}s cadence
         </p>
-        <JobList jobs={jobs.slice(0, 5)} onRetry={onRetryJob} onOpenArtifact={onOpenArtifact} />
-        <ActivityStream jobs={jobs} />
+          <JobList jobs={visibleJobs} onRetry={onRetryJob} onOpenArtifact={onOpenArtifact} />
+          <ActivityStream jobs={jobs} compact />
+        </section>
       </section>
     </section>
   );
@@ -1726,6 +3514,7 @@ function CallCanvas({
     const visibleArtifact = selectedArtifact?.callId === callId ? selectedArtifact : callArtifacts[0] || null;
     const visibleContent = visibleArtifact?.id === selectedArtifact?.id ? artifactContent : "";
     const selectedExample = examples.find((example) => example.id === selectedExampleId) || examples[0] || null;
+    const templateCount = examples.length;
     const hasTypedBuildContext = Boolean(canvasPrompt.trim());
     const sourceTitle = hasTypedBuildContext
       ? "Typed context is primary"
@@ -1806,15 +3595,19 @@ function CallCanvas({
     setCanvasPrompt("");
   }
 
-  function queueCanvasBuild(kind, request = "") {
+  function queueCanvasBuild(kind, request = "", options = {}) {
     setBuildKind(kind);
-    onGenerateCanvas(kind, request);
+    onGenerateCanvas(kind, request, options);
     setActiveTab("activity");
   }
 
   function generateSelectedExample() {
     if (!selectedExample) return;
-    queueCanvasBuild(selectedExample.recipeKind || "aires_requirements", buildExamplePrompt(selectedExample, canvasPrompt));
+    queueCanvasBuild(
+      selectedExample.recipeKind || "aires_requirements",
+      buildExamplePrompt(selectedExample, canvasPrompt),
+      { title: selectedExample.title }
+    );
   }
 
   function presentSelectedExample() {
@@ -1865,7 +3658,7 @@ function CallCanvas({
           Context
         </button>
         <button className={activeTab === "examples" ? "active" : ""} onClick={() => setActiveTab("examples")} role="tab">
-          Examples
+          Templates
         </button>
         <button className={activeTab === "activity" ? "active" : ""} onClick={() => setActiveTab("activity")} role="tab">
           Activity
@@ -1902,7 +3695,7 @@ function CallCanvas({
                   <div className="canvas-empty large">
                     <Files size={28} />
                     <strong>Nothing on the canvas yet.</strong>
-                    <p>Cooper can bring diagrams, prototypes, requirements, or AIRES examples forward while the call keeps moving.</p>
+                    <p>Cooper can bring diagrams, prototypes, requirements, or AIRES HTML templates forward while the call keeps moving.</p>
                     <div className="quick-canvas-actions" aria-label="Canvas quick actions">
                       {canvasQuickActions.map(({ kind, label, icon: Icon }) => (
                         <button key={kind} onClick={() => queueCanvasBuild(kind)} disabled={!callId}>
@@ -1910,9 +3703,9 @@ function CallCanvas({
                           <span>{label}</span>
                         </button>
                       ))}
-                      <button onClick={() => setActiveTab("examples")} disabled={!callId}>
+                      <button onClick={() => setActiveTab("examples")}>
                         <Library size={17} />
-                        <span>Examples</span>
+                        <span>Templates</span>
                       </button>
                     </div>
                   </div>
@@ -1975,6 +3768,17 @@ function CallCanvas({
             <span>{sourceDetail}</span>
           </div>
 
+          <div className="template-library-head">
+            <div>
+              <p className="eyebrow">Template library</p>
+              <strong>AIRES HTML requirement templates</strong>
+            </div>
+            <button className="secondary-action compact" onClick={() => setActiveTab("examples")} type="button">
+              <ExternalLink size={17} />
+              <span>Open templates</span>
+            </button>
+          </div>
+
           <div className="flow-grid">
             {examples.map((example) => (
               <button
@@ -1999,11 +3803,11 @@ function CallCanvas({
               <div className="inline-actions">
                 <button className="primary-action compact" onClick={generateSelectedExample} disabled={!callId}>
                   <Wand2 size={17} />
-                  <span>Generate this flow</span>
+                  <span>Generate from template</span>
                 </button>
                 <button className="secondary-action compact" onClick={() => setActiveTab("examples")}>
                   <ExternalLink size={17} />
-                  <span>Preview example</span>
+                  <span>Preview template</span>
                 </button>
               </div>
             </div>
@@ -2054,6 +3858,10 @@ function CallCanvas({
         <div className="canvas-body">
           <div className="example-layout">
             <aside className="example-list">
+              <div className="example-list-head">
+                <span>{templateCount} templates</span>
+                <strong>AIRES HTML</strong>
+              </div>
               {examples.map((example) => (
                 <button
                   className={selectedExampleId === example.id ? "example-button active" : "example-button"}
@@ -2070,8 +3878,8 @@ function CallCanvas({
             <section className="example-preview">
               <div className="example-preview-head">
                 <div>
-                  <p className="eyebrow">{selectedExample?.category || "AIRES example"}</p>
-                  <h3>{selectedExample?.title || "Example"}</h3>
+                  <p className="eyebrow">{selectedExample?.category || "AIRES template"}</p>
+                  <h3>{selectedExample?.title || "Template"}</h3>
                   {selectedExample && <p>{selectedExample.description}</p>}
                 </div>
                 <div className="inline-actions">
@@ -2267,16 +4075,29 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onOpe
   const callArtifacts = artifacts.filter((artifact) => artifact.callId === selectedCall?.id);
   const callJobs = jobs.filter((job) => job.callId === selectedCall?.id);
   const selectedTranscriptCount = selectedCall?.transcript?.length || 0;
+  const selectedSummary = selectedCall?.transcript?.find((entry) => normalizeSpeaker(entry.speaker) === "Cooper")?.text
+    || selectedCall?.transcript?.find((entry) => entry.text)?.text
+    || "Captured meeting context, transcript, and generated Cooper work will appear here.";
+  const selectedModel = callJobs.find((job) => job.model)?.model || "gpt-5.4";
+  const tokenEstimate = callJobs.reduce((sum, job) => sum + (Number(job.outputTokens) || Number(job.maxOutputTokens) || 0), 0);
+  const estimatedCost = tokenEstimate ? `$${Math.max(0.01, tokenEstimate / 250000).toFixed(2)}` : "$0.00";
 
   return (
     <section className="split-view calls-view">
       <aside className="list-rail">
-        <div className="rail-head">
-          <div>
-            <p className="eyebrow">Call library</p>
-            <h1>Calls</h1>
+        <div className="rail-toolbar">
+          <button className="rail-title-button">
+            <span>All calls</span>
+            <span aria-hidden="true">⌄</span>
+          </button>
+          <div className="rail-tools">
+            <button className="icon-button flat" aria-label="Filter calls">
+              <Settings size={16} />
+            </button>
+            <button className="icon-button flat" aria-label="Search calls">
+              <RefreshCw size={16} />
+            </button>
           </div>
-          <span className="rail-count">{calls.length}</span>
         </div>
         <div className="rail-list">
           {calls.map((call) => (
@@ -2296,43 +4117,52 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onOpe
       <section className="detail-pane">
         {selectedCall ? (
           <>
-            <div className="detail-head">
+            <div className="detail-head call-detail-head">
               <div>
-                <p className="eyebrow">{selectedCall.status}</p>
+                <div className="call-title-meta">
+                  <span className={`status-pill ${statusClass(selectedCall.status)}`}>{statusLabel(selectedCall.status)}</span>
+                  <span>{formatDate(selectedCall.startedAt)}</span>
+                </div>
                 <h1>{selectedCall.title}</h1>
+                <p className="detail-summary">{selectedSummary}</p>
                 {selectedCall.projectTitle && <p className="project-link-line">{selectedCall.projectTitle}</p>}
               </div>
               <div className="detail-actions">
-                <span className="time-pill">{formatDuration(selectedCall.durationSeconds)}</span>
+                <button className="secondary-link">
+                  <ExternalLink size={16} />
+                  <span>Share</span>
+                </button>
+                <button className="secondary-link">
+                  <Upload size={16} />
+                  <span>Export</span>
+                </button>
+                <button className="icon-button flat" aria-label="More call actions">
+                  <Settings size={16} />
+                </button>
               </div>
             </div>
 
-            <div className="call-kpi-strip">
-              <Metric label="Turns" value={selectedTranscriptCount} />
+            <div className="call-detail-kpis">
+              <Metric label="Duration" value={formatDuration(selectedCall.durationSeconds)} />
+              <Metric label="Model" value={selectedModel} />
               <Metric label="Artifacts" value={callArtifacts.length} />
-              <Metric label="Work items" value={callJobs.length} />
+              <Metric label="Tokens" value={tokenEstimate ? `~${Math.round(tokenEstimate / 1000)}k` : "0"} />
+              <Metric label="Cost" value={estimatedCost} />
             </div>
 
-            <div className="suggestion-grid horizontal">
-              {(selectedCall.suggestions || []).map((suggestion) => (
-                <button
-                  className="suggestion"
-                  key={suggestion.kind}
-                  onClick={() => onGenerate(selectedCall.id, suggestion.kind)}
-                  disabled={!selectedCall.transcript?.length}
-                >
-                  <Wand2 size={18} />
-                  <span>{suggestion.label}</span>
-                </button>
-              ))}
+            <div className="call-tabs-row">
+              <button className="active">Transcript</button>
+              <button>Artifacts <span>{callArtifacts.length}</span></button>
+              <button>Summary</button>
+              <button>Notes</button>
+              <label className="call-search">
+                <span>⌕</span>
+                <input placeholder="Search in call" aria-label="Search in call" />
+              </label>
             </div>
 
-            <div className="two-column">
-              <section className="panel">
-                <div className="panel-head tight">
-                  <h2>Transcript</h2>
-                  <span className="section-count">{selectedTranscriptCount}</span>
-                </div>
+            <div className="call-record-grid">
+              <section className="call-transcript-panel">
                 <div className="transcript-list">
                   {(selectedCall.transcript || []).map((entry) => (
                     <article className={`transcript-row ${speakerClass(entry.speaker)}`} key={entry.id}>
@@ -2347,13 +4177,28 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onOpe
                 </div>
               </section>
 
-              <section className="panel">
+              <aside className="call-artifact-panel">
                 <div className="panel-head tight">
-                  <h2>Artifacts</h2>
-                  <span className="section-count">{callArtifacts.length + callJobs.length}</span>
+                  <h2>Artifacts created</h2>
+                  <button className="flat-link" onClick={() => callArtifacts[0] && onOpenArtifact(callArtifacts[0].id)} disabled={!callArtifacts.length}>
+                    View all
+                  </button>
                 </div>
                 <ArtifactMiniList artifacts={callArtifacts} jobs={callJobs} onRetry={onRetryJob} onOpenArtifact={onOpenArtifact} />
-              </section>
+                <div className="suggestion-grid compact">
+                  {(selectedCall.suggestions || []).slice(0, 4).map((suggestion) => (
+                    <button
+                      className="suggestion"
+                      key={suggestion.kind}
+                      onClick={() => onGenerate(selectedCall.id, suggestion.kind)}
+                      disabled={!selectedCall.transcript?.length}
+                    >
+                      <Wand2 size={18} />
+                      <span>{suggestion.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </aside>
             </div>
           </>
         ) : (
@@ -2370,6 +4215,17 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
   const isHtmlArtifact = selectedArtifact?.outputType === "html";
   const isMcpAppArtifact = selectedArtifact?.outputType === "mcp_app";
   const canPrototypeFromArtifact = selectedArtifact && ["execution_plan", "product_requirements", "code_sketch"].includes(selectedArtifact.kind);
+  const selectedCall = selectedArtifact ? calls.find((call) => call.id === selectedArtifact.callId) : null;
+  const artifactCategories = [
+    { label: "All artifacts", count: artifacts.length },
+    { label: "Diagrams", count: artifacts.filter((artifact) => artifact.kind === "mermaid_diagram").length },
+    { label: "Wireframes", count: artifacts.filter((artifact) => artifact.kind === "ui_wireframe").length },
+    { label: "Prototypes", count: artifacts.filter((artifact) => artifact.kind === "html_prototype").length },
+    { label: "Documents", count: artifacts.filter((artifact) => !["mermaid_diagram", "ui_wireframe", "html_prototype"].includes(artifact.kind)).length }
+  ];
+  const openArtifacts = selectedArtifact
+    ? [selectedArtifact, ...artifacts.filter((artifact) => artifact.id !== selectedArtifact.id).slice(0, 3)]
+    : artifacts.slice(0, 4);
 
   React.useEffect(() => {
     setArtifactMode(isHtmlArtifact ? "preview" : isMcpAppArtifact ? "app" : "rendered");
@@ -2385,21 +4241,25 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
   }
 
   return (
-    <section className="split-view">
+    <section className="split-view workbench-view">
       <aside className="list-rail">
-        <div className="rail-head">
+        <div className="work-rail-head">
           <h1>Work</h1>
-          <button className="icon-button" onClick={onRefresh} aria-label="Refresh">
-            <RefreshCw size={18} />
-          </button>
+          <div className="rail-tools">
+            <button className="new-call-action small" onClick={onRefresh}>
+              <RefreshCw size={15} />
+              <span>Refresh</span>
+            </button>
+          </div>
         </div>
-        <JobList
-          jobs={jobs}
-          onRetry={onRetryJob}
-          onOpenArtifact={onSelectArtifact}
-          selectedArtifactId={selectedArtifact?.id}
-        />
-        <ActivityStream jobs={jobs} compact />
+        <div className="work-category-list">
+          {artifactCategories.map((category, index) => (
+            <button className={index === 0 ? "work-category-row active" : "work-category-row"} key={category.label}>
+              <span>{category.label}</span>
+              <strong>{category.count}</strong>
+            </button>
+          ))}
+        </div>
         {latestCall && (
           <section className="work-launcher">
             <strong>Start From Latest Call</strong>
@@ -2419,7 +4279,7 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
             </div>
           </section>
         )}
-        <div className="rail-list spaced">
+        <div className="rail-list spaced work-artifact-list">
           {artifacts.map((artifact) => (
             <button
               key={artifact.id}
@@ -2434,14 +4294,38 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
         </div>
       </aside>
 
-      <section className="detail-pane">
+      <section className="detail-pane workbench-main">
         {selectedArtifact ? (
           <>
-            <div className="detail-head">
-              <div>
-                <p className="eyebrow">{selectedArtifact.kind}</p>
-                <h1>{selectedArtifact.title}</h1>
-              </div>
+            <div className="workbench-tabs">
+              {openArtifacts.map((artifact) => (
+                <button
+                  key={artifact.id}
+                  className={artifact.id === selectedArtifact.id ? "active" : ""}
+                  onClick={() => onSelectArtifact(artifact.id)}
+                >
+                  <FileText size={14} />
+                  <span>{artifact.title}</span>
+                  <small>×</small>
+                </button>
+              ))}
+              <button className="add-tab" onClick={onRefresh} aria-label="Refresh artifacts">
+                <Plus size={14} />
+              </button>
+            </div>
+            <div className="workbench-toolbar">
+              <button className="icon-button flat" onClick={onRefresh} aria-label="Refresh work">
+                <RefreshCw size={16} />
+              </button>
+              <span className="toolbar-select">{artifactLabel(selectedArtifact.kind)}</span>
+              <span className="toolbar-divider" />
+              <button className="icon-button flat" aria-label="Search artifact">
+                <Sparkles size={16} />
+              </button>
+              <button className="icon-button flat" aria-label="Canvas controls">
+                <Settings size={16} />
+              </button>
+              <span className="toolbar-zoom">100%</span>
               <div className="detail-actions">
                 {canPrototypeFromArtifact && (
                   <button className="secondary-link" onClick={prototypeFromArtifact} disabled={!artifactContent.trim()}>
@@ -2466,6 +4350,36 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
           <p className="muted">No artifact selected.</p>
         )}
       </section>
+
+      <aside className="work-inspector">
+        {selectedArtifact ? (
+          <>
+            <h2>{selectedArtifact.title}</h2>
+            <span className="status-pill mini">{artifactLabel(selectedArtifact.kind)}</span>
+            <dl>
+              <dt>Description</dt>
+              <dd>{selectedCall ? `Generated from ${selectedCall.title}.` : "Generated Cooper artifact."}</dd>
+              <dt>Created</dt>
+              <dd>{formatDate(selectedArtifact.createdAt)}</dd>
+              <dt>Source call</dt>
+              <dd>{selectedCall?.title || "Unknown call"}</dd>
+              <dt>Output</dt>
+              <dd>{isHtmlArtifact ? "HTML preview" : isMcpAppArtifact ? "MCP app" : "Markdown + rendered read view"}</dd>
+            </dl>
+            <div className="tag-row">
+              <span>{artifactLabel(selectedArtifact.kind).toLowerCase()}</span>
+              <span>cooper</span>
+              <span>aires</span>
+            </div>
+            <section className="inspector-queue">
+              <strong>Queue</strong>
+              <JobList jobs={jobs.slice(0, 3)} onRetry={onRetryJob} onOpenArtifact={onSelectArtifact} selectedArtifactId={selectedArtifact?.id} />
+            </section>
+          </>
+        ) : (
+          <p className="muted">Select an artifact to inspect source and status.</p>
+        )}
+      </aside>
     </section>
   );
 }
@@ -3024,7 +4938,10 @@ function artifactLabel(kind) {
     execution_plan: "Execution plan",
     post_call_kit: "Post-call kit",
     follow_up: "Follow-up summary",
-    code_sketch: "Code sketch"
+    code_sketch: "Code sketch",
+    landing_page: "Landing page",
+    mini_app: "Mini app",
+    executive_report: "Executive report"
   }[kind] || String(kind || "Artifact").replace(/_/g, " ");
 }
 
@@ -3033,7 +4950,10 @@ function defaultCanvasPrompt(kind) {
     mermaid_diagram: "Create the most useful Mermaid diagram for the architecture, workflow, user journey, or decision flow we are discussing.",
     ui_wireframe: "Create a mobile-first low-fidelity UI wireframe for the product experience we are discussing.",
     html_prototype: "Create a mobile-first interactive HTML prototype for the product workflow we are discussing.",
-    aires_requirements: "Create an AIRES scoped requirements artifact from the current conversation and project context. Include problem, goal, scope boundaries, MoSCoW, vertical INVEST slices, Given/When/Then criteria, and Definition of Ready."
+    aires_requirements: "Create an AIRES scoped requirements artifact from the current conversation and project context. Include problem, goal, scope boundaries, MoSCoW, vertical INVEST slices, Given/When/Then criteria, and Definition of Ready.",
+    landing_page: "Create a polished standalone landing page from the current conversation and project context.",
+    mini_app: "Create an interactive single-file mini application from the current conversation and project context.",
+    executive_report: "Create a polished executive report from the current conversation and project context."
   }[kind] || "Create a visual artifact for what we are discussing.";
 }
 
@@ -3278,6 +5198,16 @@ function emptyArcadeState() {
   };
 }
 
+function emptyOperatorState() {
+  return {
+    runtime: {},
+    presets: [],
+    tasks: [],
+    activeTask: null,
+    limits: { activeTasks: 0, approvalQueue: 0 }
+  };
+}
+
 function toolLabel(name) {
   return {
     search_workspace_context: "Workspace context",
@@ -3290,6 +5220,7 @@ function toolLabel(name) {
     create_canvas_artifact: "Canvas artifact",
     render_mcp_app: "MCP App canvas",
     present_aires_example: "AIRES example canvas",
+    generate_aires_template_artifact: "AIRES template generator",
     run_gstack_skill: "GStack skill",
     run_aires_requirements_framework: "AIRES requirements"
   }[name] || String(name || "Tool").replace(/_/g, " ");
@@ -3317,11 +5248,73 @@ function describeConnectionError(error) {
   return message || "Could not start the call.";
 }
 
+function operatorPhases(task) {
+  const labels = ["Requested", "Runner up", "Running skill", "Approval / Result", "Completed"];
+  const status = task?.status || "";
+  let activeIndex = 0;
+  if (["running"].includes(status)) activeIndex = Math.max(1, Math.min(2, Number(task?.stepIndex || 0)));
+  if (status === "waiting_approval") activeIndex = 3;
+  if (status === "completed") activeIndex = 4;
+  if (["failed", "stopped", "cancelled"].includes(status)) activeIndex = Math.max(1, Math.min(3, Number(task?.stepIndex || 0)));
+
+  return labels.map((label, index) => ({
+    label,
+    state: !task ? "" : index < activeIndex || status === "completed" ? "done" : index === activeIndex ? "now" : ""
+  }));
+}
+
+function operatorTaskSnapshot(task, { includeLogs = true, includeArtifacts = true } = {}) {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    progress: task.progress,
+    skill: task.skill,
+    riskLevel: task.riskLevel,
+    goal: task.goal,
+    currentStep: task.steps[Math.min(task.stepIndex, task.steps.length - 1)] || "",
+    pendingApprovals: task.approvals.filter((approval) => approval.status === "pending"),
+    approvals: task.approvals,
+    artifacts: includeArtifacts ? task.artifacts : [],
+    generatedArtifacts: includeArtifacts ? task.generatedArtifacts || [] : [],
+    generatedJobs: task.generatedJobs || [],
+    logs: includeLogs ? task.logs.slice(-12) : [],
+    latestLog: task.logs[task.logs.length - 1] || null,
+    message: operatorTaskStatusMessage(task)
+  };
+}
+
+function operatorTaskStatusMessage(task) {
+  if (!task) return "No Operator task exists yet.";
+  const pending = task.approvals.find((approval) => approval.status === "pending");
+  const artifact = task.generatedArtifacts?.[0] || task.artifacts[task.artifacts.length - 1];
+  const activeJobs = (task.generatedJobs || []).filter((job) => ["queued", "running"].includes(job.status));
+  const latest = task.logs[task.logs.length - 1];
+  if (pending) return `${task.title} is waiting for approval: ${pending.title}. ${pending.description}`;
+  if (activeJobs.length) return `${task.title} is running ${activeJobs.length} Cooper work job${activeJobs.length === 1 ? "" : "s"}. Latest checkpoint: ${latest?.title || "none yet"}. ${latest?.detail || ""}`.trim();
+  if (task.status === "completed") return `${task.title} completed. ${artifact ? `Latest artifact: ${artifact.title}.` : "No artifact was recorded."}`;
+  if (task.status === "failed") return `${task.title} failed. ${task.error || latest?.detail || "No error detail recorded."}`;
+  if (["stopped", "cancelled"].includes(task.status)) return `${task.title} was ${task.status}. ${latest?.detail || ""}`.trim();
+  return `${task.title} is ${statusLabel(task.status).toLowerCase()} at ${task.progress || 0}%. Latest checkpoint: ${latest?.title || "none yet"}. ${latest?.detail || ""}`.trim();
+}
+
+function formatElapsed(ms = 0) {
+  const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function statusLabel(status) {
   return {
-    completed: "Connected",
+    completed: "Completed",
     ended: "Ended",
     active: "Active",
+    queued: "Queued",
+    running: "Running",
+    waiting_approval: "Needs approval",
+    stopped: "Stopped",
+    cancelled: "Cancelled",
     pending: "Pending",
     failed: "Failed",
     not_started: "Not started",
@@ -3335,8 +5328,8 @@ function statusLabel(status) {
 
 function statusClass(status) {
   if (["completed", "ended", "executed"].includes(status)) return "good";
-  if (["active", "pending", "pending_approval", "not_started"].includes(status)) return "waiting";
-  if (["missing_api_key", "missing_mapping", "failed", "error"].includes(status)) return "bad";
+  if (["active", "pending", "pending_approval", "not_started", "queued", "running", "waiting_approval"].includes(status)) return "waiting";
+  if (["missing_api_key", "missing_mapping", "failed", "error", "stopped", "cancelled"].includes(status)) return "bad";
   return "";
 }
 

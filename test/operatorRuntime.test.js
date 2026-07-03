@@ -1,0 +1,134 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { operatorToolDefinitions, operatorToolNames } from "../cooperTools.js";
+import {
+  OPERATOR_PRESETS,
+  createOperatorTask,
+  hydrateOperatorTask,
+  normalizeAllowedDomains,
+  operatorProgress,
+  operatorRuntimeInfo,
+  operatorSkillSteps,
+  operatorTaskPublic,
+  riskForOperatorTask
+} from "../server/operatorRuntime.js";
+
+test("operator task uses SendGrid preset defaults and protected write risk", () => {
+  const task = createOperatorTask({ skill: "sendgrid_sender_auth", goal: "Configure sender auth for aires.ai" }, "2026-07-02T12:00:00.000Z");
+
+  assert.equal(task.status, "queued");
+  assert.equal(task.riskLevel, "write");
+  assert.equal(task.targetUrl, "https://app.sendgrid.com/");
+  assert.deepEqual(task.allowedDomains, ["app.sendgrid.com", "sendgrid.com"]);
+  assert.equal(task.budgets.maxSteps, 40);
+  assert.ok(task.steps.length >= 4);
+});
+
+test("operator domain normalization accepts URLs, commas, arrays, and duplicates", () => {
+  assert.deepEqual(
+    normalizeAllowedDomains(["https://www.github.com/org/repo", "github.com", "app.sendgrid.com:443", "not a domain"]),
+    ["github.com", "app.sendgrid.com"]
+  );
+
+  assert.deepEqual(normalizeAllowedDomains("https://linear.app/foo, notion.so/path"), ["linear.app", "notion.so"]);
+});
+
+test("operator risk classification defaults read-only for GitHub and write for unknown app work", () => {
+  assert.equal(riskForOperatorTask({ skill: "github_repo_debug", targetUrl: "https://github.com/aires/repo" }), "read");
+  assert.equal(riskForOperatorTask({ targetUrl: "https://app.example.com/admin" }), "write");
+});
+
+test("operator hydration and public shaping recover legacy tasks", () => {
+  const hydrated = hydrateOperatorTask({
+    id: "task-1",
+    title: "Legacy task",
+    status: "running",
+    logs: []
+  });
+  const publicTask = operatorTaskPublic(hydrated);
+
+  assert.equal(publicTask.id, "task-1");
+  assert.equal(publicTask.title, "Legacy task");
+  assert.equal(publicTask.progress, operatorProgress(hydrated));
+  assert.ok(publicTask.logs.length);
+  assert.ok(publicTask.steps.length);
+});
+
+test("operator runtime info is local-first and overridable", () => {
+  const runtime = operatorRuntimeInfo({
+    HOME: "/tmp/cooper-home",
+    COOPER_OPERATOR_WORKSPACE: "/tmp/operator-workspace",
+    COOPER_OPERATOR_ALLOWED_DOMAINS: "github.com,app.sendgrid.com"
+  });
+
+  assert.equal(runtime.mode, "local");
+  assert.equal(runtime.visibleBrowser, true);
+  assert.equal(runtime.browserLaunchEnabled, true);
+  assert.equal(runtime.codexWorkspace, "/tmp/operator-workspace");
+  assert.equal(runtime.browserProfile, "/tmp/cooper-home/.cooper/profiles/operator");
+  assert.deepEqual(runtime.defaultAllowedDomains, ["github.com", "app.sendgrid.com"]);
+});
+
+test("operator runtime disables browser launch in production unless explicitly enabled", () => {
+  assert.equal(operatorRuntimeInfo({ HOME: "/tmp/home", NODE_ENV: "production" }).browserLaunchEnabled, false);
+  assert.equal(operatorRuntimeInfo({ HOME: "/tmp/home", NODE_ENV: "production", COOPER_OPERATOR_LAUNCH_BROWSER: "true" }).browserLaunchEnabled, true);
+});
+
+test("operator skill steps are deterministic for local planning", () => {
+  assert.deepEqual(operatorSkillSteps("codex_local_planning"), [
+    "Capture Michael's voice goal and source context.",
+    "Queue real Cooper work jobs in the background.",
+    "Monitor model execution, retries, token budgets, and artifact readiness.",
+    "Present generated artifacts, open approvals, and next actions."
+  ]);
+});
+
+test("operator exposes richer build and document presets", () => {
+  const ids = OPERATOR_PRESETS.map((preset) => preset.id);
+
+  assert.ok(ids.includes("operator_document_suite"));
+  assert.ok(ids.includes("aires_template_suite"));
+  assert.ok(ids.includes("landing_page"));
+  assert.ok(ids.includes("mini_app"));
+  assert.ok(ids.includes("large_report"));
+
+  const suite = OPERATOR_PRESETS.find((preset) => preset.id === "operator_document_suite");
+  assert.deepEqual(suite.artifactKinds, [
+    "product_requirements",
+    "execution_plan",
+    "aires_requirements",
+    "mermaid_diagram",
+    "ui_wireframe",
+    "html_prototype"
+  ]);
+});
+
+test("operator task preserves linked Cooper work jobs and artifact kinds", () => {
+  const task = createOperatorTask({
+    skill: "landing_page",
+    goal: "Create a landing page for Cooper Operator",
+    jobIds: ["job-1"],
+    relatedCallId: "call-1"
+  }, "2026-07-02T12:00:00.000Z");
+  const publicTask = operatorTaskPublic(task);
+
+  assert.deepEqual(publicTask.artifactKinds, ["landing_page"]);
+  assert.equal(publicTask.relatedCallId, "call-1");
+  assert.deepEqual(publicTask.jobIds, ["job-1"]);
+});
+
+test("Cooper Operator exposes a status query tool for delegated work", () => {
+  const tool = operatorToolDefinitions.find((definition) => definition.name === "get_operator_task_status");
+
+  assert.ok(operatorToolNames.has("get_operator_task_status"));
+  assert.ok(tool, "status tool should be available to Realtime Cooper Operator");
+  assert.match(tool.description, /what happened/i);
+  assert.equal(tool.parameters.properties.task_id.type, "string");
+  assert.equal(tool.parameters.properties.include_logs.type, "boolean");
+  assert.equal(tool.parameters.properties.include_artifacts.type, "boolean");
+
+  const startTool = operatorToolDefinitions.find((definition) => definition.name === "start_operator_task");
+  assert.ok(startTool.parameters.properties.skill.enum.includes("mini_app"));
+  assert.ok(startTool.parameters.properties.skill.enum.includes("aires_template_suite"));
+  assert.equal(startTool.parameters.properties.artifact_kinds.type, "array");
+});

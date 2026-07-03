@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  airesTemplateToolIds,
+  cooperToolDefinitions
+} from "../cooperTools.js";
+import {
   AIRES_EXAMPLE_DOCUMENTS,
   buildAiresExamplePrompt,
   findAiresExample,
@@ -45,6 +49,18 @@ test("can load a known AIRES example HTML document", async () => {
   assert.match(example.title, /Jobs to be done/i);
 });
 
+test("all AIRES examples resolve to HTML template documents", async () => {
+  const examples = await Promise.all(
+    AIRES_EXAMPLE_DOCUMENTS.map((example) => getAiresExampleDocument(example.id))
+  );
+
+  assert.equal(examples.length, 9);
+  for (const example of examples) {
+    assert.match(example.html, /<!doctype html>/i, `${example.id} should be a standalone HTML document`);
+    assert.match(example.html, /<html/i, `${example.id} should include an html root`);
+  }
+});
+
 test("builds a generation prompt from an example and extra context", () => {
   const example = findAiresExample("service blueprint");
   const prompt = buildAiresExamplePrompt(example, "Focus on onboarding handoffs.");
@@ -52,4 +68,15 @@ test("builds a generation prompt from an example and extra context", () => {
   assert.match(prompt, /service blueprint/i);
   assert.match(prompt, /active call transcript/i);
   assert.match(prompt, /onboarding handoffs/i);
+});
+
+test("Realtime Cooper tool can queue every AIRES template from voice", () => {
+  const tool = cooperToolDefinitions.find((definition) => definition.name === "generate_aires_template_artifact");
+  const expectedIds = AIRES_EXAMPLE_DOCUMENTS.map((example) => example.id);
+
+  assert.ok(tool, "generate_aires_template_artifact should be exposed to Realtime");
+  assert.deepEqual(airesTemplateToolIds, expectedIds);
+  assert.deepEqual(tool.parameters.properties.template_id.enum, [...expectedIds, "all"]);
+  assert.deepEqual(tool.parameters.properties.template_ids.items.enum, expectedIds);
+  assert.match(tool.description, /live call transcript/i);
 });

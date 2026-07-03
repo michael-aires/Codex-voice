@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import multer from "multer";
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -16,9 +17,22 @@ import {
   workshopAiresFrameworkDocument
 } from "./server/airesFramework.js";
 import {
+  buildAiresExamplePrompt,
+  findAiresExample,
   getAiresExampleDocument,
   getAiresExampleList
 } from "./server/airesExamples.js";
+import {
+  OPERATOR_PRESETS,
+  createOperatorApproval,
+  createOperatorArtifact,
+  createOperatorLog,
+  createOperatorTask,
+  hydrateOperatorTask,
+  isOperatorTaskActive,
+  operatorRuntimeInfo,
+  operatorTaskPublic
+} from "./server/operatorRuntime.js";
 import { runGstackSkill } from "./server/tools/runGstackSkill.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -65,6 +79,7 @@ const upload = multer({
   limits: { fileSize: projectUploadMaxBytes }
 });
 const eventClients = new Set();
+const operatorTimers = new Map();
 let writeQueue = Promise.resolve();
 let workerActive = false;
 let lastGenerationAt = 0;
@@ -224,6 +239,36 @@ const artifactRecipes = {
       "Build the prototype as a complete standalone HTML document with inline CSS and small inline JavaScript. Default the design for a mobile viewport and include responsive desktop rules. Use no external assets, no external scripts, and no markdown fences. Return only the full HTML document starting with <!doctype html>."
     ]
   },
+  landing_page: {
+    title: "Landing page",
+    outputType: "html",
+    maxOutputTokens: 12000,
+    steps: [
+      "Extract the offer, audience, product promise, proof points, objections, CTA, and required sections from Michael's request and context. If details are missing, make conservative assumptions and label them in the copy.",
+      "Create a concise page strategy: headline, supporting copy, narrative flow, feature/proof sections, CTA hierarchy, mobile-first layout, desktop expansion, and any simple interactive behavior.",
+      "Build a polished standalone landing page as complete HTML with inline CSS and minimal inline JavaScript. Use a professional AIRES-adjacent visual style, responsive layout, real copy, no external assets, no external scripts, no gradients as the main design crutch, no markdown fences, and return only <!doctype html>..."
+    ]
+  },
+  mini_app: {
+    title: "Mini application prototype",
+    outputType: "html",
+    maxOutputTokens: 14000,
+    steps: [
+      "Extract the app concept, target user, primary workflow, required inputs, outputs, data states, controls, and success criteria from Michael's request and context.",
+      "Design the app behavior as a small complete single-file experience: screens, state model, interactions, sample data, validation, empty/loading/error states, and responsive behavior.",
+      "Build a complete standalone HTML/CSS/JS mini app with inline CSS and inline JavaScript only. Include realistic sample data, working controls, mobile-first layout, desktop layout, no external assets, no external scripts, no markdown fences, and return only <!doctype html>..."
+    ]
+  },
+  executive_report: {
+    title: "Executive report",
+    outputType: "html",
+    maxOutputTokens: 14000,
+    steps: [
+      "Distill the source context into the executive story: situation, stakes, decision points, evidence, product implications, engineering implications, risks, open questions, and recommended next moves.",
+      "Structure a board-quality report with executive summary, context, findings, recommendations, roadmap, risks, decision log, action plan, and appendix/source notes. Keep assumptions clearly labeled.",
+      "Build a complete standalone HTML report with inline CSS, print-friendly layout, table/card sections, clear hierarchy, professional AIRES-style typography, Export PDF button wired to window.print(), no external scripts, no stock imagery, no markdown fences, and return only <!doctype html>..."
+    ]
+  },
   mermaid_diagram: {
     title: "Mermaid diagram",
     outputType: "markdown",
@@ -305,6 +350,113 @@ app.post("/session", async (req, res) => {
 app.get("/api/state", async (_req, res) => {
   const db = await readDb();
   res.json(publicState(db));
+});
+
+app.get("/api/operator/state", async (_req, res) => {
+  const db = await readDb();
+  res.json(publicOperatorState(db));
+});
+
+app.post("/api/operator/tasks", async (req, res) => {
+  const task = createOperatorTask({
+    skill: req.body?.skill,
+    title: req.body?.title,
+    goal: req.body?.goal,
+    targetUrl: req.body?.targetUrl,
+    allowedDomains: req.body?.allowedDomains,
+    artifactKinds: req.body?.artifactKinds,
+    templateIds: req.body?.templateIds,
+    budgets: req.body?.budgets
+  });
+
+  await updateDb((db) => {
+    db.operatorTasks = Array.isArray(db.operatorTasks) ? db.operatorTasks : [];
+    db.operatorTasks.push(task);
+  });
+  scheduleOperatorTask(task.id, 250);
+
+  res.status(202).json({ task: operatorTaskPublic(task) });
+});
+
+app.post("/api/operator/tasks/:id/approve", async (req, res) => {
+  const result = await updateDb(async (db) => {
+    const task = db.operatorTasks?.find((item) => item.id === req.params.id);
+    if (!task) return null;
+    const approvalId = cleanText(req.body?.approvalId);
+    const approval = approvalId
+      ? task.approvals.find((item) => item.id === approvalId)
+      : task.approvals.find((item) => item.status === "pending");
+    if (!approval) return { task, error: "No pending approval found." };
+    const now = new Date().toISOString();
+    approval.status = "approved";
+    approval.resolvedAt = now;
+    task.status = "running";
+    task.updatedAt = now;
+    task.logs.push(createOperatorLog("approval.approved", "Approval granted", approval.title, now));
+    return { task };
+  });
+
+  if (!result) {
+    res.status(404).json({ error: "Operator task not found." });
+    return;
+  }
+  if (result.error) {
+    res.status(400).json({ error: result.error, task: operatorTaskPublic(result.task) });
+    return;
+  }
+
+  scheduleOperatorTask(result.task.id, 250);
+  res.json({ task: operatorTaskPublic(result.task) });
+});
+
+app.post("/api/operator/tasks/:id/cancel", async (req, res) => {
+  const task = await updateDb((db) => {
+    const item = db.operatorTasks?.find((candidate) => candidate.id === req.params.id);
+    if (!item) return null;
+    const now = new Date().toISOString();
+    item.status = "cancelled";
+    item.stoppedAt = now;
+    item.updatedAt = now;
+    item.logs.push(createOperatorLog("cancelled", "Task cancelled", "Michael cancelled this local Operator task.", now));
+    item.approvals.forEach((approval) => {
+      if (approval.status === "pending") {
+        approval.status = "cancelled";
+        approval.resolvedAt = now;
+      }
+    });
+    return item;
+  });
+
+  if (!task) {
+    res.status(404).json({ error: "Operator task not found." });
+    return;
+  }
+
+  clearOperatorTimer(task.id);
+  res.json({ task: operatorTaskPublic(task) });
+});
+
+app.post("/api/operator/stop-all", async (_req, res) => {
+  const stopped = await updateDb((db) => {
+    const now = new Date().toISOString();
+    const tasks = (db.operatorTasks || []).filter(isOperatorTaskActive);
+    tasks.forEach((task) => {
+      task.status = "stopped";
+      task.stoppedAt = now;
+      task.updatedAt = now;
+      task.logs.push(createOperatorLog("stopped", "STOP ALL pressed", "All active local Operator work was stopped immediately.", now));
+      task.approvals.forEach((approval) => {
+        if (approval.status === "pending") {
+          approval.status = "cancelled";
+          approval.resolvedAt = now;
+        }
+      });
+      clearOperatorTimer(task.id);
+    });
+    return tasks;
+  });
+
+  res.json({ stopped: stopped.map(operatorTaskPublic) });
 });
 
 app.get("/api/aires/examples", (_req, res) => {
@@ -633,7 +785,7 @@ app.post("/api/calls", async (req, res) => {
 });
 
 app.patch("/api/calls/:id", async (req, res) => {
-  const result = await updateDb((db) => {
+  const result = await updateDb(async (db) => {
     const call = db.calls.find((item) => item.id === req.params.id);
     if (!call) return null;
 
@@ -704,7 +856,9 @@ app.post("/api/calls/:id/end", async (req, res) => {
 app.post("/api/calls/:id/artifacts", async (req, res) => {
   const kind = artifactRecipes[req.body?.kind] ? req.body.kind : "post_call_kit";
   const customPrompt = cleanText(req.body?.customPrompt || "");
-  const result = await enqueueArtifactJob(req.params.id, kind, customPrompt);
+  const result = await enqueueArtifactJob(req.params.id, kind, customPrompt, {
+    title: cleanText(req.body?.title)
+  });
 
   if (!result.ok) {
     res.status(result.status || 400).json({ error: result.error });
@@ -757,7 +911,6 @@ app.post("/api/jobs/:id/retry", async (req, res) => {
 async function enqueueArtifactJob(callId, kind, customPrompt = "", options = {}) {
   const now = new Date().toISOString();
   const recipe = artifactRecipes[kind];
-  const maxOutputTokens = outputTokenBudget(recipe);
 
   const job = await updateDb((db) => {
     const call = db.calls.find((item) => item.id === callId);
@@ -766,48 +919,7 @@ async function enqueueArtifactJob(callId, kind, customPrompt = "", options = {})
       return { error: "A transcript or canvas prompt is required before Cooper can generate artifacts.", status: 400 };
     }
 
-    const queued = {
-      id: randomUUID(),
-      callId,
-      kind,
-      title: recipe.title,
-      status: "queued",
-      customPrompt,
-      stepIndex: 0,
-      stepCount: recipe.steps.length,
-      attempts: 0,
-      failures: 0,
-      maxAttempts: jobMaxAttempts,
-      model: workModel,
-      fallbackModel: fallbackWorkModel,
-      maxOutputTokens,
-      reasoningEffort: "medium",
-      apiStatus: "queued",
-      activeStepSummary: "",
-      lastActivityAt: now,
-      lastApiStartedAt: null,
-      lastApiCompletedAt: null,
-      lastApiDurationMs: null,
-      lastOutputChars: 0,
-      draftCharCount: 0,
-      draft: "",
-      artifactId: null,
-      error: null,
-      retryAt: null,
-      progress: "Queued.",
-      logs: [
-        {
-          id: randomUUID(),
-          at: now,
-          type: "queued",
-          message: `${recipe.title} queued with ${recipe.steps.length} execution steps.`
-        }
-      ],
-      createdAt: now,
-      updatedAt: now
-    };
-    db.jobs.push(queued);
-    return queued;
+    return enqueueArtifactJobInDb(db, callId, kind, customPrompt, options, now);
   });
 
   if (job?.error) {
@@ -816,6 +928,56 @@ async function enqueueArtifactJob(callId, kind, customPrompt = "", options = {})
 
   queueWorker();
   return { ok: true, job };
+}
+
+function enqueueArtifactJobInDb(db, callId, kind, customPrompt = "", options = {}, now = new Date().toISOString()) {
+  const recipe = artifactRecipes[kind];
+  if (!recipe) return { error: "Unknown artifact kind.", status: 400 };
+
+  const maxOutputTokens = outputTokenBudget(recipe);
+  const title = cleanText(options.title) || recipe.title;
+  const queued = {
+    id: randomUUID(),
+    callId,
+    kind,
+    title,
+    status: "queued",
+    customPrompt,
+    stepIndex: 0,
+    stepCount: recipe.steps.length,
+    attempts: 0,
+    failures: 0,
+    maxAttempts: jobMaxAttempts,
+    model: workModel,
+    fallbackModel: fallbackWorkModel,
+    maxOutputTokens,
+    reasoningEffort: "medium",
+    apiStatus: "queued",
+    activeStepSummary: "",
+    lastActivityAt: now,
+    lastApiStartedAt: null,
+    lastApiCompletedAt: null,
+    lastApiDurationMs: null,
+    lastOutputChars: 0,
+    draftCharCount: 0,
+    draft: "",
+    artifactId: null,
+    error: null,
+    retryAt: null,
+    progress: "Queued.",
+    logs: [
+      {
+        id: randomUUID(),
+        at: now,
+        type: "queued",
+        message: `${title} queued with ${recipe.steps.length} execution steps.`
+      }
+    ],
+    createdAt: now,
+    updatedAt: now
+  };
+  db.jobs.push(queued);
+  return queued;
 }
 
 function queueWorker() {
@@ -1002,7 +1164,7 @@ async function completeArtifact(job, call) {
   const artifactId = randomUUID();
   const now = new Date().toISOString();
   const recipe = artifactRecipes[job.kind] || {};
-  const safeTitle = recipe.title || "Cooper artifact";
+  const safeTitle = cleanText(job.title) || recipe.title || "Cooper artifact";
   const outputType = recipe.outputType || "markdown";
   const extension = outputType === "html" ? "html" : "md";
   const mimeType = outputType === "html" ? "text/html" : "text/markdown";
@@ -1037,7 +1199,7 @@ async function completeArtifact(job, call) {
       nextJob.progress = "Artifact ready.";
       nextJob.activeStepSummary = "";
       nextJob.draftCharCount = nextJob.draft?.length || 0;
-      appendJobLog(nextJob, "completed", `${outputType === "html" ? "HTML prototype" : "Markdown artifact"} saved: ${safeTitle}.`);
+      appendJobLog(nextJob, "completed", `${outputType === "html" ? "HTML artifact" : "Markdown artifact"} saved: ${safeTitle}.`);
       nextJob.updatedAt = now;
     }
     if (nextCall) {
@@ -1172,7 +1334,8 @@ function buildWorkPrompt(call, job, step) {
 Call title: ${call.title}
 Started: ${call.startedAt}
 Ended: ${call.endedAt || "unknown"}
-Artifact type: ${recipe.title || job.kind}
+Artifact title: ${cleanText(job.title) || recipe.title || job.kind}
+Artifact recipe: ${recipe.title || job.kind}
 Output type: ${recipe.outputType || "markdown"}
 
 Source priority:
@@ -1238,6 +1401,10 @@ async function executeCooperTool(name, args, context = {}) {
 
   if (name === "present_aires_example") {
     return executePresentAiresExampleTool(args, context);
+  }
+
+  if (name === "generate_aires_template_artifact") {
+    return executeGenerateAiresTemplateArtifactTool(args, context);
   }
 
   if (name === "run_aires_requirements_framework") {
@@ -1513,6 +1680,105 @@ async function executePresentAiresExampleTool(args, context = {}) {
     mode,
     message: `${example.title} is on Cooper's canvas.`,
     voice_summary: `${example.title} is now on the canvas. It is useful when you need to ${example.flow.toLowerCase()}`
+  };
+}
+
+async function executeGenerateAiresTemplateArtifactTool(args, context = {}) {
+  const callId = cleanText(context.callId);
+  const requestedTemplate = cleanText(args.template_id || args.example_id || args.document_key || args.topic);
+  const requestedTemplates = Array.isArray(args.template_ids)
+    ? args.template_ids.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const title = cleanText(args.title);
+  const instruction = limitText(args.instruction, 4000);
+  const suppliedContext = limitText(args.context, 8000);
+
+  if (!callId) {
+    return {
+      status: "error",
+      tool: "generate_aires_template_artifact",
+      message: "No active call is available for AIRES template generation.",
+      retryable: false
+    };
+  }
+
+  const examples = requestedTemplate === "all"
+    ? getAiresExampleList()
+    : requestedTemplates.length
+      ? requestedTemplates.map((id) => findAiresExample(id)).filter(Boolean)
+      : [findAiresExample(requestedTemplate)].filter(Boolean);
+
+  const uniqueExamples = Array.from(new Map(examples.map((example) => [example.id, example])).values());
+  if (!uniqueExamples.length) {
+    return {
+      status: "not_found",
+      tool: "generate_aires_template_artifact",
+      message: "I could not find that AIRES template. Ask for Jobs to be Done, service blueprint, data flywheel, capability matrix, personas, daily rep flow, context-to-product-content, product thesis, scoped requirements, or all.",
+      availableExamples: getAiresExampleList().map((item) => ({
+        id: item.id,
+        title: item.title,
+        category: item.category,
+        recipeKind: item.recipeKind
+      }))
+    };
+  }
+
+  const queued = [];
+  const failures = [];
+  for (const example of uniqueExamples) {
+    const extraContext = [
+      title && uniqueExamples.length === 1 ? `Requested artifact title: ${title}` : "",
+      instruction.text ? `Michael's voice instruction:\n${instruction.text}` : "",
+      suppliedContext.text ? `Priority context from the live call/tool request:\n${suppliedContext.text}` : ""
+    ].filter(Boolean).join("\n\n");
+    const customPrompt = buildAiresExamplePrompt(example, extraContext);
+    const kind = artifactRecipes[example.recipeKind] ? example.recipeKind : "aires_requirements";
+    const result = await enqueueArtifactJob(callId, kind, customPrompt, {
+      allowEmptyTranscript: true,
+      title: uniqueExamples.length === 1 && title ? title : example.title
+    });
+
+    if (result.ok) {
+      queued.push({
+        jobId: result.job.id,
+        templateId: example.id,
+        title: result.job.title,
+        kind,
+        category: example.category
+      });
+    } else {
+      failures.push({
+        templateId: example.id,
+        title: example.title,
+        error: result.error || "Could not queue template work."
+      });
+    }
+  }
+
+  if (!queued.length) {
+    return {
+      status: "error",
+      tool: "generate_aires_template_artifact",
+      message: failures[0]?.error || "Could not queue AIRES template work.",
+      failures,
+      retryable: false
+    };
+  }
+
+  const queuedTitles = queued.map((item) => item.title).join(", ");
+  return {
+    status: failures.length ? "partial" : "queued",
+    tool: "generate_aires_template_artifact",
+    riskLevel: "advisory",
+    jobId: queued[0]?.jobId || "",
+    jobs: queued,
+    failures,
+    message: queued.length === 1
+      ? `${queued[0].title} is running in Cooper's work queue from the live conversation.`
+      : `${queued.length} AIRES templates are running in Cooper's work queue: ${queuedTitles}.`,
+    voice_summary: queued.length === 1
+      ? `I started ${queued[0].title}. It will appear on the canvas when it is ready.`
+      : `I started ${queued.length} AIRES documents. They will appear in the work queue and canvas as they finish.`
   };
 }
 
@@ -2331,7 +2597,7 @@ function sanitizeArcadeInput(name, args) {
 async function ensureDataStore() {
   await mkdir(artifactsDir, { recursive: true });
   if (!existsSync(dbPath)) {
-    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], toolCalls: [], gstackRuns: [], arcadeAuthorizations: [], projects: [], projectSources: [] }, null, 2), "utf8");
+    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], toolCalls: [], gstackRuns: [], arcadeAuthorizations: [], projects: [], projectSources: [], operatorTasks: [] }, null, 2), "utf8");
   }
 }
 
@@ -2352,7 +2618,8 @@ async function readDbRaw() {
     gstackRuns: Array.isArray(parsed.gstackRuns) ? parsed.gstackRuns : [],
     arcadeAuthorizations: Array.isArray(parsed.arcadeAuthorizations) ? parsed.arcadeAuthorizations : [],
     projects: Array.isArray(parsed.projects) ? parsed.projects : [],
-    projectSources: Array.isArray(parsed.projectSources) ? parsed.projectSources : []
+    projectSources: Array.isArray(parsed.projectSources) ? parsed.projectSources : [],
+    operatorTasks: Array.isArray(parsed.operatorTasks) ? parsed.operatorTasks : []
   };
 }
 
@@ -2397,6 +2664,32 @@ function publicState(db) {
       gstackModel: process.env.COOPER_GSTACK_MODEL || workModel,
       gstackMaxOutputTokens: Number(process.env.COOPER_GSTACK_MAX_OUTPUT_TOKENS || 2200)
     }
+  };
+}
+
+function publicOperatorState(db) {
+  const tasks = sortByDate(db.operatorTasks || []).map((task) => publicOperatorTask(task, db));
+  return {
+    runtime: operatorRuntimeInfo(process.env),
+    presets: OPERATOR_PRESETS,
+    tasks,
+    activeTask: tasks.find(isOperatorTaskActive) || tasks[0] || null,
+    limits: {
+      activeTasks: tasks.filter(isOperatorTaskActive).length,
+      approvalQueue: tasks.reduce((count, task) => count + task.approvals.filter((approval) => approval.status === "pending").length, 0)
+    }
+  };
+}
+
+function publicOperatorTask(task, db) {
+  const shaped = operatorTaskPublic(task);
+  const jobIds = new Set(shaped.jobIds || []);
+  const generatedJobs = sortByDate((db.jobs || []).filter((job) => jobIds.has(job.id))).map(publicJob);
+  const generatedArtifacts = sortByDate((db.artifacts || []).filter((artifact) => jobIds.has(artifact.jobId))).map(publicArtifact);
+  return {
+    ...shaped,
+    generatedJobs,
+    generatedArtifacts
   };
 }
 
@@ -2694,6 +2987,7 @@ function toolRiskLevel(name) {
   if (name === "create_canvas_artifact") return "advisory";
   if (name === "render_mcp_app") return "advisory";
   if (name === "present_aires_example") return "advisory";
+  if (name === "generate_aires_template_artifact") return "advisory";
   if (name === "run_aires_requirements_framework") return "advisory";
   return "read";
 }
@@ -2719,6 +3013,7 @@ function toolLabel(name) {
     create_followup_action: "Follow-up actions",
     render_mcp_app: "MCP App canvas",
     present_aires_example: "AIRES example canvas",
+    generate_aires_template_artifact: "AIRES template generator",
     run_aires_requirements_framework: "AIRES requirements"
   }[name] || name;
 }
@@ -3023,6 +3318,19 @@ function safeToolArguments(name, args) {
     };
   }
 
+  if (name === "generate_aires_template_artifact") {
+    const instruction = cleanText(args.instruction);
+    const context = cleanText(args.context);
+    return {
+      templateId: cleanText(args.template_id),
+      templateIds: Array.isArray(args.template_ids) ? args.template_ids.map(cleanText).filter(Boolean).slice(0, 12) : [],
+      title: cleanText(args.title),
+      instructionLength: instruction.length,
+      contextLength: context.length,
+      inputRedacted: containsSensitiveText(instruction) || containsSensitiveText(context)
+    };
+  }
+
   if (name === "run_aires_requirements_framework") {
     const sourceContext = cleanText(args.source_context);
     return {
@@ -3298,6 +3606,418 @@ function broadcastEvent(type, payload) {
   }
 }
 
+function scheduleOperatorTask(taskId, delayMs = 1200) {
+  clearOperatorTimer(taskId);
+  const timer = setTimeout(() => {
+    operatorTimers.delete(taskId);
+    runOperatorTaskStep(taskId).catch((error) => {
+      console.error("Operator task failed:", error);
+    });
+  }, Math.max(0, delayMs));
+  operatorTimers.set(taskId, timer);
+}
+
+function clearOperatorTimer(taskId) {
+  const timer = operatorTimers.get(taskId);
+  if (timer) clearTimeout(timer);
+  operatorTimers.delete(taskId);
+}
+
+async function queueOperatorWorker() {
+  const db = await readDb();
+  for (const task of db.operatorTasks || []) {
+    if (["queued", "running"].includes(task.status)) {
+      scheduleOperatorTask(task.id, 350);
+    }
+  }
+}
+
+async function runOperatorTaskStep(taskId) {
+  const result = await updateDb(async (db) => {
+    const task = db.operatorTasks?.find((item) => item.id === taskId);
+    if (!task || !["queued", "running"].includes(task.status)) {
+      return { status: task?.status || "missing" };
+    }
+
+    const now = new Date().toISOString();
+    const hydrated = hydrateOperatorTask(task);
+    Object.assign(task, hydrated);
+
+    if (exceedsOperatorBudget(task, now)) {
+      task.status = "failed";
+      task.error = "Operator budget exceeded.";
+      task.updatedAt = now;
+      task.logs.push(createOperatorLog("budget.exceeded", "Budget exceeded", "The local Operator task hit its wall-clock or step budget and paused safely.", now));
+      return { status: task.status };
+    }
+
+    if (task.status === "queued") {
+      task.status = "running";
+      task.startedAt = now;
+      task.updatedAt = now;
+      task.logs.push(createOperatorLog("runner.started", "Local runner started", operatorRuntimeLine(), now));
+      task.logs.push(createOperatorLog("step.started", `Step ${task.stepIndex + 1} started`, currentOperatorStep(task), now));
+      return { status: task.status };
+    }
+
+    if (operatorTaskProducesArtifacts(task)) {
+      return runOperatorArtifactTaskInDb(db, task, now);
+    }
+
+    const approval = nextOperatorApproval(task, now);
+    if (approval) {
+      task.status = "waiting_approval";
+      task.approvals.push(approval);
+      task.updatedAt = now;
+      task.logs.push(createOperatorLog("approval.required", approval.title, approval.description, now));
+      return { status: task.status };
+    }
+
+    if (task.stepIndex === 1 && hasApprovedOperatorApproval(task, "browser_launch") && !task.browserLaunchedAt) {
+      const launchResult = await launchOperatorBrowser(task);
+      task.browserLaunchedAt = now;
+      task.logs.push(createOperatorLog(launchResult.ok ? "browser.opened" : "browser.skipped", launchResult.title, launchResult.detail, now));
+    }
+
+    const completedStep = currentOperatorStep(task);
+    task.logs.push(createOperatorLog("step.completed", `Step ${task.stepIndex + 1} completed`, completedStep, now));
+    task.stepIndex += 1;
+    task.updatedAt = now;
+
+    if (task.stepIndex >= task.steps.length) {
+      task.status = "completed";
+      task.completedAt = now;
+      task.artifacts.push(createOperatorArtifact({
+        type: "summary",
+        title: `${task.title} summary`,
+        content: operatorSummaryMarkdown(task)
+      }, now));
+      task.logs.push(createOperatorLog("artifact.ready", "Operator artifact ready", "A replayable local run summary is ready in the Operator workspace.", now));
+      return { status: task.status };
+    }
+
+    task.logs.push(createOperatorLog("step.started", `Step ${task.stepIndex + 1} started`, currentOperatorStep(task), now));
+    return { status: task.status };
+  });
+
+  if (result.queuedWork) {
+    queueWorker();
+  }
+
+  if (result.status === "running" || result.status === "queued") {
+    scheduleOperatorTask(taskId, 1700);
+  }
+}
+
+function operatorTaskProducesArtifacts(task) {
+  return Boolean(task?.artifactKinds?.length || task?.templateIds?.length);
+}
+
+function runOperatorArtifactTaskInDb(db, task, now) {
+  if (!task.jobsQueuedAt) {
+    const queued = queueOperatorGeneratedJobsInDb(db, task, now);
+    task.stepIndex = Math.min(1, task.steps.length - 1);
+    task.jobsQueuedAt = now;
+    task.updatedAt = now;
+    if (!queued.length) {
+      task.status = "failed";
+      task.error = "No artifact jobs could be queued for this Operator skill.";
+      task.logs.push(createOperatorLog("artifact.failed", "No jobs queued", task.error, now));
+      return { status: task.status };
+    }
+    task.logs.push(createOperatorLog(
+      "artifact.jobs_queued",
+      "Real work queued",
+      queued.length === 1
+        ? `${queued[0].title} is now running in Cooper's work queue.`
+        : `${queued.length} Cooper work jobs are now running in the background.`,
+      now
+    ));
+    return { status: task.status, queuedWork: true };
+  }
+
+  const jobs = (db.jobs || []).filter((job) => task.jobIds.includes(job.id));
+  const artifacts = (db.artifacts || []).filter((artifact) => task.jobIds.includes(artifact.jobId));
+  const active = jobs.filter((job) => ["queued", "running"].includes(job.status));
+  const failed = jobs.filter((job) => job.status === "failed");
+  const completed = jobs.filter((job) => job.status === "completed");
+  const signature = jobs.map((job) => `${job.id}:${job.status}:${job.stepIndex}:${job.apiStatus}:${job.artifactId || ""}`).join("|");
+
+  if (task.lastJobStatusSignature !== signature) {
+    task.lastJobStatusSignature = signature;
+    task.logs.push(createOperatorLog(
+      "artifact.monitor",
+      "Watching Cooper jobs",
+      operatorJobStatusLine(jobs),
+      now
+    ));
+  }
+
+  task.stepIndex = active.length ? Math.min(2, task.steps.length - 1) : Math.min(3, task.steps.length - 1);
+  task.updatedAt = now;
+
+  if (failed.length) {
+    task.status = "failed";
+    task.error = failed.map((job) => `${job.title}: ${job.error || job.progress || "failed"}`).join(" | ");
+    task.logs.push(createOperatorLog("artifact.failed", "Generated work failed", task.error, now));
+    return { status: task.status };
+  }
+
+  if (jobs.length && completed.length === jobs.length) {
+    task.status = "completed";
+    task.stepIndex = task.steps.length;
+    task.completedAt = now;
+    task.artifacts = [
+      ...task.artifacts,
+      createOperatorArtifact({
+        type: "generated_work_summary",
+        title: `${task.title} generated artifacts`,
+        content: operatorGeneratedArtifactSummary(jobs, artifacts)
+      }, now)
+    ];
+    task.logs.push(createOperatorLog(
+      "artifact.ready",
+      "Generated artifacts ready",
+      `${artifacts.length} artifact${artifacts.length === 1 ? "" : "s"} finished and are available from the Operator task and Work library.`,
+      now
+    ));
+    return { status: task.status };
+  }
+
+  return { status: task.status };
+}
+
+function queueOperatorGeneratedJobsInDb(db, task, now) {
+  const callId = ensureOperatorWorkCallInDb(db, task, now);
+  const queued = [];
+
+  const templateIds = Array.isArray(task.templateIds) ? task.templateIds.filter(Boolean) : [];
+  if (templateIds.length) {
+    const examples = templateIds.includes("all")
+      ? getAiresExampleList()
+      : templateIds.map((id) => findAiresExample(id)).filter(Boolean);
+    const uniqueExamples = Array.from(new Map(examples.map((example) => [example.id, example])).values());
+    for (const example of uniqueExamples) {
+      const customPrompt = buildAiresExamplePrompt(example, operatorTaskPromptContext(task));
+      const kind = artifactRecipes[example.recipeKind] ? example.recipeKind : "aires_requirements";
+      const job = enqueueArtifactJobInDb(db, callId, kind, customPrompt, {
+        allowEmptyTranscript: true,
+        title: example.title
+      }, now);
+      if (!job.error) queued.push(job);
+    }
+  }
+
+  for (const kind of task.artifactKinds || []) {
+    if (!artifactRecipes[kind]) continue;
+    const job = enqueueArtifactJobInDb(db, callId, kind, operatorTaskPromptContext(task), {
+      allowEmptyTranscript: true,
+      title: task.artifactKinds.length === 1 ? task.title : artifactRecipes[kind].title
+    }, now);
+    if (!job.error) queued.push(job);
+  }
+
+  task.relatedCallId = callId;
+  task.jobIds = Array.from(new Set([...(task.jobIds || []), ...queued.map((job) => job.id)]));
+  return queued;
+}
+
+function ensureOperatorWorkCallInDb(db, task, now) {
+  if (task.relatedCallId && db.calls.some((call) => call.id === task.relatedCallId)) {
+    return task.relatedCallId;
+  }
+
+  const callId = randomUUID();
+  db.calls.push({
+    id: callId,
+    title: `Operator: ${task.title}`,
+    status: "operator",
+    source: "operator",
+    startedAt: task.startedAt || now,
+    endedAt: null,
+    durationSeconds: 0,
+    projectId: "",
+    projectTitle: "",
+    projectContextSnapshot: "",
+    transcript: [
+      {
+        id: randomUUID(),
+        at: now,
+        speaker: "Michael",
+        text: task.goal
+      },
+      {
+        id: randomUUID(),
+        at: now,
+        speaker: "Cooper Operator",
+        text: `Run skill ${task.skill} and produce: ${[
+          ...(task.artifactKinds || []),
+          ...(task.templateIds || [])
+        ].join(", ") || "operator output"}.`
+      }
+    ],
+    suggestions: defaultSuggestions(true),
+    createdAt: now,
+    updatedAt: now
+  });
+  return callId;
+}
+
+function operatorTaskPromptContext(task) {
+  return [
+    `Operator task: ${task.title}`,
+    `Skill: ${task.skill}`,
+    `Michael's requested outcome:\n${task.goal}`,
+    task.targetUrl ? `Target URL: ${task.targetUrl}` : "",
+    task.allowedDomains?.length ? `Allowed domains: ${task.allowedDomains.join(", ")}` : "",
+    "This was started from the Cooper Operator voice workspace. Produce a finished artifact Michael can inspect while the conversation continues.",
+    "If implementation details are missing, make conservative assumptions, label them, and produce a useful first pass rather than stopping."
+  ].filter(Boolean).join("\n\n");
+}
+
+function operatorJobStatusLine(jobs) {
+  if (!jobs.length) return "No Cooper work jobs have been linked yet.";
+  const counts = jobs.reduce((acc, job) => {
+    acc[job.status] = (acc[job.status] || 0) + 1;
+    return acc;
+  }, {});
+  return Object.entries(counts)
+    .map(([status, count]) => `${count} ${status}`)
+    .join(", ");
+}
+
+function operatorGeneratedArtifactSummary(jobs, artifacts) {
+  const artifactLines = artifacts.length
+    ? artifacts.map((artifact) => `- ${artifact.title} (${artifact.kind}, artifact ${artifact.id})`)
+    : ["- No artifact records were found yet."];
+  const jobLines = jobs.map((job) => `- ${job.title}: ${job.status}${job.artifactId ? ` -> ${job.artifactId}` : ""}`);
+  return [
+    "## Generated artifacts",
+    ...artifactLines,
+    "",
+    "## Linked Cooper jobs",
+    ...jobLines,
+    "",
+    "These were generated by the normal Cooper background work queue, so they also appear in the Work library."
+  ].join("\n");
+}
+
+function nextOperatorApproval(task, now) {
+  if (task.targetUrl && task.stepIndex === 1 && !hasOperatorApproval(task, "browser_launch")) {
+    return createOperatorApproval({
+      type: "browser_launch",
+      title: "Open visible local browser",
+      description: `Approve opening the dedicated Operator browser profile for ${task.targetUrl}. Allowed domains: ${task.allowedDomains.join(", ") || "none listed"}.`
+    }, now);
+  }
+
+  if (task.riskLevel !== "read" && task.stepIndex === 3 && !hasOperatorApproval(task, "write_checkpoint")) {
+    return createOperatorApproval({
+      type: "write_checkpoint",
+      title: "Continue protected write step",
+      description: "Approve the next supervised step before Operator changes account settings, drafts external content, or prepares a production update."
+    }, now);
+  }
+
+  return null;
+}
+
+function hasOperatorApproval(task, type) {
+  return task.approvals.some((approval) => approval.type === type);
+}
+
+function hasApprovedOperatorApproval(task, type) {
+  return task.approvals.some((approval) => approval.type === type && approval.status === "approved");
+}
+
+async function launchOperatorBrowser(task) {
+  const runtime = operatorRuntimeInfo(process.env);
+  if (!runtime.browserLaunchEnabled) {
+    return {
+      ok: false,
+      title: "Browser launch disabled",
+      detail: "Set COOPER_OPERATOR_LAUNCH_BROWSER=true on a local machine to open the dedicated Operator browser profile."
+    };
+  }
+
+  await mkdir(runtime.browserProfile, { recursive: true });
+  const target = task.targetUrl || "about:blank";
+
+  if (process.platform === "darwin") {
+    const args = [
+      "-na",
+      process.env.COOPER_OPERATOR_BROWSER_APP || "Google Chrome",
+      "--args",
+      `--user-data-dir=${runtime.browserProfile}`,
+      "--no-first-run",
+      "--new-window",
+      target
+    ];
+    spawn("open", args, { detached: true, stdio: "ignore" }).unref();
+    return {
+      ok: true,
+      title: "Local browser opened",
+      detail: `Opened ${target} with dedicated profile ${runtime.browserProfile}.`
+    };
+  }
+
+  if (process.platform === "linux") {
+    const browserBin = process.env.COOPER_OPERATOR_BROWSER_BIN || "google-chrome";
+    spawn(browserBin, [`--user-data-dir=${runtime.browserProfile}`, "--no-first-run", "--new-window", target], {
+      detached: true,
+      stdio: "ignore"
+    }).unref();
+    return {
+      ok: true,
+      title: "Local browser opened",
+      detail: `Opened ${target} with ${browserBin} and dedicated profile ${runtime.browserProfile}.`
+    };
+  }
+
+  return {
+    ok: false,
+    title: "Browser platform unsupported",
+    detail: `Automatic browser launch is not configured for ${process.platform}. Open ${target} manually with profile ${runtime.browserProfile}.`
+  };
+}
+
+function currentOperatorStep(task) {
+  return task.steps[Math.min(task.stepIndex, task.steps.length - 1)] || "Run local Operator step.";
+}
+
+function exceedsOperatorBudget(task, now) {
+  const started = task.startedAt ? Date.parse(task.startedAt) : Date.parse(now);
+  const elapsed = Number.isFinite(started) ? Date.parse(now) - started : 0;
+  return task.stepIndex > task.budgets.maxSteps || elapsed > task.budgets.maxWallClockMs || task.codexInvocations > task.budgets.maxCodexInvocations;
+}
+
+function operatorRuntimeLine() {
+  const runtime = operatorRuntimeInfo(process.env);
+  return `Mode: ${runtime.mode}. Browser profile: ${runtime.browserProfile}. Codex workspace: ${runtime.codexWorkspace}.`;
+}
+
+function operatorSummaryMarkdown(task) {
+  return [
+    `# ${task.title}`,
+    "",
+    `Goal: ${task.goal}`,
+    `Skill: ${task.skill}`,
+    `Target URL: ${task.targetUrl || "none"}`,
+    `Risk level: ${task.riskLevel}`,
+    "",
+    "## Completed steps",
+    ...task.steps.map((step, index) => `${index + 1}. ${step}`),
+    "",
+    "## Approvals",
+    ...(task.approvals.length
+      ? task.approvals.map((approval) => `- ${approval.title}: ${approval.status}`)
+      : ["- No approvals were required."]),
+    "",
+    "## Result",
+    "Operator captured the supervised run contract, step checkpoints, approval history, allowed domains, and final replay summary. If Michael wants deeper execution, use this same task contract to attach the real Playwright browser worker or Codex worker while preserving approvals, budgets, and artifacts."
+  ].join("\n");
+}
+
 function formatRetryDelay(ms) {
   const seconds = Math.ceil(ms / 1000);
   return seconds >= 60 ? `${Math.ceil(seconds / 60)} minutes` : `${seconds} seconds`;
@@ -3319,6 +4039,7 @@ await updateDb((db) => {
   db.arcadeAuthorizations = Array.isArray(db.arcadeAuthorizations) ? db.arcadeAuthorizations : [];
   db.projects = Array.isArray(db.projects) ? db.projects : [];
   db.projectSources = Array.isArray(db.projectSources) ? db.projectSources : [];
+  db.operatorTasks = Array.isArray(db.operatorTasks) ? db.operatorTasks : [];
   db.calls.forEach((call) => {
     call.transcript = normalizeTranscript(call.transcript || []);
     call.projectId = cleanText(call.projectId);
@@ -3373,8 +4094,18 @@ await updateDb((db) => {
       job.updatedAt = new Date().toISOString();
     }
   });
+  db.operatorTasks = db.operatorTasks.map((task) => {
+    const hydrated = hydrateOperatorTask(task);
+    if (hydrated.status === "running") {
+      hydrated.status = "queued";
+      hydrated.logs.push(createOperatorLog("recovered", "Task recovered after restart", "Server restarted while this local Operator task was running. It was queued safely.", new Date().toISOString()));
+      hydrated.updatedAt = new Date().toISOString();
+    }
+    return hydrated;
+  });
 });
 queueWorker();
+await queueOperatorWorker();
 
 if (isProduction) {
   app.use(express.static(join(__dirname, "dist")));
