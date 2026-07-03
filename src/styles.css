@@ -956,6 +956,52 @@ select:focus {
   padding: 16px 24px 0;
 }
 
+.operator-capability-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 24px 0;
+}
+
+.operator-capability-strip article {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #dfe4dc;
+  border-radius: var(--radius-control);
+  background: #fbfcfa;
+}
+
+.operator-capability-strip article.ready {
+  border-color: rgba(33, 122, 69, 0.3);
+  background: #f0fbf3;
+}
+
+.operator-capability-strip article.planned {
+  background: #f7f8f4;
+}
+
+.operator-capability-strip span {
+  overflow: hidden;
+  color: var(--aires-zinc-600);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.operator-capability-strip strong {
+  overflow: hidden;
+  color: var(--aires-black);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .operator-command-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
@@ -4470,6 +4516,7 @@ button.job-row {
 
   .workspace-choice-grid,
   .operator-status-grid,
+  .operator-capability-strip,
   .operator-command-grid,
   .operator-viewport-grid,
   .operator-preview-grid,
@@ -4511,6 +4558,7 @@ button.job-row {
   .operator-work-surface,
   .operator-phase-ribbon,
   .operator-status-grid,
+  .operator-capability-strip,
   .operator-command-grid,
   .operator-lower-grid,
   .operator-tab-stage {
@@ -4533,6 +4581,7 @@ button.job-row {
   }
 
   .operator-status-grid,
+  .operator-capability-strip,
   .operator-command-grid,
   .operator-lower-grid {
     padding-inline: 14px;

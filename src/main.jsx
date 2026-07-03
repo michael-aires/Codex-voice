@@ -127,8 +127,15 @@ When Michael asks you to run work, start a supervised local Operator task with s
 - codex_local_planning for general Codex tasks, implementation planning, coding plans, skill creation, repo work, or "run Codex" requests.
 - github_repo_debug for read-only GitHub/code debugging and repo inspection.
 - sendgrid_sender_auth for SendGrid sender authentication setup.
+- computer_use_browser when Michael wants you to operate a website, SaaS UI, or visible browser workflow with OpenAI Computer Use.
+- computer_use_desktop when Michael wants supervised desktop app work outside the browser. Do not use this to click around Codex itself.
+- codex_app_server when Michael wants you to control Codex through a supported local Codex app-server, JSONL CLI, or event bridge.
+- codex_mcp_agent when Michael wants multi-agent Codex work through MCP or Agents SDK style orchestration.
+- openai_tool_stack_plan when Michael asks what OpenAI tools, agents, MCP, Computer Use, Codex, or sandbox architecture should power a workflow.
 
 Default to taking action by tool call when Michael asks you to build, generate, create, run, draft, produce, inspect, or debug something. Keep spoken responses short. Say what you are starting, what Michael will see in the Operator workspace, and where approvals will be required.
+
+For Codex work, use the supported Codex bridge lanes rather than claiming you can control Codex Desktop by clicking its UI. For Computer Use work, make clear that the app runs a supervised screenshot/action harness with approval gates.
 
 If Michael says stop, kill it, cancel everything, stop Operator, or pause all work, call stop_operator_tasks immediately.
 
@@ -2063,6 +2070,7 @@ function OperatorWorkspace({
   const logs = selectedTask?.logs || [];
   const artifacts = selectedTask?.artifacts || [];
   const generatedArtifacts = selectedTask?.generatedArtifacts || [];
+  const toolCapabilities = openAiToolCapabilities(state.runtime);
   const latestLog = logs[logs.length - 1] || null;
   const elapsed = selectedTask?.startedAt ? formatElapsed(Date.now() - Date.parse(selectedTask.startedAt)) : "0:00";
   const operatorTabs = [
@@ -2166,6 +2174,15 @@ function OperatorWorkspace({
             <Metric label="Progress" value={`${selectedTask?.progress || 0}%`} />
             <Metric label="Approvals" value={state.limits?.approvalQueue || 0} />
             <Metric label="Artifacts" value={artifacts.length + generatedArtifacts.length} />
+          </section>
+
+          <section className="operator-capability-strip" aria-label="OpenAI Operator tool status">
+            {toolCapabilities.map((capability) => (
+              <article key={capability.label} className={capability.on ? "ready" : "planned"}>
+                <span>{capability.label}</span>
+                <strong>{capability.value}</strong>
+              </article>
+            ))}
           </section>
 
           <nav className="operator-work-tabs" aria-label="Operator workspace views">
@@ -2563,7 +2580,10 @@ function operatorViewportDocument({ task, latestLog, runtime = {}, currentStep, 
   const progress = Math.max(0, Math.min(100, Number(task.progress || 0)));
   const domains = (task.allowedDomains || []).map(escapeHtmlText).join("</span><span>");
   const isArtifactWork = Boolean(generatedJobs.length || task.artifactKinds?.length || task.templateIds?.length);
-  const frameMode = isArtifactWork ? "artifact" : isCodex ? "codex" : isGithub ? "github" : isBrowser ? "browser" : "workspace";
+  const isComputerUse = ["computer_use_browser", "computer_use_desktop"].includes(task.skill);
+  const isCodexBridge = ["codex_app_server", "codex_mcp_agent"].includes(task.skill);
+  const isOpenAiPlan = task.skill === "openai_tool_stack_plan";
+  const frameMode = isArtifactWork && !isOpenAiPlan ? "artifact" : isComputerUse ? "computer" : isCodex || isCodexBridge ? "codex" : isGithub ? "github" : isOpenAiPlan ? "openai" : isBrowser ? "browser" : "workspace";
   const queueStatusText = Object.entries(queueStatus)
     .map(([statusName, count]) => `${count} ${statusLabel(statusName).toLowerCase()}`)
     .join(", ");
@@ -2667,12 +2687,16 @@ function operatorViewportDocument({ task, latestLog, runtime = {}, currentStep, 
       background: linear-gradient(#fbfcfa, #ffffff);
     }
     .mode.codex,
-    .mode.artifact {
+    .mode.artifact,
+    .mode.computer,
+    .mode.openai {
       grid-template-columns: 210px minmax(0, 1fr);
       gap: 18px;
       background: #151514;
       color: #f7f7f2;
     }
+    .mode.computer { background: #101619; }
+    .mode.openai { background: #121416; }
     .mode.github {
       grid-template-rows: auto minmax(0, 1fr);
       background: #f6f8fa;
@@ -2817,7 +2841,7 @@ function operatorViewportDocument({ task, latestLog, runtime = {}, currentStep, 
     }
     @media (max-width: 820px) {
       .body { grid-template-columns: 1fr; padding: 14px; }
-      .mode.codex, .mode.artifact { grid-template-columns: 1fr; }
+      .mode.codex, .mode.artifact, .mode.computer, .mode.openai { grid-template-columns: 1fr; }
       .browser-card-grid, .repo-board { grid-template-columns: 1fr; }
       .canvas { min-height: 390px; }
     }
@@ -2869,18 +2893,33 @@ function operatorViewportDocument({ task, latestLog, runtime = {}, currentStep, 
 }
 
 function operatorViewportModeMarkup({ frameMode, title, goal, step, activity, result }) {
-  if (frameMode === "codex" || frameMode === "artifact") {
+  if (["codex", "artifact", "computer", "openai"].includes(frameMode)) {
+    const treeLabel = {
+      artifact: "Cooper work queue",
+      computer: "Computer Use harness",
+      openai: "OpenAI tool stack",
+      codex: "Codex workspace"
+    }[frameMode] || "Operator workspace";
+    const terminalLabel = {
+      artifact: "cooper jobs · background",
+      computer: "computer-use · supervised",
+      openai: "responses · tool plan",
+      codex: "codex bridge · supervised"
+    }[frameMode] || "operator run";
+    const files = {
+      artifact: ["voice-brief.md", "job-contract.json", "artifact-draft.html/md", "runner-trace.log"],
+      computer: ["screenshot.png", "action-plan.json", "approval-gates.md", "ui-trace.log"],
+      openai: ["tool-map.md", "risk-policy.md", "agent-graph.json", "implementation-plan.md"],
+      codex: ["voice-brief.md", "workspace.patch", "codex-events.jsonl", "runner-trace.log"]
+    }[frameMode] || ["task-brief.md", "runner-trace.log"];
     return `
       <section class="mode ${frameMode}">
         <nav class="file-tree">
-          <strong>${frameMode === "artifact" ? "Cooper work queue" : "Codex workspace"}</strong>
-          <span>voice-brief.md</span>
-          <span>job-contract.json</span>
-          <span>artifact-draft.${frameMode === "artifact" ? "html/md" : "md"}</span>
-          <span>runner-trace.log</span>
+          <strong>${treeLabel}</strong>
+          ${files.map((file) => `<span>${file}</span>`).join("")}
         </nav>
         <section class="terminal">
-          <header>${frameMode === "artifact" ? "cooper jobs · background" : "codex exec · supervised"}</header>
+          <header>${terminalLabel}</header>
           <pre>$ cooper-operator run
 task: ${title}
 goal: ${goal}
@@ -4739,6 +4778,18 @@ function Metric({ label, value }) {
       <span>{label}</span>
     </div>
   );
+}
+
+function openAiToolCapabilities(runtime = {}) {
+  const tools = runtime.openaiTools || {};
+  return [
+    { label: "Realtime", value: "Voice live", on: tools.realtime !== false },
+    { label: "Responses", value: "Artifacts", on: tools.responses !== false },
+    { label: "Computer Use", value: tools.computerUse ? "Bridge ready" : "Env off", on: Boolean(tools.computerUse) },
+    { label: "Codex bridge", value: tools.codexAppServer ? "App-server" : runtime.codexRuntime || "CLI planned", on: Boolean(tools.codexAppServer) },
+    { label: "MCP agents", value: tools.codexMcp || tools.agentsSdk ? "Enabled" : "Planned", on: Boolean(tools.codexMcp || tools.agentsSdk) },
+    { label: "Sandbox agents", value: tools.sandboxAgents ? "Enabled" : "Planned", on: Boolean(tools.sandboxAgents) }
+  ];
 }
 
 function CallRow({ call, onOpen }) {

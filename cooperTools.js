@@ -396,7 +396,7 @@ export const operatorToolDefinitions = [
   {
     type: "function",
     name: "start_operator_task",
-    description: "Start a supervised local Operator task that Michael can watch in the Operator workspace. Use this when Michael asks Cooper Operator to build artifacts, generate documents, create landing pages, create mini apps, run a Codex-style task, run browser work, debug a repo, inspect GitHub, or do SendGrid setup.",
+    description: "Start a supervised local Operator task that Michael can watch in the Operator workspace. Use this when Michael asks Cooper Operator to build artifacts, generate documents, create landing pages, create mini apps, run a Codex-style task, run browser work, use OpenAI Computer Use, debug a repo, inspect GitHub, connect to Codex through a supported bridge, or do SendGrid setup.",
     parameters: {
       type: "object",
       properties: {
@@ -414,9 +414,14 @@ export const operatorToolDefinitions = [
             "mermaid_diagram",
             "sendgrid_sender_auth",
             "github_repo_debug",
+            "computer_use_browser",
+            "computer_use_desktop",
+            "codex_app_server",
+            "codex_mcp_agent",
+            "openai_tool_stack_plan",
             "codex_local_planning"
           ],
-          description: "The local Operator skill to run. Use operator_document_suite when Michael wants several work artifacts, aires_template_suite for all AIRES template docs, landing_page for marketing pages, mini_app for interactive single-file apps, html_prototype for product prototypes, and codex_local_planning for general Codex-style planning."
+          description: "The local Operator skill to run. Use operator_document_suite when Michael wants several work artifacts, aires_template_suite for all AIRES template docs, landing_page for marketing pages, mini_app for interactive single-file apps, html_prototype for product prototypes, computer_use_browser for visible browser UI automation, computer_use_desktop for supervised desktop UI automation, codex_app_server for supported Codex app-server/CLI control, codex_mcp_agent for multi-agent Codex orchestration, openai_tool_stack_plan for architecture decisions, and codex_local_planning for general Codex-style planning."
         },
         goal: {
           type: "string",

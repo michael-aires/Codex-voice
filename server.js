@@ -3911,6 +3911,19 @@ function nextOperatorApproval(task, now) {
     }, now);
   }
 
+  if (["computer_use_desktop", "codex_app_server", "codex_mcp_agent"].includes(task.skill) && task.stepIndex === 1 && !hasOperatorApproval(task, "local_bridge")) {
+    const bridgeLabel = task.skill === "computer_use_desktop"
+      ? "Computer Use desktop bridge"
+      : task.skill === "codex_mcp_agent"
+        ? "Codex MCP agent bridge"
+        : "Codex app-server bridge";
+    return createOperatorApproval({
+      type: "local_bridge",
+      title: `Start ${bridgeLabel}`,
+      description: `Approve starting the supervised local ${bridgeLabel}. Operator will stream status and pause again before writes, external messages, destructive actions, commits, or pushes.`
+    }, now);
+  }
+
   if (task.riskLevel !== "read" && task.stepIndex === 3 && !hasOperatorApproval(task, "write_checkpoint")) {
     return createOperatorApproval({
       type: "write_checkpoint",
@@ -3993,7 +4006,7 @@ function exceedsOperatorBudget(task, now) {
 
 function operatorRuntimeLine() {
   const runtime = operatorRuntimeInfo(process.env);
-  return `Mode: ${runtime.mode}. Browser profile: ${runtime.browserProfile}. Codex workspace: ${runtime.codexWorkspace}.`;
+  return `Mode: ${runtime.mode}. Browser profile: ${runtime.browserProfile}. Codex workspace: ${runtime.codexWorkspace}. Computer Use: ${runtime.openaiTools?.computerUse ? "enabled" : "disabled"}. Codex bridge: ${runtime.openaiTools?.codexAppServer || runtime.openaiTools?.codexMcp ? "enabled" : "disabled"}.`;
 }
 
 function operatorSummaryMarkdown(task) {

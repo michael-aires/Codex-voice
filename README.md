@@ -89,6 +89,7 @@ The test suite currently locks Cooper's wake phrase behavior so direct invitatio
 - [Technical overview](docs/01-technical-overview.md)
 - [Visual collaboration canvas plan](docs/canvas-collaboration-plan.md)
 - [Operator agent factory plan](docs/06-operator-agent-factory-plan.md)
+- [Cooper Operator OpenAI tool stack](docs/09-openai-tool-stack-operator-plan.md)
 
 ## What Is Included
 
@@ -109,6 +110,7 @@ The test suite currently locks Cooper's wake phrase behavior so direct invitatio
 - Cooper can invoke the AIRES Requirements Framework with `run_aires_requirements_framework` to explain every framework document, workshop a selected document against provided context/drafts, interview for missing context, or queue an AIRES-branded scoped requirements artifact.
 - Cooper can search and fetch Notion context with `search_notion_workspace` and `fetch_notion_page`, using Arcade when mapped/pre-authorized or direct Notion API reads when `NOTION_API_KEY` is configured.
 - GStack-inspired advisory skill tool for CEO review, engineering review, code review, QA review, spec drafting, office hours, and design critique.
+- Cooper Operator workspace with explicit OpenAI tool lanes for artifact generation, supervised Computer Use browser/desktop work, Codex app-server/CLI bridging, Codex MCP/Agents SDK orchestration, and OpenAI tool-stack planning.
 - Settings page for pre-authorizing mapped Arcade tools before Cooper can use them in live calls.
 - Backend Arcade router at `/api/tools/execute` that proxies pre-authorized Cooper tool calls through Arcade, logs tool activity, returns tool results into the same Realtime session, and requires confirmation for write actions.
 - Backend GStack skill runner at `/api/tools/execute` that calls the OpenAI Responses API, returns structured JSON into the same Realtime session, and logs only metadata such as skill, status, timestamps, lengths, and errors.

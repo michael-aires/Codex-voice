@@ -58,7 +58,13 @@ test("operator runtime info is local-first and overridable", () => {
   const runtime = operatorRuntimeInfo({
     HOME: "/tmp/cooper-home",
     COOPER_OPERATOR_WORKSPACE: "/tmp/operator-workspace",
-    COOPER_OPERATOR_ALLOWED_DOMAINS: "github.com,app.sendgrid.com"
+    COOPER_OPERATOR_ALLOWED_DOMAINS: "github.com,app.sendgrid.com",
+    COOPER_OPERATOR_COMPUTER_USE: "true",
+    COOPER_OPERATOR_COMPUTER_USE_BRIDGE: "http://127.0.0.1:3111",
+    COOPER_OPERATOR_CODEX_APP_SERVER: "true",
+    COOPER_OPERATOR_CODEX_MCP: "true",
+    COOPER_OPERATOR_AGENTS_SDK: "true",
+    COOPER_OPERATOR_SANDBOX_AGENTS: "true"
   });
 
   assert.equal(runtime.mode, "local");
@@ -67,6 +73,12 @@ test("operator runtime info is local-first and overridable", () => {
   assert.equal(runtime.codexWorkspace, "/tmp/operator-workspace");
   assert.equal(runtime.browserProfile, "/tmp/cooper-home/.cooper/profiles/operator");
   assert.deepEqual(runtime.defaultAllowedDomains, ["github.com", "app.sendgrid.com"]);
+  assert.equal(runtime.openaiTools.computerUse, true);
+  assert.equal(runtime.openaiTools.computerUseBridge, "http://127.0.0.1:3111");
+  assert.equal(runtime.openaiTools.codexAppServer, true);
+  assert.equal(runtime.openaiTools.codexMcp, true);
+  assert.equal(runtime.openaiTools.agentsSdk, true);
+  assert.equal(runtime.openaiTools.sandboxAgents, true);
 });
 
 test("operator runtime disables browser launch in production unless explicitly enabled", () => {
@@ -76,11 +88,34 @@ test("operator runtime disables browser launch in production unless explicitly e
 
 test("operator skill steps are deterministic for local planning", () => {
   assert.deepEqual(operatorSkillSteps("codex_local_planning"), [
-    "Capture Michael's voice goal and source context.",
-    "Queue real Cooper work jobs in the background.",
-    "Monitor model execution, retries, token budgets, and artifact readiness.",
-    "Present generated artifacts, open approvals, and next actions."
+    "Create or reuse the local operator workspace.",
+    "Write the task brief and acceptance criteria for the Codex worker.",
+    "Run the Codex planning pass within budget limits.",
+    "Return the plan, risks, and next approvals."
   ]);
+});
+
+test("operator exposes OpenAI tool stack presets", () => {
+  const ids = OPERATOR_PRESETS.map((preset) => preset.id);
+
+  assert.ok(ids.includes("computer_use_browser"));
+  assert.ok(ids.includes("computer_use_desktop"));
+  assert.ok(ids.includes("codex_app_server"));
+  assert.ok(ids.includes("codex_mcp_agent"));
+  assert.ok(ids.includes("openai_tool_stack_plan"));
+
+  assert.equal(riskForOperatorTask({ skill: "computer_use_browser" }), "write");
+  assert.equal(riskForOperatorTask({ skill: "codex_app_server" }), "write");
+  assert.equal(riskForOperatorTask({ skill: "openai_tool_stack_plan" }), "read");
+});
+
+test("Computer Use and Codex bridge steps describe supervised execution", () => {
+  assert.match(operatorSkillSteps("computer_use_browser").join(" "), /screenshots/i);
+  assert.match(operatorSkillSteps("computer_use_browser").join(" "), /allow-listed/i);
+  assert.match(operatorSkillSteps("computer_use_desktop").join(" "), /OS permissions/i);
+  assert.match(operatorSkillSteps("codex_app_server").join(" "), /JSONL CLI bridge/i);
+  assert.match(operatorSkillSteps("codex_mcp_agent").join(" "), /MCP/i);
+  assert.match(operatorSkillSteps("openai_tool_stack_plan").join(" "), /Realtime/i);
 });
 
 test("operator exposes richer build and document presets", () => {
@@ -130,5 +165,10 @@ test("Cooper Operator exposes a status query tool for delegated work", () => {
   const startTool = operatorToolDefinitions.find((definition) => definition.name === "start_operator_task");
   assert.ok(startTool.parameters.properties.skill.enum.includes("mini_app"));
   assert.ok(startTool.parameters.properties.skill.enum.includes("aires_template_suite"));
+  assert.ok(startTool.parameters.properties.skill.enum.includes("computer_use_browser"));
+  assert.ok(startTool.parameters.properties.skill.enum.includes("computer_use_desktop"));
+  assert.ok(startTool.parameters.properties.skill.enum.includes("codex_app_server"));
+  assert.ok(startTool.parameters.properties.skill.enum.includes("codex_mcp_agent"));
+  assert.ok(startTool.parameters.properties.skill.enum.includes("openai_tool_stack_plan"));
   assert.equal(startTool.parameters.properties.artifact_kinds.type, "array");
 });
