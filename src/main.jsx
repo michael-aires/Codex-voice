@@ -3,11 +3,24 @@ import { createRoot } from "react-dom/client";
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import { cooperInstructions } from "../cooperPrompt.js";
-import { cooperToolDefinitions, operatorToolDefinitions, operatorToolNames } from "../cooperTools.js";
+import {
+  computerUseToolDefinitions,
+  computerUseToolNames,
+  cooperToolDefinitions,
+  operatorToolDefinitions,
+  operatorToolNames
+} from "../cooperTools.js";
 import { createAudioResponseEvent } from "./realtimeEvents.js";
+import {
+  addRealtimeResponseUsage,
+  addRealtimeTranscriptionUsage,
+  callCostSummary,
+  createEmptyRealtimeUsage
+} from "./callCost.js";
 import { isCooperWakePhrase } from "./wakeWords.js";
 import { buildCanvasCustomPrompt } from "./canvasPrompt.js";
 import { resolveSelectedProject } from "./projectSelection.js";
+import { buildComputerUseTaskInput, isComputerUseTask } from "./computerUseTasks.js";
 import {
   collectJobLogs,
   jobApiLine,
@@ -34,10 +47,12 @@ import {
   Files,
   ExternalLink,
   FolderKanban,
+  Hash,
   Library,
   LockKeyhole,
   LogIn,
   LogOut,
+  MessageCircle,
   Monitor,
   MonitorSmartphone,
   Mic,
@@ -53,6 +68,7 @@ import {
   Sparkles,
   Smartphone,
   Upload,
+  Users,
   Wand2
 } from "lucide-react";
 import "./styles.css";
@@ -171,6 +187,78 @@ const operatorRealtimeSession = {
   tool_choice: "auto"
 };
 
+const computerUseInstructions = `
+You are Cooper Computer Use, Michael's voice-controlled local computer assistant.
+
+You are a supervised controller for Michael's local computer. Your job is to turn spoken requests into safe, visible Computer Use tasks that Michael can watch, approve, cancel, or stop.
+
+When Michael asks you to search the web, call search_web. It will open Chrome, type the query into the search bar, and press Enter.
+
+When Michael asks you to click a search result, link, button, Gmail row, Drive item, or visible page element, call click_link_with_vision with a clear visual description. It will screenshot the page, use model vision to locate the target, and click it.
+
+When Michael asks for a new Chrome tab, call open_chrome_tab.
+
+When Michael asks to open Gmail, Google Drive, Google Docs, Calendar, GitHub, Notion, Claude, or ChatGPT, call open_web_app.
+
+When Michael asks to open Finder, Terminal, Chrome, Safari, Spotify, Claude Code, Codex, Slack, Notion, or VS Code, call open_local_app, open_finder_location, or open_terminal_workspace.
+
+When Michael asks for longer-running supervised work, downloads, Codex tasks, app workflows, or anything that needs approvals and replayable state, call start_computer_use_task.
+
+Choose:
+- desktop_app for normal local apps such as Spotify, Claude, Claude Code, Slack, Notion, Finder, Terminal, Chrome, Safari, or VS Code.
+- browser or open_url for websites.
+- download for a requested download flow.
+- codex_desktop when Michael explicitly wants visible desktop control of Codex, Claude Code, or a coding app.
+- codex_bridge when Michael asks for the supported Codex app-server, CLI, or bridge lane instead of desktop UI control.
+
+Always keep a human in the loop. Do not claim you completed clicks, downloads, purchases, writes, sends, commits, pushes, deletions, account changes, or production-impacting work unless the task status says so. The local runner will pause for approvals before sensitive actions.
+
+Every tool call is logged to the local server terminal. Prefer the deterministic tools first, then fall back to supervised Computer Use tasks when the work is multi-step or risky.
+
+If Michael says stop, stop computer use, cancel everything, hands off, pause, or kill it, call stop_computer_use_tasks immediately.
+
+When Michael asks what is happening, why it is stuck, whether it opened, what task is active, or what approval is needed, call get_computer_use_status before answering.
+
+Keep spoken responses short and practical. Say what you are starting, where it will appear in the Computer Use workspace, and when approval is needed.
+`;
+
+const computerUseRealtimeSession = {
+  type: "realtime",
+  model: "gpt-realtime-2",
+  instructions: computerUseInstructions,
+  reasoning: { effort: "low" },
+  audio: {
+    input: {
+      noise_reduction: { type: "far_field" },
+      transcription: {
+        model: "gpt-4o-mini-transcribe",
+        prompt: "Voice commands for Cooper Computer Use, desktop apps, browser tasks, downloads, Codex, Claude Code, local computer control, approvals, stop all."
+      },
+      turn_detection: {
+        type: "semantic_vad",
+        eagerness: "medium",
+        create_response: true,
+        interrupt_response: true
+      }
+    },
+    output: {
+      voice: "cedar"
+    }
+  },
+  tools: computerUseToolDefinitions,
+  tool_choice: "auto"
+};
+
+const localComputerToolNames = new Set([
+  "open_chrome_tab",
+  "search_web",
+  "click_link_with_vision",
+  "open_local_app",
+  "open_web_app",
+  "open_finder_location",
+  "open_terminal_workspace"
+]);
+
 function buildSessionUpdate(projectContext = "") {
   return {
     type: "session.update",
@@ -188,6 +276,13 @@ function buildOperatorSessionUpdate() {
   };
 }
 
+function buildComputerUseSessionUpdate() {
+  return {
+    type: "session.update",
+    session: computerUseRealtimeSession
+  };
+}
+
 function App() {
   const [entered, setEntered] = React.useState(() => localStorage.getItem("cooper.entered") === "true");
   const [workspace, setWorkspace] = React.useState(() => localStorage.getItem("cooper.workspace") || "");
@@ -196,7 +291,7 @@ function App() {
   const [authBusy, setAuthBusy] = React.useState(false);
   const [authError, setAuthError] = React.useState("");
   const [view, setView] = React.useState("home");
-  const [state, setState] = React.useState({ calls: [], projects: [], artifacts: [], jobs: [], recipes: [], limits: {}, arcade: emptyArcadeState(), mcpApps: { servers: [] } });
+  const [state, setState] = React.useState({ calls: [], projects: [], artifacts: [], jobs: [], recipes: [], limits: {}, arcade: emptyArcadeState(), pushToTalk: emptyPushToTalkState(), mcpApps: { servers: [] } });
   const [operatorState, setOperatorState] = React.useState(emptyOperatorState);
   const [operatorSelectedTaskId, setOperatorSelectedTaskId] = React.useState("");
   const [operatorCallConnected, setOperatorCallConnected] = React.useState(false);
@@ -218,6 +313,7 @@ function App() {
   const [notificationPermission, setNotificationPermission] = React.useState(() => getNotificationPermission());
   const [prompt, setPrompt] = React.useState("");
   const [events, setEvents] = React.useState([]);
+  const [callStartupError, setCallStartupError] = React.useState("");
   const [transcripts, setTranscripts] = React.useState([]);
   const pcRef = React.useRef(null);
   const dcRef = React.useRef(null);
@@ -227,6 +323,7 @@ function App() {
   const callStartedAtRef = React.useRef(null);
   const activeProjectContextRef = React.useRef("");
   const transcriptsRef = React.useRef([]);
+  const realtimeUsageRef = React.useRef(createEmptyRealtimeUsage());
   const outputTranscriptBuffersRef = React.useRef(new Map());
   const textTranscriptBuffersRef = React.useRef(new Map());
   const persistedResponseIdsRef = React.useRef(new Set());
@@ -281,7 +378,7 @@ function App() {
 
   React.useEffect(() => {
     if (!authenticated || !entered || !workspace) return;
-    if (workspace === "operator") {
+    if (workspace === "operator" || workspace === "computer") {
       refreshOperatorState();
       const id = window.setInterval(refreshOperatorState, 3000);
       return () => window.clearInterval(id);
@@ -319,12 +416,13 @@ function App() {
     if (!authenticated || !entered || !workspace || !("EventSource" in window)) return undefined;
     const source = new EventSource("/api/events", { withCredentials: true });
     source.addEventListener("state.updated", () => {
-      if (workspace === "operator") {
+      if (workspace === "operator" || workspace === "computer") {
         refreshOperatorState();
       } else {
         refreshState();
       }
     });
+    source.addEventListener("push-to-talk.completed", handlePushToTalkEvent);
     return () => source.close();
   }, [authenticated, entered, workspace]);
 
@@ -449,6 +547,17 @@ function App() {
     }
   }
 
+  async function stopComputerUseTasks() {
+    const latestState = await fetchOperatorStateSnapshot();
+    const activeComputerTasks = latestState.tasks.filter((task) => isComputerUseTask(task) && ["queued", "running", "waiting_approval"].includes(task.status));
+    for (const task of activeComputerTasks) {
+      await cancelOperatorTask(task.id);
+    }
+    addEvent("Computer Use", activeComputerTasks.length ? `${activeComputerTasks.length} task${activeComputerTasks.length === 1 ? "" : "s"} stopped.` : "No active Computer Use tasks.");
+    await refreshOperatorState();
+    return { stopped: activeComputerTasks };
+  }
+
   async function login(password) {
     setAuthBusy(true);
     setAuthError("");
@@ -487,7 +596,7 @@ function App() {
     setEntered(false);
     setWorkspace("");
     setView("home");
-    setState({ calls: [], projects: [], artifacts: [], jobs: [], recipes: [], limits: {}, arcade: emptyArcadeState(), mcpApps: { servers: [] } });
+    setState({ calls: [], projects: [], artifacts: [], jobs: [], recipes: [], limits: {}, arcade: emptyArcadeState(), pushToTalk: emptyPushToTalkState(), mcpApps: { servers: [] } });
     setOperatorState(emptyOperatorState());
     setOperatorSelectedTaskId("");
     setOperatorMessages([]);
@@ -515,7 +624,7 @@ function App() {
     setEntered(true);
     setWorkspace(nextWorkspace);
     setView("home");
-    if (nextWorkspace === "operator") {
+    if (nextWorkspace === "operator" || nextWorkspace === "computer") {
       refreshOperatorState();
     } else {
       refreshState();
@@ -526,7 +635,7 @@ function App() {
     localStorage.setItem("cooper.workspace", nextWorkspace);
     setWorkspace(nextWorkspace);
     setView("home");
-    if (nextWorkspace === "operator") {
+    if (nextWorkspace === "operator" || nextWorkspace === "computer") {
       refreshOperatorState();
     } else {
       refreshState();
@@ -568,6 +677,27 @@ function App() {
       { id: uid(), label, detail, at: new Date().toLocaleTimeString() },
       ...current
     ].slice(0, 12));
+  }
+
+  function handlePushToTalkEvent(event) {
+    let payload = {};
+    try {
+      payload = JSON.parse(event.data || "{}");
+    } catch {
+      payload = {};
+    }
+    const message = payload.message || payload.transcript || "Push-to-talk finished.";
+    addEvent(payload.status === "error" ? "Push-to-talk error" : "Push-to-talk", message);
+    if (payload.task?.id) {
+      setOperatorSelectedTaskId(payload.task.id);
+      refreshOperatorState();
+    }
+    if (payload.action === "stop_computer") {
+      refreshOperatorState();
+    }
+    if (payload.response) {
+      addOperatorMessage("Cooper", payload.response, { source: "push_to_talk" });
+    }
   }
 
   function handleWorkNotifications(next) {
@@ -754,6 +884,9 @@ function App() {
 
     if (event.type === "conversation.item.input_audio_transcription.completed") {
       const text = event.transcript || "";
+      if (event.usage) {
+        realtimeUsageRef.current = addRealtimeTranscriptionUsage(realtimeUsageRef.current, event.usage);
+      }
       commitTranscriptEntry({
         at: new Date().toISOString(),
         speaker: "Michael",
@@ -815,6 +948,9 @@ function App() {
     }
 
     if (event.type === "response.done") {
+      if (event.response?.usage) {
+        realtimeUsageRef.current = addRealtimeResponseUsage(realtimeUsageRef.current, event.response.usage);
+      }
       responseInProgressRef.current = false;
       setSpeaking(false);
       setStatus("Listening");
@@ -864,8 +1000,10 @@ function App() {
     setSpeaking(false);
     setHearing(false);
     setEvents([]);
+    setCallStartupError("");
     setTranscripts([]);
     transcriptsRef.current = [];
+    realtimeUsageRef.current = createEmptyRealtimeUsage();
     outputTranscriptBuffersRef.current = new Map();
     textTranscriptBuffersRef.current = new Map();
     persistedResponseIdsRef.current = new Set();
@@ -928,32 +1066,46 @@ function App() {
       await pc.setLocalDescription(offer);
 
       const sessionUrl = projectId ? `/session?projectId=${encodeURIComponent(projectId)}` : "/session";
-      const sdpResponse = await fetch(sessionUrl, {
-        method: "POST",
-        body: offer.sdp,
-        headers: {
-          "Content-Type": "application/sdp"
-        }
-      });
+      let answerSdp = "";
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const sdpResponse = await fetch(sessionUrl, {
+          method: "POST",
+          body: offer.sdp,
+          headers: {
+            "Content-Type": "application/sdp"
+          }
+        });
 
-      const answerSdp = await sdpResponse.text();
-      if (!sdpResponse.ok) throw new Error(answerSdp || "Failed to create session.");
+        answerSdp = await sdpResponse.text();
+        if (sdpResponse.ok) break;
+
+        if (sdpResponse.status === 429 && attempt < 3) {
+          const retryDelayMs = parseRetryAfterMs(sdpResponse.headers.get("Retry-After"));
+          addEvent("Connection", `Realtime session was rate-limited. Retrying ${attempt + 1}/3.`);
+          await wait(retryDelayMs || Math.min(5000, 1000 * attempt));
+          continue;
+        }
+
+        throw new Error(describeSessionHttpError(sdpResponse.status, answerSdp));
+      }
 
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
       addEvent("Connected", "WebRTC established.");
     } catch (error) {
+      const detail = describeConnectionError(error);
       setStatus("Failed");
-      addEvent("Connection", describeConnectionError(error));
+      setCallStartupError(detail);
+      addEvent("Connection", detail);
       await endCall({ failed: true });
     }
   }
 
-  async function createCall(projectId = "") {
+  async function createCall(projectId = "", options = {}) {
     const response = await fetch("/api/calls", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: `Cooper call ${new Date().toLocaleString()}`,
+        title: options.title || `Cooper call ${new Date().toLocaleString()}`,
         startedAt: new Date().toISOString(),
         projectId
       })
@@ -1089,7 +1241,8 @@ function App() {
         body: JSON.stringify({
           transcript: transcriptsRef.current,
           endedAt: new Date().toISOString(),
-          durationSeconds
+          durationSeconds,
+          realtimeUsage: realtimeUsageRef.current
         })
       }).catch(() => {});
       setSelectedCallId(call.id);
@@ -1128,6 +1281,10 @@ function App() {
     };
     setOperatorMessages((current) => [...current, entry].slice(-80));
     return entry;
+  }
+
+  function operatorAgentLabel() {
+    return workspace === "computer" ? "Cooper Computer Use" : "Cooper Operator";
   }
 
   function sendOperatorEvent(event) {
@@ -1176,6 +1333,7 @@ function App() {
   }
 
   async function connectOperatorCall() {
+    const computerMode = workspace === "computer";
     setOperatorCallConnecting(true);
     setOperatorCallStatus("Starting");
     setOperatorCallSpeaking(false);
@@ -1216,8 +1374,14 @@ function App() {
         setOperatorCallConnected(true);
         setOperatorCallConnecting(false);
         setOperatorCallStatus("Configuring");
-        sendOperatorEvent(buildOperatorSessionUpdate());
-        addOperatorMessage("Cooper Operator", "Operator is online. Tell me what local task to start, or say stop all to halt active work.", { source: "system" });
+        sendOperatorEvent(computerMode ? buildComputerUseSessionUpdate() : buildOperatorSessionUpdate());
+        addOperatorMessage(
+          computerMode ? "Cooper Computer Use" : "Cooper Operator",
+          computerMode
+            ? "Computer Use is online. Tell me what app, website, download, or desktop task to run. I will pause for approvals."
+            : "Operator is online. Tell me what local task to start, or say stop all to halt active work.",
+          { source: "system" }
+        );
       };
       dc.onmessage = (message) => {
         try {
@@ -1235,7 +1399,7 @@ function App() {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const sdpResponse = await fetch("/session?workspace=operator", {
+      const sdpResponse = await fetch(`/session?workspace=${computerMode ? "computer" : "operator"}`, {
         method: "POST",
         body: offer.sdp,
         headers: {
@@ -1380,7 +1544,7 @@ function App() {
     if (responseId && operatorPersistedResponseIdsRef.current.has(responseId)) return;
     const text = String(transcript || buffered?.text || "").trim();
     if (!text) return;
-    addOperatorMessage("Cooper Operator", text, {
+    addOperatorMessage(operatorAgentLabel(), text, {
       source: "operator_audio",
       responseId
     });
@@ -1395,7 +1559,7 @@ function App() {
     const bufferedText = findBufferedTranscript(operatorTextTranscriptBuffersRef.current, responseId);
     const text = bufferedAudio?.text || extractRealtimeResponseText(response) || bufferedText?.text || "";
     if (!text.trim()) return;
-    addOperatorMessage("Cooper Operator", text, {
+    addOperatorMessage(operatorAgentLabel(), text, {
       source: bufferedAudio ? "operator_audio_fallback" : "operator_response_done",
       responseId
     });
@@ -1426,11 +1590,97 @@ function App() {
   }
 
   async function executeOperatorTool(name, args) {
-    if (!operatorToolNames.has(name)) {
+    if (!operatorToolNames.has(name) && !computerUseToolNames.has(name)) {
       return { status: "error", tool: name, message: "Unknown Operator tool." };
     }
 
+    logRealtimeToolCall(name, args);
+
     try {
+      if (localComputerToolNames.has(name)) {
+        const payload = await callLocalComputerTool(name, args);
+        addEvent("Computer Use", payload.output?.message || `${name} finished.`);
+        return {
+          status: payload.output?.status || "completed",
+          tool: name,
+          ...payload.output
+        };
+      }
+
+      if (name === "start_computer_use_task") {
+        const taskInput = buildComputerUseTaskInput(args);
+        const payload = await startOperatorTask(taskInput);
+        return {
+          status: "queued",
+          tool: name,
+          task: payload.task,
+          message: `${payload.task?.title || "Computer Use task"} is queued and visible in the Computer Use workspace. Approval gates will appear before local control steps.`
+        };
+      }
+
+      if (name === "stop_computer_use_tasks") {
+        const latestState = await fetchOperatorStateSnapshot();
+        const activeComputerTasks = latestState.tasks.filter((task) => isComputerUseTask(task) && ["queued", "running", "waiting_approval"].includes(task.status));
+        if (!activeComputerTasks.length) {
+          return { status: "idle", tool: name, stopped: [], message: "No active Computer Use tasks were running." };
+        }
+        const stopped = [];
+        for (const task of activeComputerTasks) {
+          const payload = await cancelOperatorTask(task.id);
+          if (payload.task) stopped.push(payload.task);
+        }
+        return {
+          status: "stopped",
+          tool: name,
+          stopped,
+          message: `Stopped ${stopped.length} active Computer Use task${stopped.length === 1 ? "" : "s"}.`
+        };
+      }
+
+      if (name === "cancel_computer_use_task") {
+        const latestState = await fetchOperatorStateSnapshot();
+        const taskId =
+          args.task_id ||
+          args.taskId ||
+          operatorSelectedTaskId ||
+          latestState.tasks.find((task) => isComputerUseTask(task) && ["queued", "running", "waiting_approval"].includes(task.status))?.id ||
+          latestState.tasks.find(isComputerUseTask)?.id ||
+          "";
+        if (!taskId) {
+          return { status: "not_found", tool: name, message: "No Computer Use task is selected or active." };
+        }
+        const payload = await cancelOperatorTask(taskId);
+        return {
+          status: "cancelled",
+          tool: name,
+          task: payload.task,
+          message: `${payload.task?.title || "Computer Use task"} was cancelled.`
+        };
+      }
+
+      if (name === "get_computer_use_status") {
+        const latestState = await fetchOperatorStateSnapshot();
+        const taskId = args.task_id || args.taskId || operatorSelectedTaskId || "";
+        const computerTasks = latestState.tasks.filter(isComputerUseTask);
+        const task =
+          computerTasks.find((item) => item.id === taskId) ||
+          computerTasks.find((item) => ["queued", "running", "waiting_approval"].includes(item.status)) ||
+          computerTasks[0] ||
+          null;
+        if (!task) {
+          return { status: "not_found", tool: name, message: "No Computer Use task exists yet." };
+        }
+        return {
+          status: task.status || "found",
+          tool: name,
+          task: operatorTaskSnapshot(task, {
+            includeLogs: args.include_logs !== false,
+            includeArtifacts: true
+          }),
+          message: operatorTaskStatusMessage(task)
+        };
+      }
+
       if (name === "start_operator_task") {
         const payload = await startOperatorTask({
           skill: args.skill || "codex_local_planning",
@@ -1527,12 +1777,32 @@ function App() {
     }
   }
 
-  async function generateLiveCanvasArtifact(kind, request = "", options = {}) {
-    const call = activeCallRef.current;
-    if (!call?.id) {
-      addEvent("Canvas", "Join the call before creating canvas work.");
-      return;
+  function logRealtimeToolCall(name, args) {
+    fetch("/api/computer-use/tool-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ phase: "realtime", name, arguments: args })
+    }).catch(() => {});
+  }
+
+  async function callLocalComputerTool(name, args) {
+    const response = await fetch("/api/computer-use/tool", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ name, arguments: args })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || payload.output?.message || `${name} failed.`);
     }
+    return payload;
+  }
+
+  async function generateLiveCanvasArtifact(kind, request = "", options = {}) {
+    const call = await ensureCanvasWorkCall();
+    if (!call?.id) return;
 
     const customPrompt = buildCanvasCustomPrompt({
       request,
@@ -1544,12 +1814,28 @@ function App() {
     await generateArtifact(call.id, kind, customPrompt, { stay: true, title: options.title });
   }
 
-  async function presentAiresExample(exampleId, options = {}) {
-    const call = activeCallRef.current;
-    if (!call?.id) {
-      addEvent("Canvas", "Join the call before presenting an AIRES example.");
-      return;
+  async function ensureCanvasWorkCall() {
+    if (activeCallRef.current?.id) return activeCallRef.current;
+
+    try {
+      const projectId = selectedProject?.id || "";
+      activeProjectContextRef.current = await fetchProjectContext(projectId);
+      const call = await createCall(projectId, {
+        title: `Cooper canvas work ${new Date().toLocaleString()}`
+      });
+      activeCallRef.current = call;
+      setSelectedCallId(call.id);
+      addEvent("Canvas", "Created a local canvas workspace for this artifact.");
+      return call;
+    } catch (error) {
+      addEvent("Canvas", error.message || "Could not create a canvas workspace.");
+      return null;
     }
+  }
+
+  async function presentAiresExample(exampleId, options = {}) {
+    const call = await ensureCanvasWorkCall();
+    if (!call?.id) return;
 
     try {
       const response = await fetch("/api/tools/execute", {
@@ -1799,6 +2085,7 @@ function App() {
   if (workspace === "operator") {
     return (
       <OperatorWorkspace
+        variant="operator"
         state={operatorState}
         selectedTask={selectedOperatorTask}
         events={events}
@@ -1819,6 +2106,45 @@ function App() {
         onCancelTask={cancelOperatorTask}
         onStopAll={stopAllOperatorTasks}
         onSwitchWorkspace={() => switchWorkspace("cooper")}
+        onSwitchOperator={() => switchWorkspace("operator")}
+        onSwitchComputer={() => switchWorkspace("computer")}
+        onResetWorkspace={resetWorkspaceChoice}
+        onLogout={logout}
+      />
+    );
+  }
+
+  if (workspace === "computer") {
+    const computerTasks = operatorState.tasks.filter(isComputerUseTask);
+    const selectedComputerTask = computerTasks.find((task) => task.id === operatorSelectedTaskId)
+      || computerTasks.find((task) => ["queued", "running", "waiting_approval"].includes(task.status))
+      || computerTasks[0]
+      || null;
+    return (
+      <OperatorWorkspace
+        variant="computer"
+        state={{ ...operatorState, tasks: computerTasks, activeTask: selectedComputerTask || null }}
+        selectedTask={selectedComputerTask}
+        events={events}
+        callConnected={operatorCallConnected}
+        callConnecting={operatorCallConnecting}
+        callStatus={operatorCallStatus}
+        callSpeaking={operatorCallSpeaking}
+        callHearing={operatorCallHearing}
+        prompt={operatorPrompt}
+        messages={operatorMessages}
+        onPromptChange={setOperatorPrompt}
+        onSubmitPrompt={submitOperatorPrompt}
+        onStartCall={connectOperatorCall}
+        onStopCall={() => endOperatorCall()}
+        onSelectTask={setOperatorSelectedTaskId}
+        onStartTask={startOperatorTask}
+        onApproveTask={approveOperatorTask}
+        onCancelTask={cancelOperatorTask}
+        onStopAll={stopComputerUseTasks}
+        onSwitchWorkspace={() => switchWorkspace("cooper")}
+        onSwitchOperator={() => switchWorkspace("operator")}
+        onSwitchComputer={() => switchWorkspace("computer")}
         onResetWorkspace={resetWorkspaceChoice}
         onLogout={logout}
       />
@@ -1836,6 +2162,7 @@ function App() {
         hearing={hearing}
         transcripts={transcripts}
         events={events}
+        startupError={callStartupError}
         activeCall={activeCallRef.current}
         artifacts={state.artifacts}
         jobs={state.jobs}
@@ -1862,8 +2189,11 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <button className="brand-button" onClick={() => setView("home")}>
-          <span className="brand-mark">C</span>
-          <span>Cooper</span>
+          <span className="brand-mark logo-mark"><img src="/assets/aires/logo-symbol-white.svg" alt="" /></span>
+          <span>
+            <strong>Cooper</strong>
+            <small>AIRES workspace</small>
+          </span>
         </button>
         <nav className="nav">
           <button className={view === "home" ? "active" : ""} onClick={() => setView("home")} aria-label="Home">
@@ -1882,6 +2212,14 @@ function App() {
             <Files size={18} />
             <span>Work</span>
           </button>
+          <button onClick={() => switchWorkspace("operator")} aria-label="Operator">
+            <Monitor size={18} />
+            <span>Operator</span>
+          </button>
+          <button onClick={() => switchWorkspace("computer")} aria-label="Computer Use">
+            <MonitorSmartphone size={18} />
+            <span>Computer Use</span>
+          </button>
           <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")} aria-label="Settings">
             <Settings size={18} />
             <span>Settings</span>
@@ -1892,14 +2230,16 @@ function App() {
             <Plus size={18} />
             <span>New call</span>
           </button>
-          <button className="secondary-action workspace-jump" onClick={() => switchWorkspace("operator")}>
-            <Monitor size={18} />
-            <span>Operator</span>
-          </button>
           <button className="icon-button" onClick={logout} aria-label="Lock Cooper">
             <LogOut size={18} />
           </button>
-          <span className="user-avatar" aria-label="Michael workspace">MM</span>
+          <span className="topbar-user" aria-label="Michael workspace">
+            <span className="user-avatar">MM</span>
+            <span>
+              <strong>Michael</strong>
+              <small>AIRES CTO/CPO</small>
+            </span>
+          </span>
         </div>
       </header>
 
@@ -1968,6 +2308,7 @@ function App() {
       {view === "settings" && (
         <SettingsView
           arcade={state.arcade || emptyArcadeState()}
+          pushToTalk={state.pushToTalk || emptyPushToTalkState()}
           onAuthorize={authorizeArcadeTool}
           onAuthorizeAll={authorizeAllArcadeTools}
           onCheck={checkArcadeTool}
@@ -1981,10 +2322,10 @@ function Splash({ onSelectWorkspace }) {
   return (
     <main className="splash">
       <section className="splash-card workspace-picker">
-        <div className="splash-mark">C</div>
+        <div className="splash-mark logo-mark"><img src="/assets/aires/logo-symbol-white.svg" alt="" /></div>
         <p className="eyebrow">AIRES</p>
         <h1>Cooper</h1>
-        <p className="splash-line">Choose the workspace for the session. Cooper handles calls and artifacts; Operator runs supervised local web-operation skills.</p>
+        <p className="splash-line">Choose the workspace for the session. Cooper handles meetings; Operator delegates local work; Computer Use controls browser and desktop tasks with approvals.</p>
         <div className="workspace-choice-grid">
           <button className="workspace-choice-card" onClick={() => onSelectWorkspace("cooper")}>
             <span className="choice-icon"><Radio size={20} /></span>
@@ -1995,6 +2336,11 @@ function Splash({ onSelectWorkspace }) {
             <span className="choice-icon"><Monitor size={20} /></span>
             <strong>Operator</strong>
             <span>Local-first supervised browser and Codex task runner with approvals, budgets, and replayable work.</span>
+          </button>
+          <button className="workspace-choice-card" onClick={() => onSelectWorkspace("computer")}>
+            <span className="choice-icon"><MonitorSmartphone size={20} /></span>
+            <strong>Computer Use</strong>
+            <span>Realtime voice control for local apps, browser tasks, downloads, Codex/Claude Code, and visible desktop work.</span>
           </button>
         </div>
         <p className="workspace-picker-foot">
@@ -2007,6 +2353,7 @@ function Splash({ onSelectWorkspace }) {
 }
 
 function OperatorWorkspace({
+  variant = "operator",
   state,
   selectedTask,
   events,
@@ -2027,11 +2374,17 @@ function OperatorWorkspace({
   onCancelTask,
   onStopAll,
   onSwitchWorkspace,
+  onSwitchOperator,
+  onSwitchComputer,
   onResetWorkspace,
   onLogout
 }) {
-  const presets = state.presets?.length ? state.presets : [];
-  const firstPreset = presets[0]?.id || "sendgrid_sender_auth";
+  const isComputer = variant === "computer";
+  const allPresets = state.presets?.length ? state.presets : [];
+  const presets = isComputer
+    ? allPresets.filter((preset) => ["computer_use_desktop", "computer_use_browser", "codex_app_server"].includes(preset.id))
+    : allPresets;
+  const firstPreset = isComputer ? "computer_use_desktop" : presets[0]?.id || "sendgrid_sender_auth";
   const [skill, setSkill] = React.useState(firstPreset);
   const selectedPreset = presets.find((preset) => preset.id === skill) || presets[0] || null;
   const [goal, setGoal] = React.useState("");
@@ -2055,17 +2408,29 @@ function OperatorWorkspace({
   function submitTask(event) {
     event.preventDefault();
     const defaultGoal = selectedPreset?.description || "Run a supervised local Operator task.";
-    onStartTask({
-      skill,
-      goal: goal.trim() || defaultGoal,
-      targetUrl,
-      allowedDomains: domains.split(",").map((item) => item.trim()).filter(Boolean)
-    });
+    const allowedDomains = domains.split(",").map((item) => item.trim()).filter(Boolean);
+    onStartTask(isComputer
+      ? {
+          ...buildComputerUseTaskInput({
+            mode: skill === "computer_use_browser" ? "browser" : skill === "codex_app_server" ? "codex_bridge" : "desktop_app",
+            goal: goal.trim() || defaultGoal,
+            target_url: targetUrl,
+            allowed_domains: allowedDomains,
+            requested_by: "manual_form"
+          }),
+          skill
+        }
+      : {
+          skill,
+          goal: goal.trim() || defaultGoal,
+          targetUrl,
+          allowedDomains
+        });
     setGoal("");
     setOperatorTab("watch");
   }
 
-  const activeCount = state.limits?.activeTasks || 0;
+  const activeCount = state.tasks.filter((task) => ["queued", "running", "waiting_approval"].includes(task.status)).length;
   const pendingApprovals = selectedTask?.approvals?.filter((approval) => approval.status === "pending") || [];
   const logs = selectedTask?.logs || [];
   const artifacts = selectedTask?.artifacts || [];
@@ -2074,21 +2439,42 @@ function OperatorWorkspace({
   const latestLog = logs[logs.length - 1] || null;
   const elapsed = selectedTask?.startedAt ? formatElapsed(Date.now() - Date.parse(selectedTask.startedAt)) : "0:00";
   const operatorTabs = [
-    { id: "watch", label: "Watch", detail: selectedTask ? `${statusLabel(selectedTask.status)} preview` : "Worker viewport" },
-    { id: "delegate", label: "Delegate", detail: "Start work" },
+    { id: "watch", label: "Watch", detail: selectedTask ? `${statusLabel(selectedTask.status)} preview` : isComputer ? "Computer viewport" : "Worker viewport" },
+    { id: "delegate", label: isComputer ? "Command" : "Delegate", detail: isComputer ? "Start control" : "Start work" },
     { id: "task", label: "Task", detail: selectedTask ? `${selectedTask.progress || 0}% complete` : "No task" },
     { id: "activity", label: "Activity", detail: `${logs.length} events` },
     { id: "artifacts", label: "Artifacts", detail: `${artifacts.length + generatedArtifacts.length} ready` }
   ];
+  const computerQuickStarts = [
+    { label: "Open Spotify", mode: "desktop_app", appName: "Spotify", goal: "Open Spotify on the local computer and wait for next instructions." },
+    { label: "Open Claude Code", mode: "codex_desktop", appName: "Claude Code", goal: "Open Claude Code or the local coding assistant app and wait for supervised next steps." },
+    { label: "Open browser", mode: "open_url", targetUrl: "https://www.google.com", goal: "Open a browser task in the visible Computer Use lane." },
+    { label: "Download file", mode: "download", goal: "Prepare a supervised browser download task. Ask for the URL if it is missing." }
+  ];
+
+  function startComputerQuick(quick) {
+    const input = buildComputerUseTaskInput({
+      mode: quick.mode,
+      goal: quick.goal,
+      app_name: quick.appName || "",
+      target_url: quick.targetUrl || "",
+      requested_by: "quick_start"
+    });
+    onStartTask(input);
+    setOperatorTab("watch");
+  }
 
   return (
-    <main className="operator-page">
+    <main className={`operator-page ${isComputer ? "computer-use-page" : ""}`}>
       <header className="operator-console-topbar">
         <button className="brand-button" onClick={onResetWorkspace}>
-          <span className="brand-mark">C</span>
-          <span>Cooper Operator</span>
+          <span className="brand-mark logo-mark"><img src="/assets/aires/logo-symbol-white.svg" alt="" /></span>
+          <span>
+            <strong>{isComputer ? "Cooper Computer Use" : "Cooper Operator"}</strong>
+            <small>{isComputer ? "Realtime · Computer Use" : "Cooper · Operator"}</small>
+          </span>
         </button>
-        <span className="operator-console-mode">Cooper · Operator</span>
+        <span className="operator-console-mode">{isComputer ? "Realtime · Computer Use" : "Cooper · Operator"}</span>
         <span className="operator-console-title">{selectedTask?.title || "No delegated task selected"}</span>
         <span className="operator-console-id">{selectedTask?.id?.slice(0, 12) || "standby"}</span>
         <nav className="nav workspace-nav operator-console-nav">
@@ -2096,9 +2482,13 @@ function OperatorWorkspace({
             <Radio size={18} />
             <span>Cooper</span>
           </button>
-          <button className="active" aria-label="Operator workspace">
+          <button className={!isComputer ? "active" : ""} onClick={onSwitchOperator} aria-label="Operator workspace">
             <Monitor size={18} />
             <span>Operator</span>
+          </button>
+          <button className={isComputer ? "active" : ""} onClick={onSwitchComputer} aria-label="Computer Use workspace">
+            <MonitorSmartphone size={18} />
+            <span>Computer Use</span>
           </button>
         </nav>
         <div className="operator-top-actions">
@@ -2115,6 +2505,7 @@ function OperatorWorkspace({
       <section className="operator-console">
         <aside className="operator-voice-rail">
           <OperatorOrchestratorPanel
+            variant={variant}
             connected={callConnected}
             connecting={callConnecting}
             status={callStatus}
@@ -2217,17 +2608,27 @@ function OperatorWorkspace({
               <form className="operator-compose panel operator-tab-card" onSubmit={submitTask}>
                 <div className="panel-head">
                   <div>
-                    <p className="eyebrow">Delegate work</p>
-                    <h2>Start supervised documents, apps, pages, or browser work</h2>
+                    <p className="eyebrow">{isComputer ? "Computer command" : "Delegate work"}</p>
+                    <h2>{isComputer ? "Start supervised desktop or browser control" : "Start supervised documents, apps, pages, or browser work"}</h2>
                   </div>
                   <button className="primary-action" type="submit">
                     <Send size={18} />
-                    <span>Start task</span>
+                    <span>{isComputer ? "Start control" : "Start task"}</span>
                   </button>
                 </div>
+                {isComputer && (
+                  <div className="computer-quick-grid" aria-label="Computer Use quick starts">
+                    {computerQuickStarts.map((quick) => (
+                      <button key={quick.label} type="button" className="computer-quick-card" onClick={() => startComputerQuick(quick)}>
+                        <MonitorSmartphone size={18} />
+                        <span>{quick.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="operator-form-grid">
                   <label>
-                    <span>Skill</span>
+                    <span>{isComputer ? "Control lane" : "Skill"}</span>
                     <select value={skill} onChange={(event) => setSkill(event.target.value)}>
                       {presets.map((preset) => (
                         <option key={preset.id} value={preset.id}>{preset.title}</option>
@@ -2243,8 +2644,8 @@ function OperatorWorkspace({
                     <input value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="github.com, app.sendgrid.com" />
                   </label>
                   <label className="operator-wide-field">
-                    <span>Goal or call context</span>
-                    <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="Tell Operator what outcome Cooper should coordinate." />
+                    <span>{isComputer ? "Command or objective" : "Goal or call context"}</span>
+                    <textarea value={goal} onChange={(event) => setGoal(event.target.value)} placeholder={isComputer ? "Tell Cooper what to open, inspect, download, or operate." : "Tell Operator what outcome Cooper should coordinate."} />
                   </label>
                 </div>
                 {selectedPreset && <p className="operator-preset-note">{selectedPreset.description}</p>}
@@ -2270,6 +2671,7 @@ function OperatorWorkspace({
 }
 
 function OperatorOrchestratorPanel({
+  variant = "operator",
   connected,
   connecting,
   status,
@@ -2289,14 +2691,19 @@ function OperatorOrchestratorPanel({
 }) {
   const live = connected || connecting;
   const stateLabel = connecting ? "Starting" : connected ? status : "Idle";
+  const isComputer = variant === "computer";
 
   return (
     <section className="panel operator-orchestrator-panel">
       <div className="operator-orchestrator-head">
         <div>
-          <p className="eyebrow">Voice orchestrator</p>
-          <h2>Tell Cooper Operator what to run</h2>
-          <p className="muted">Start the orchestrator call, then ask for Codex work, browser work, repo debugging, or stop all active tasks.</p>
+          <p className="eyebrow">{isComputer ? "Computer Use voice" : "Voice orchestrator"}</p>
+          <h2>{isComputer ? "What should Cooper control?" : "What should Cooper run?"}</h2>
+          <p className="muted">
+            {isComputer
+              ? "Start the Computer Use call, then ask Cooper to open apps, browse, download, inspect UI, work in Claude Code, or stop all control."
+              : "Start the orchestrator call, then ask for Codex work, browser work, repo debugging, or stop all active tasks."}
+          </p>
         </div>
         <span className={`status-badge ${connected ? "good" : connecting ? "waiting" : ""}`}>
           {stateLabel}
@@ -2306,7 +2713,7 @@ function OperatorOrchestratorPanel({
       <div className="operator-call-controls">
         <button className="primary-action" onClick={onStartCall} disabled={live}>
           <Mic size={18} />
-          <span>{connecting ? "Starting" : connected ? "Live" : "Start Operator call"}</span>
+          <span>{connecting ? "Starting" : connected ? "Live" : isComputer ? "Start Computer Use call" : "Start Operator call"}</span>
         </button>
         <button className="ghost-action" onClick={onStopCall} disabled={!live}>
           <PhoneOff size={18} />
@@ -2314,7 +2721,7 @@ function OperatorOrchestratorPanel({
         </button>
         <button className="danger-action" onClick={onStopAll} disabled={!activeCount}>
           <PhoneOff size={18} />
-          <span>Stop all tasks</span>
+          <span>{isComputer ? "Stop computer" : "Stop all tasks"}</span>
         </button>
       </div>
 
@@ -2360,7 +2767,7 @@ function OperatorOrchestratorPanel({
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
           disabled={!connected}
-          placeholder={connected ? "Ask Cooper Operator to start a task..." : "Start Operator to chat"}
+          placeholder={connected ? isComputer ? "Ask Cooper to open, download, or control..." : "Ask Cooper Operator to start a task..." : isComputer ? "Start Computer Use to chat" : "Start Operator to chat"}
         />
         <button className="primary-action" disabled={!connected || !prompt.trim()}>
           <Send size={18} />
@@ -2375,7 +2782,13 @@ function OperatorOrchestratorPanel({
             <p>{message.text}</p>
           </div>
         ))}
-        {!messages.length && <p className="muted">Try: “Cooper, build a landing page and a mini app from what we discussed, then let me watch the work.”</p>}
+        {!messages.length && (
+          <p className="muted">
+            {isComputer
+              ? "Try: “Cooper, open Spotify” or “Cooper, open Claude Code and help me work this task.”"
+              : "Try: “Cooper, build a landing page and a mini app from what we discussed, then let me watch the work.”"}
+          </p>
+        )}
       </div>
     </section>
   );
@@ -2442,8 +2855,8 @@ function OperatorRunPreview({ task, latestLog, runtime = {} }) {
     return (
       <div className="operator-empty-preview">
         <Monitor size={34} />
-        <strong>No delegated work selected</strong>
-        <p>Start an Operator call or use the form above. Cooper will show browser checkpoints, Codex summaries, approvals, and artifacts here.</p>
+        <strong>No work selected</strong>
+        <p>Start a call or task. The preview appears here.</p>
       </div>
     );
   }
@@ -3084,7 +3497,7 @@ function OperatorArtifactPanel({ task }) {
   );
 }
 
-function SettingsView({ arcade, onAuthorize, onAuthorizeAll, onCheck }) {
+function SettingsView({ arcade, pushToTalk, onAuthorize, onAuthorizeAll, onCheck }) {
   const mappedTools = arcade.tools.filter((tool) => tool.mapped);
 
   return (
@@ -3104,6 +3517,28 @@ function SettingsView({ arcade, onAuthorize, onAuthorizeAll, onCheck }) {
         <Metric label="API Key" value={arcade.configured ? "On" : "Off"} />
         <Metric label="Mapped" value={mappedTools.length} />
         <Metric label="Writes" value={arcade.writesEnabled ? "On" : "Off"} />
+      </section>
+
+      <section className="panel settings-panel">
+        <div className="panel-head">
+          <div>
+            <h2>macOS Push-to-Talk</h2>
+            <p className="muted">Global hotkey helper using RegisterEventHotKey. Audio is captured only while held.</p>
+          </div>
+          <span className={`status-pill ${pushToTalk.tokenConfigured ? "completed" : "missing_mapping"}`}>
+            {pushToTalk.tokenConfigured ? "Token set" : "Needs token"}
+          </span>
+        </div>
+        <div className="settings-summary">
+          <Metric label="Hotkey" value={pushToTalk.defaultHotkey || "control+option+space"} />
+          <Metric label="Server" value={pushToTalk.serverUrl || "local"} />
+          <Metric label="Helper" value={pushToTalk.helperBinary || "cooper-ptt"} />
+        </div>
+        <div className="settings-note-grid">
+          <span>Config: <b>{pushToTalk.helperConfigPath || "~/.cooper/push-to-talk.json"}</b></span>
+          <span>Build: <b>npm run ptt:build</b></span>
+          <span>Run: <b>npm run ptt:run</b></span>
+        </div>
       </section>
 
       <section className="panel settings-panel">
@@ -3246,11 +3681,9 @@ function HomeView({
     <section className="home-dashboard">
       <section className="home-command-panel">
         <div className="home-command-copy">
-          <p className="eyebrow">Human command center</p>
-          <h1>Run the meeting. Capture the decision. Ship the artifact.</h1>
+          <h1>Run the room.</h1>
           <p>
-            Cooper is the live partner for meetings, requirements, follow-ups, and visual work.
-            Start with a call, add project context, then turn the conversation into deliverables.
+            Meet. Decide. Turn the conversation into finished work.
           </p>
         </div>
         <div className="home-command-actions">
@@ -3380,6 +3813,46 @@ function HomeView({
           <JobList jobs={visibleJobs} onRetry={onRetryJob} onOpenArtifact={onOpenArtifact} />
           <ActivityStream jobs={jobs} compact />
         </section>
+
+        <section className="panel home-channels-panel">
+          <div className="panel-head">
+            <div>
+              <p className="eyebrow">Channels</p>
+              <h2>Human + agent rooms</h2>
+            </div>
+            <span className="status-pill pending">Soon</span>
+          </div>
+          <div className="channel-list">
+            <article className="channel-row active">
+              <Hash size={16} />
+              <div>
+                <strong>product</strong>
+                <span>Roadmap, decisions, and artifacts</span>
+              </div>
+              <small>{runningJobs.length ? `${runningJobs.length} live` : "ready"}</small>
+            </article>
+            <article className="channel-row">
+              <Hash size={16} />
+              <div>
+                <strong>engineering</strong>
+                <span>Build tasks, PRs, QA, and Operator runs</span>
+              </div>
+              <small>planned</small>
+            </article>
+            <article className="channel-row">
+              <Users size={16} />
+              <div>
+                <strong>agent crew</strong>
+                <span>Cooper, Operator, and Computer Use updates</span>
+              </div>
+              <small>planned</small>
+            </article>
+          </div>
+          <button className="channel-compose" type="button" disabled>
+            <MessageCircle size={16} />
+            <span>Messaging workspace coming next</span>
+          </button>
+        </section>
       </section>
     </section>
   );
@@ -3394,6 +3867,7 @@ function CallScreen({
   hearing,
   transcripts,
   events,
+  startupError,
   activeCall,
   artifacts,
   jobs,
@@ -3413,109 +3887,161 @@ function CallScreen({
   onRetryJob,
   onBack
   }) {
+    const [railTab, setRailTab] = React.useState("now");
     const mode = speaking ? "speaking" : hearing ? "hearing" : connected ? "listening" : "idle";
     const modeLabel = callModeLabel({ speaking, hearing, connecting, connected });
-    const hint = wakeHint(connected);
+    const callId = activeCall?.id || "";
+    const callJobs = jobs.filter((job) => job.callId === callId);
+    const quietJobs = callJobs.slice(0, 4);
+    const latestMichael = [...transcripts].reverse().find((entry) => normalizeSpeaker(entry.speaker) !== "Cooper");
+    const latestCooper = [...transcripts].reverse().find((entry) => normalizeSpeaker(entry.speaker) === "Cooper");
+    const latestConnectionIssue = events.find((event) => ["Connection", "Error"].includes(event.label));
+    const railQuote = latestMichael?.text || (connected ? "Say Cooper any time you want him to join." : "Start the call when you are ready.");
+    const railUtterance = latestCooper?.text || (connected ? modeLabel : "Ready when you are.");
+    const elapsedLabel = activeCall?.startedAt
+      ? formatDuration(Math.max(0, Math.floor((Date.now() - new Date(activeCall.startedAt).getTime()) / 1000)))
+      : "--:--";
+    const startupFailed = status === "Failed";
 
     return (
       <main className={`call-screen ${mode}`}>
-      <section className="call-rail" aria-label="Cooper call controls">
-        <header className="call-topbar">
-          <button className="icon-button inverted" onClick={onBack} aria-label="Back">
-            <ArrowLeft size={20} />
+        <header className="call-shell-topbar">
+          <button className="call-brand-button" onClick={onBack}>
+            <img src="/assets/aires/logo-symbol.svg" alt="" />
+            <strong>Cooper</strong>
+            <span>AIRES workspace</span>
           </button>
-          <div className="call-status">
-            <Radio size={18} />
-            <span>{status}</span>
-          </div>
-          <button className="icon-button inverted danger-text" onClick={onEndCall} aria-label="End call">
-            <PhoneOff size={20} />
-          </button>
+          <nav className="call-workspace-tabs" aria-label="Workspace">
+            <button className="active" type="button">Call</button>
+            <button type="button">Operator</button>
+          </nav>
+          <span className="call-user-dot" aria-label="Michael workspace" />
         </header>
 
-          <section className="wave-stage">
-            <div className="call-label">Cooper</div>
-            {project && <div className="call-project">{project.title}</div>}
-            <SoundWave active={speaking || hearing || connecting} speaking={speaking} />
-            <p>{modeLabel}</p>
-            <div className="wake-strip" aria-label="Cooper wake behavior">
-              <span>{hint.label}</span>
-              <strong>{hint.value}</strong>
-              <span>{hint.detail}</span>
-            </div>
+        <section className="call-live-layout">
+          <section className="call-rail" aria-label="Cooper call controls">
+            <section className="call-agent-zone">
+              <div className="call-agent-meta">
+                <span className={`call-agent-glyph ${speaking ? "speaking" : hearing ? "hearing" : ""}`}>
+                  <img src="/assets/aires/logo-symbol.svg" alt="" />
+                </span>
+                <span>{connecting ? "joining" : connected ? modeLabel.toLowerCase() : status.toLowerCase()} · {elapsedLabel}</span>
+              </div>
+              <p className="call-last-ask">“{railQuote}”</p>
+              <h1>{railUtterance}</h1>
+              {project && <p className="call-project-line">{project.title}</p>}
+            </section>
+
+            <section className="call-rail-scroll">
+              {railTab === "now" ? (
+                <>
+                  <p className="call-section-label">needs you</p>
+                  {startupFailed && (
+                    <article className="call-decision-card call-error-card">
+                      <p>{startupError || latestConnectionIssue?.detail || "The realtime call could not start."}</p>
+                      <div>
+                        <button className="call-primary-mini" onClick={onConnect} type="button">Retry call</button>
+                        <button className="call-secondary-mini" onClick={onBack} type="button">Back</button>
+                      </div>
+                    </article>
+                  )}
+                  {!connected && !connecting && !startupFailed && (
+                    <article className="call-decision-card">
+                      <p>Start the call so Cooper can listen and bring work onto the canvas.</p>
+                      <div>
+                        <button className="call-primary-mini" onClick={onConnect} type="button">Join call</button>
+                        <button className="call-secondary-mini" onClick={onBack} type="button">Back</button>
+                      </div>
+                    </article>
+                  )}
+                  {connecting && (
+                    <article className="call-decision-card">
+                      <p>Opening the realtime session and microphone.</p>
+                      <div>
+                        <button className="call-secondary-mini" onClick={onEndCall} type="button">Cancel</button>
+                      </div>
+                    </article>
+                  )}
+                  {connected && (
+                    <article className="call-decision-card">
+                      <p>Need Cooper in the room right now?</p>
+                      <div>
+                        <button className="call-primary-mini" onClick={onCallCooper} type="button">Wake Cooper</button>
+                        <button className="call-secondary-mini" type="button" disabled>Keep listening</button>
+                      </div>
+                    </article>
+                  )}
+
+                  <p className="call-section-label">running quietly</p>
+                  <div className="call-quiet-list">
+                    {quietJobs.map((job) => (
+                      <div className="call-quiet-row" key={job.id}>
+                        <span />
+                        <p>{job.title}</p>
+                        <small>{statusLabel(job.status).toLowerCase()}</small>
+                      </div>
+                    ))}
+                    {!quietJobs.length && (
+                      <div className="call-quiet-row muted">
+                        <span />
+                        <p>Quiet. No background work.</p>
+                        <small>ready</small>
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="call-transcript-list">
+                  {transcripts.map((entry) => (
+                    <article className={speakerClass(entry.speaker)} key={entry.id}>
+                      <strong>{normalizeSpeaker(entry.speaker)}</strong>
+                      <p>{entry.text}</p>
+                    </article>
+                  ))}
+                  {!transcripts.length && <p className="muted">Transcript will appear here.</p>}
+                </div>
+              )}
+            </section>
+
+            <section className="call-bottom">
+              <div className="call-rail-tabs">
+                <button className={railTab === "now" ? "active" : ""} onClick={() => setRailTab("now")} type="button">Now</button>
+                <button className={railTab === "transcript" ? "active" : ""} onClick={() => setRailTab("transcript")} type="button">Transcript · {transcripts.length}</button>
+              </div>
+              <form className="call-prompt" onSubmit={onSubmitPrompt}>
+                <input
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder={connected ? "Just talk — or type if you can’t..." : callPromptPlaceholder(connected)}
+                  disabled={!connected}
+                />
+                <button type="submit" disabled={!connected || !prompt.trim()} aria-label="Send">
+                  <Send size={18} />
+                </button>
+              </form>
+              <div className="call-bottom-note">
+                <span><i />Cooper hears the room. Speaks only when named.</span>
+                <button type="button" onClick={onEndCall}>End call</button>
+              </div>
+            </section>
           </section>
 
-        <section className="call-dock">
-          <div className="dock-actions">
-            {!connected && !connecting && (
-              <button className="primary-action" onClick={onConnect}>
-                <Phone size={20} />
-                <span>Join</span>
-              </button>
-            )}
-              <button className="secondary-action" onClick={onCallCooper} disabled={!connected}>
-                <Mic size={20} />
-                <span>Wake Cooper</span>
-              </button>
-            <button className="danger-action" onClick={onEndCall}>
-              <PhoneOff size={20} />
-              <span>End</span>
-            </button>
-          </div>
-
-          <form className="call-prompt" onSubmit={onSubmitPrompt}>
-            <input
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                placeholder={callPromptPlaceholder(connected)}
-                disabled={!connected}
-              />
-            <button type="submit" disabled={!connected || !prompt.trim()} aria-label="Send">
-              <Send size={19} />
-            </button>
-          </form>
-
-          <div className="live-feed">
-            <section>
-              <h2>Transcript</h2>
-              <div className="feed-list">
-                {transcripts.slice(-4).reverse().map((entry) => (
-                  <div className={`feed-turn ${speakerClass(entry.speaker)}`} key={entry.id}>
-                    <span>{normalizeSpeaker(entry.speaker)}</span>
-                    <p>{entry.text}</p>
-                  </div>
-                ))}
-                {!transcripts.length && <p className="muted">Waiting for speech.</p>}
-              </div>
-            </section>
-            <section>
-              <h2>Events</h2>
-              <div className="feed-list">
-                {events.slice(0, 4).map((event) => (
-                  <p key={event.id}>{event.label}: {event.detail}</p>
-                ))}
-                {!events.length && <p className="muted">No events yet.</p>}
-              </div>
-            </section>
-          </div>
+          <CallCanvas
+            activeCall={activeCall}
+            project={project}
+            connected={connected}
+            artifacts={artifacts}
+            jobs={jobs}
+            selectedArtifact={selectedArtifact}
+            artifactContent={artifactContent}
+            onSelectArtifact={onSelectArtifact}
+            onGenerateCanvas={onGenerateCanvas}
+            onPresentExample={onPresentExample}
+            onAddContext={onAddContext}
+            onUploadContext={onUploadContext}
+            onRetryJob={onRetryJob}
+          />
         </section>
-      </section>
-
-      <CallCanvas
-        activeCall={activeCall}
-        project={project}
-        connected={connected}
-        artifacts={artifacts}
-        jobs={jobs}
-        selectedArtifact={selectedArtifact}
-        artifactContent={artifactContent}
-        onSelectArtifact={onSelectArtifact}
-        onGenerateCanvas={onGenerateCanvas}
-        onPresentExample={onPresentExample}
-        onAddContext={onAddContext}
-        onUploadContext={onUploadContext}
-        onRetryJob={onRetryJob}
-      />
     </main>
   );
 }
@@ -3676,114 +4202,101 @@ function CallCanvas({
     event.target.value = "";
   }
 
+  const canvasToolTabs = [
+    ["build", "Build"],
+    ["context", "Context"],
+    ["examples", "Templates"],
+    ["activity", "Activity"]
+  ];
+
   return (
     <aside className="call-canvas" aria-label="Cooper collaboration canvas">
-      <div className="canvas-head">
-        <div>
-          <p className="eyebrow">Live Canvas</p>
-          <h2>{visibleArtifact?.title || "Collaborate visually"}</h2>
+      <div className="call-artifact-bar">
+        <nav className="call-artifact-tabs" aria-label="Canvas artifacts">
+          {callArtifacts.length ? (
+            callArtifacts.map((artifact, index) => (
+              <button
+                key={artifact.id}
+                className={[
+                  visibleArtifact?.id === artifact.id ? "active" : "",
+                  index > 0 ? "has-dot" : ""
+                ].filter(Boolean).join(" ")}
+                onClick={() => {
+                  onSelectArtifact(artifact.id);
+                  setActiveTab("preview");
+                }}
+                type="button"
+              >
+                {artifact.title}
+              </button>
+            ))
+          ) : (
+            <button className="active" type="button">Canvas</button>
+          )}
+        </nav>
+        <div className="call-canvas-tools" role="tablist" aria-label="Canvas tools">
+          <button className={activeTab === "preview" ? "active" : ""} onClick={() => setActiveTab("preview")} type="button">Preview</button>
+          {canvasToolTabs.map(([id, label]) => (
+            <button className={activeTab === id ? "active" : ""} key={id} onClick={() => setActiveTab(id)} type="button">
+              {label}
+            </button>
+          ))}
         </div>
-          <span className={connected ? "canvas-state live" : "canvas-state"}>{canvasStateLabel({ connected, activeJobCount })}</span>
-        </div>
-
-      <div className="canvas-tabs" role="tablist" aria-label="Canvas sections">
-        <button className={activeTab === "preview" ? "active" : ""} onClick={() => setActiveTab("preview")} role="tab">
-          Preview
-        </button>
-        <button className={activeTab === "build" ? "active" : ""} onClick={() => setActiveTab("build")} role="tab">
-          Build
-        </button>
-        <button className={activeTab === "context" ? "active" : ""} onClick={() => setActiveTab("context")} role="tab">
-          Context
-        </button>
-        <button className={activeTab === "examples" ? "active" : ""} onClick={() => setActiveTab("examples")} role="tab">
-          Templates
-        </button>
-        <button className={activeTab === "activity" ? "active" : ""} onClick={() => setActiveTab("activity")} role="tab">
-          Activity
-        </button>
       </div>
 
       {activeTab === "preview" && (
-        <div className="canvas-body">
-          <div className="canvas-preview-grid">
-            <section className="canvas-preview-main">
-              {callArtifacts.length > 0 && (
-                <div className="canvas-artifact-tabs">
-                  {callArtifacts.map((artifact) => (
-                    <button
-                      key={artifact.id}
-                      className={visibleArtifact?.id === artifact.id ? "active" : ""}
-                      onClick={() => onSelectArtifact(artifact.id)}
-                    >
-                      {artifact.title}
+        <div className="call-canvas-document">
+          {visibleArtifact ? (
+            <ArtifactDocument
+              artifact={visibleArtifact}
+              mode={artifactMode}
+              onModeChange={setArtifactMode}
+              content={visibleContent}
+              title={visibleArtifact.title}
+            />
+            ) : (
+              <div className="canvas-empty large">
+                <Files size={28} />
+                <strong>Nothing on the canvas yet.</strong>
+                <p>Cooper can bring diagrams, prototypes, requirements, or AIRES HTML templates forward while the call keeps moving.</p>
+                <div className="quick-canvas-actions" aria-label="Canvas quick actions">
+                  {canvasQuickActions.map(({ kind, label, icon: Icon }) => (
+                    <button key={kind} onClick={() => queueCanvasBuild(kind)}>
+                      <Icon size={17} />
+                      <span>{label}</span>
                     </button>
                   ))}
+                  <button onClick={() => setActiveTab("examples")}>
+                    <Library size={17} />
+                    <span>Templates</span>
+                  </button>
                 </div>
-              )}
-
-              {visibleArtifact ? (
-                <ArtifactDocument
-                  artifact={visibleArtifact}
-                  mode={artifactMode}
-                  onModeChange={setArtifactMode}
-                  content={visibleContent}
-                  title={visibleArtifact.title}
-                />
-                ) : (
-                  <div className="canvas-empty large">
-                    <Files size={28} />
-                    <strong>Nothing on the canvas yet.</strong>
-                    <p>Cooper can bring diagrams, prototypes, requirements, or AIRES HTML templates forward while the call keeps moving.</p>
-                    <div className="quick-canvas-actions" aria-label="Canvas quick actions">
-                      {canvasQuickActions.map(({ kind, label, icon: Icon }) => (
-                        <button key={kind} onClick={() => queueCanvasBuild(kind)} disabled={!callId}>
-                          <Icon size={17} />
-                          <span>{label}</span>
-                        </button>
-                      ))}
-                      <button onClick={() => setActiveTab("examples")}>
-                        <Library size={17} />
-                        <span>Templates</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-            </section>
-
-            <aside className="canvas-preview-side">
-              <div className="canvas-section-head">
-                <Activity size={17} />
-                <strong>Running work</strong>
               </div>
-              <JobList jobs={callJobs} onRetry={onRetryJob} />
-              <ActivityStream jobs={callJobs} compact />
-            </aside>
-          </div>
+            )}
         </div>
       )}
 
       {activeTab === "build" && (
-        <div className="canvas-body">
+        <div className="canvas-body call-tool-body">
           <div className="canvas-section-head">
             <Wand2 size={17} />
             <strong>Select what Cooper should build</strong>
           </div>
 
           <div className="canvas-actions">
-            <button className={buildKind === "mermaid_diagram" ? "active" : ""} onClick={() => setBuildKind("mermaid_diagram")} disabled={!callId}>
+            <button className={buildKind === "mermaid_diagram" ? "active" : ""} onClick={() => setBuildKind("mermaid_diagram")}>
               <Files size={17} />
               <span>Diagram</span>
             </button>
-            <button className={buildKind === "ui_wireframe" ? "active" : ""} onClick={() => setBuildKind("ui_wireframe")} disabled={!callId}>
+            <button className={buildKind === "ui_wireframe" ? "active" : ""} onClick={() => setBuildKind("ui_wireframe")}>
               <MonitorSmartphone size={17} />
               <span>Wireframe</span>
             </button>
-            <button className={buildKind === "html_prototype" ? "active" : ""} onClick={() => setBuildKind("html_prototype")} disabled={!callId}>
+            <button className={buildKind === "html_prototype" ? "active" : ""} onClick={() => setBuildKind("html_prototype")}>
               <Wand2 size={17} />
               <span>Prototype</span>
             </button>
-            <button className={buildKind === "aires_requirements" ? "active" : ""} onClick={() => setBuildKind("aires_requirements")} disabled={!callId}>
+            <button className={buildKind === "aires_requirements" ? "active" : ""} onClick={() => setBuildKind("aires_requirements")}>
               <FileText size={17} />
               <span>Requirements</span>
             </button>
@@ -3796,7 +4309,7 @@ function CallCanvas({
               placeholder="Paste the exact context or ask for the artifact. Typed text is primary. Leave blank to use the live transcript and any explicitly selected project."
               rows={5}
             />
-            <button type="submit" disabled={!callId}>
+            <button type="submit">
               <Send size={17} />
               <span>Generate</span>
             </button>
@@ -3840,7 +4353,7 @@ function CallCanvas({
               <strong>{selectedExample.title}</strong>
               <span>{selectedExample.description}</span>
               <div className="inline-actions">
-                <button className="primary-action compact" onClick={generateSelectedExample} disabled={!callId}>
+                <button className="primary-action compact" onClick={generateSelectedExample}>
                   <Wand2 size={17} />
                   <span>Generate from template</span>
                 </button>
@@ -3855,7 +4368,7 @@ function CallCanvas({
       )}
 
       {activeTab === "context" && (
-        <div className="canvas-body">
+        <div className="canvas-body call-tool-body">
           <div className="context-mode-card">
             <strong>{project?.title || "Live context"}</strong>
             <span>Paste or upload sprint tickets, feature epics, agent output, requirements drafts, PDFs, and notes. Cooper refreshes the live session context after ingestion.</span>
@@ -3894,7 +4407,7 @@ function CallCanvas({
       )}
 
       {activeTab === "examples" && (
-        <div className="canvas-body">
+        <div className="canvas-body call-tool-body">
           <div className="example-layout">
             <aside className="example-list">
               <div className="example-list-head">
@@ -3922,11 +4435,11 @@ function CallCanvas({
                   {selectedExample && <p>{selectedExample.description}</p>}
                 </div>
                 <div className="inline-actions">
-                  <button className="secondary-action compact" onClick={presentSelectedExample} disabled={!callId || !selectedExample}>
+                  <button className="secondary-action compact" onClick={presentSelectedExample} disabled={!selectedExample}>
                     <Files size={17} />
                     <span>Present</span>
                   </button>
-                  <button className="primary-action compact" onClick={generateSelectedExample} disabled={!callId || !selectedExample}>
+                  <button className="primary-action compact" onClick={generateSelectedExample} disabled={!selectedExample}>
                     <Wand2 size={17} />
                     <span>Generate</span>
                   </button>
@@ -3951,7 +4464,7 @@ function CallCanvas({
       )}
 
       {activeTab === "activity" && (
-        <div className="canvas-body">
+        <div className="canvas-body call-tool-body">
           <section className="canvas-work expanded">
             <JobList jobs={callJobs} onRetry={onRetryJob} />
           </section>
@@ -4117,9 +4630,8 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onOpe
   const selectedSummary = selectedCall?.transcript?.find((entry) => normalizeSpeaker(entry.speaker) === "Cooper")?.text
     || selectedCall?.transcript?.find((entry) => entry.text)?.text
     || "Captured meeting context, transcript, and generated Cooper work will appear here.";
-  const selectedModel = callJobs.find((job) => job.model)?.model || "gpt-5.4";
-  const tokenEstimate = callJobs.reduce((sum, job) => sum + (Number(job.outputTokens) || Number(job.maxOutputTokens) || 0), 0);
-  const estimatedCost = tokenEstimate ? `$${Math.max(0.01, tokenEstimate / 250000).toFixed(2)}` : "$0.00";
+  const costSummary = callCostSummary(selectedCall || {}, callJobs);
+  const selectedModel = costSummary.model || callJobs.find((job) => job.model)?.model || "gpt-5.4";
 
   return (
     <section className="split-view calls-view">
@@ -4185,8 +4697,8 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onOpe
               <Metric label="Duration" value={formatDuration(selectedCall.durationSeconds)} />
               <Metric label="Model" value={selectedModel} />
               <Metric label="Artifacts" value={callArtifacts.length} />
-              <Metric label="Tokens" value={tokenEstimate ? `~${Math.round(tokenEstimate / 1000)}k` : "0"} />
-              <Metric label="Cost" value={estimatedCost} />
+              <Metric label={costSummary.source === "actual" ? "Tokens" : "Est. tokens"} value={costSummary.tokenLabel} />
+              <Metric label={costSummary.costLabel} value={costSummary.costValue} />
             </div>
 
             <div className="call-tabs-row">
@@ -5249,6 +5761,17 @@ function emptyArcadeState() {
   };
 }
 
+function emptyPushToTalkState() {
+  return {
+    enabled: true,
+    serverUrl: "http://127.0.0.1:5000",
+    tokenConfigured: false,
+    defaultHotkey: "control+option+space",
+    helperConfigPath: "~/.cooper/push-to-talk.json",
+    helperBinary: "native/push-to-talk/cooper-ptt"
+  };
+}
+
 function emptyOperatorState() {
   return {
     runtime: {},
@@ -5275,6 +5798,55 @@ function toolLabel(name) {
     run_gstack_skill: "GStack skill",
     run_aires_requirements_framework: "AIRES requirements"
   }[name] || String(name || "Tool").replace(/_/g, " ");
+}
+
+function wait(ms = 0) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(value) {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const dateMs = Date.parse(value);
+  return Number.isFinite(dateMs) ? Math.max(0, dateMs - Date.now()) : 0;
+}
+
+function describeSessionHttpError(status, body = "") {
+  const raw = String(body || "").trim();
+  let detail = raw;
+
+  try {
+    const parsed = JSON.parse(raw);
+    detail = parsed?.error?.message || parsed?.message || raw;
+  } catch {
+    detail = raw;
+  }
+
+  if (status === 429) {
+    return [
+      "OpenAI rate-limited the realtime call startup.",
+      detail ? `Detail: ${detail}` : "",
+      "Wait a moment, then press Retry call."
+    ].filter(Boolean).join(" ");
+  }
+
+  if (status === 401 || status === 403) {
+    return [
+      "OpenAI rejected the realtime call credentials.",
+      detail ? `Detail: ${detail}` : "",
+      "Check OPENAI_API_KEY and project access."
+    ].filter(Boolean).join(" ");
+  }
+
+  if (status >= 500) {
+    return [
+      "The realtime session endpoint failed while creating the call.",
+      detail ? `Detail: ${detail}` : ""
+    ].filter(Boolean).join(" ");
+  }
+
+  return detail || `Failed to create realtime session (${status}).`;
 }
 
 function describeConnectionError(error) {

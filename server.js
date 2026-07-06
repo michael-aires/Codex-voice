@@ -33,7 +33,18 @@ import {
   operatorRuntimeInfo,
   operatorTaskPublic
 } from "./server/operatorRuntime.js";
+import {
+  buildPushToTalkComputerTaskInput,
+  classifyPushToTalkCommand,
+  pushToTalkConfigFromEnv
+} from "./server/pushToTalk.js";
+import {
+  executeLocalComputerTool,
+  logLocalComputerTool,
+  localComputerToolNames
+} from "./server/localComputerTools.js";
 import { runGstackSkill } from "./server/tools/runGstackSkill.js";
+import { addResponsesApiUsage, normalizeResponsesApiUsage } from "./src/callCost.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === "production";
@@ -49,6 +60,10 @@ const jobMaxOutputTokens = Number(process.env.COOPER_JOB_MAX_OUTPUT_TOKENS || 90
 const projectContextChars = Number(process.env.COOPER_PROJECT_CONTEXT_CHARS || 18000);
 const projectSourceMaxChars = Number(process.env.COOPER_PROJECT_SOURCE_MAX_CHARS || 250000);
 const projectUploadMaxBytes = Number(process.env.COOPER_PROJECT_UPLOAD_MAX_MB || 20) * 1024 * 1024;
+const pushToTalkMaxAudioBytes = Number(process.env.COOPER_PTT_MAX_AUDIO_MB || 18) * 1024 * 1024;
+const pushToTalkToken = process.env.COOPER_PTT_TOKEN || "";
+const pushToTalkTranscriptionModel = process.env.COOPER_PTT_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
+const pushToTalkResponseMaxOutputTokens = Number(process.env.COOPER_PTT_RESPONSE_MAX_OUTPUT_TOKENS || 1200);
 const workModels = [workModel, fallbackWorkModel].filter((model, index, list) => model && list.indexOf(model) === index);
 const appPassword = process.env.COOPER_APP_PASSWORD || "";
 const sessionSecret = process.env.COOPER_SESSION_SECRET || appPassword;
@@ -77,6 +92,10 @@ const app = express();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: projectUploadMaxBytes }
+});
+const pushToTalkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: pushToTalkMaxAudioBytes }
 });
 const eventClients = new Set();
 const operatorTimers = new Map();
@@ -129,6 +148,15 @@ app.post("/api/auth/logout", (_req, res) => {
 app.use((req, res, next) => {
   if (req.path.startsWith("/api/auth/")) {
     next();
+    return;
+  }
+
+  if (req.path.startsWith("/api/push-to-talk/")) {
+    if (isAuthenticated(req) || isPushToTalkAuthenticated(req)) {
+      next();
+      return;
+    }
+    res.status(401).json({ error: "Authentication required for push-to-talk bridge." });
     return;
   }
 
@@ -331,6 +359,10 @@ app.post("/session", async (req, res) => {
     const answerSdp = await response.text();
 
     if (!response.ok) {
+      const retryAfter = response.headers.get("Retry-After");
+      const requestId = response.headers.get("x-request-id") || response.headers.get("openai-request-id");
+      if (retryAfter) res.setHeader("Retry-After", retryAfter);
+      if (requestId) res.setHeader("X-OpenAI-Request-ID", requestId);
       res.status(response.status).type("text/plain").send(answerSdp);
       return;
     }
@@ -366,6 +398,7 @@ app.post("/api/operator/tasks", async (req, res) => {
     allowedDomains: req.body?.allowedDomains,
     artifactKinds: req.body?.artifactKinds,
     templateIds: req.body?.templateIds,
+    computerIntent: req.body?.computerIntent,
     budgets: req.body?.budgets
   });
 
@@ -457,6 +490,57 @@ app.post("/api/operator/stop-all", async (_req, res) => {
   });
 
   res.json({ stopped: stopped.map(operatorTaskPublic) });
+});
+
+app.post("/api/computer-use/tool-log", (req, res) => {
+  logLocalComputerTool(cleanText(req.body?.phase) || "realtime", cleanText(req.body?.name), req.body?.arguments || {});
+  res.json({ ok: true });
+});
+
+app.post("/api/computer-use/tool", async (req, res) => {
+  const name = cleanText(req.body?.name);
+  if (!localComputerToolNames.includes(name)) {
+    res.status(400).json({ error: `Unknown local computer tool: ${name || "(missing)"}` });
+    return;
+  }
+
+  const output = await executeLocalComputerTool(name, isPlainObject(req.body?.arguments) ? req.body.arguments : {}, {
+    env: process.env
+  });
+  res.status(output.status === "error" ? 500 : 200).json({ output });
+});
+
+app.get("/api/push-to-talk/config", (_req, res) => {
+  res.json({ pushToTalk: pushToTalkConfigFromEnv(process.env) });
+});
+
+app.post("/api/push-to-talk/utterance", pushToTalkUpload.single("audio"), async (req, res) => {
+  if (!req.file?.buffer?.length) {
+    res.status(400).json({ error: "Upload an audio file in the multipart field named audio." });
+    return;
+  }
+
+  try {
+    const transcript = await transcribePushToTalkAudio(req.file);
+    const result = await routePushToTalkTranscript(transcript, {
+      workspace: cleanText(req.body?.workspace),
+      source: cleanText(req.body?.source) || "macos_hotkey"
+    });
+    const payload = {
+      status: "completed",
+      transcript,
+      ...result
+    };
+    broadcastEvent("push-to-talk.completed", payload);
+    res.json(payload);
+  } catch (error) {
+    const payload = {
+      status: "error",
+      message: error.message || "Push-to-talk failed."
+    };
+    broadcastEvent("push-to-talk.completed", payload);
+    res.status(500).json(payload);
+  }
 });
 
 app.get("/api/aires/examples", (_req, res) => {
@@ -793,6 +877,7 @@ app.patch("/api/calls/:id", async (req, res) => {
     if (typeof req.body?.status === "string") call.status = req.body.status;
     if (typeof req.body?.durationSeconds === "number") call.durationSeconds = req.body.durationSeconds;
     if (Array.isArray(req.body?.transcript)) call.transcript = normalizeTranscript(req.body.transcript);
+    if (req.body?.realtimeUsage) call.realtimeUsage = normalizeCallUsage(req.body.realtimeUsage);
     if (req.body?.endedAt) call.endedAt = req.body.endedAt;
     call.updatedAt = new Date().toISOString();
     return call;
@@ -841,6 +926,7 @@ app.post("/api/calls/:id/end", async (req, res) => {
     call.status = "ended";
     call.endedAt = req.body?.endedAt || new Date().toISOString();
     call.durationSeconds = Number(req.body?.durationSeconds || call.durationSeconds || 0);
+    if (req.body?.realtimeUsage) call.realtimeUsage = normalizeCallUsage(req.body.realtimeUsage);
     call.suggestions = defaultSuggestions(call.transcript.length > 0);
     call.updatedAt = new Date().toISOString();
     return call;
@@ -1099,6 +1185,14 @@ async function runJob(jobId) {
       await updateDb((nextDb) => {
         const nextJob = nextDb.jobs.find((item) => item.id === jobId);
         if (!nextJob) return;
+        if (responseResult.usage) {
+          nextJob.responseUsage = addResponsesApiUsage(nextJob.responseUsage, responseResult.usage, {
+            model: responseResult.model,
+            at: responseResult.completedAt
+          });
+          nextJob.outputTokens = nextJob.responseUsage.outputTokens;
+          nextJob.costUsd = nextJob.responseUsage.costUsd;
+        }
         nextJob.apiStatus = "response_received";
         nextJob.lastApiCompletedAt = responseResult.completedAt;
         nextJob.lastApiDurationMs = responseResult.durationMs;
@@ -1111,7 +1205,7 @@ async function runJob(jobId) {
         appendJobLog(
           nextJob,
           "api_response",
-          `OpenAI response received in ${formatRetryDelay(responseResult.durationMs)} with ${output.length.toLocaleString()} characters.`
+          `OpenAI response received in ${formatRetryDelay(responseResult.durationMs)} with ${output.length.toLocaleString()} characters${responseResult.usage ? `, ${responseResult.usage.totalTokens.toLocaleString()} tokens, $${responseResult.usage.costUsd.toFixed(4)}` : ""}.`
         );
         nextJob.stepIndex += 1;
         nextJob.apiStatus = nextJob.stepIndex >= nextJob.stepCount ? "finalizing" : "waiting_between_steps";
@@ -1288,6 +1382,7 @@ async function createResponse(input, { attempt = 1, outputType = "markdown", max
       output: `${output}\n\n> Cooper note: this step ended incomplete (${reason}). Raise COOPER_JOB_MAX_OUTPUT_TOKENS or narrow the artifact request if this happens repeatedly.`,
       model,
       maxOutputTokens,
+      usage: normalizeResponseUsagePayload(payload?.usage, model, completedAt),
       completedAt,
       durationMs,
       status: payload?.status || "incomplete",
@@ -1298,11 +1393,143 @@ async function createResponse(input, { attempt = 1, outputType = "markdown", max
     output,
     model,
     maxOutputTokens,
+    usage: normalizeResponseUsagePayload(payload?.usage, model, completedAt),
     completedAt,
     durationMs,
     status: payload?.status || "completed",
     incompleteReason: ""
   };
+}
+
+async function transcribePushToTalkAudio(file) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("Missing OPENAI_API_KEY on the server.");
+  }
+
+  const fd = new FormData();
+  fd.set("model", pushToTalkTranscriptionModel);
+  fd.set("prompt", "Push-to-talk command for Cooper, AIRES, Operator, Computer Use, Codex, browser, desktop apps, downloads, meetings, product and engineering work.");
+  fd.set("file", new Blob([file.buffer], { type: file.mimetype || "audio/mp4" }), file.originalname || "cooper-push-to-talk.m4a");
+
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "OpenAI-Safety-Identifier": "cooper-local-ptt"
+    },
+    body: fd
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `OpenAI transcription failed with ${response.status}.`);
+  }
+
+  return cleanText(payload?.text);
+}
+
+async function routePushToTalkTranscript(transcript, meta = {}) {
+  const text = cleanText(transcript);
+  if (!text) {
+    return {
+      action: "ignored",
+      message: "No speech was detected."
+    };
+  }
+
+  const classification = classifyPushToTalkCommand(text);
+  if (classification.kind === "stop_computer") {
+    const stopped = await stopActiveComputerUseTasks("Push-to-talk stop command.");
+    return {
+      action: "stop_computer",
+      stopped: stopped.map(operatorTaskPublic),
+      message: stopped.length ? `Stopped ${stopped.length} active Computer Use task${stopped.length === 1 ? "" : "s"}.` : "No active Computer Use tasks were running."
+    };
+  }
+
+  if (classification.kind === "local_tool") {
+    const output = await executeLocalComputerTool(classification.tool, classification.arguments || {}, {
+      env: process.env
+    });
+    return {
+      action: "local_tool",
+      tool: classification.tool,
+      output,
+      message: output.message || `${classification.tool} finished.`
+    };
+  }
+
+  if (classification.kind === "computer_task") {
+    const input = buildPushToTalkComputerTaskInput(text, { requestedBy: meta.source || "push_to_talk" });
+    const task = createOperatorTask(input);
+    await updateDb((db) => {
+      db.operatorTasks = Array.isArray(db.operatorTasks) ? db.operatorTasks : [];
+      db.operatorTasks.push(task);
+    });
+    scheduleOperatorTask(task.id, 250);
+    return {
+      action: "computer_task_queued",
+      task: operatorTaskPublic(task),
+      message: `${task.title} is queued in Cooper Computer Use.`
+    };
+  }
+
+  const response = await createResponse([
+    {
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text: [
+            "Michael used push-to-talk. Answer as Cooper, concise and practical.",
+            "If this should be a Computer Use or Operator task, say what task should be started rather than claiming it is already running.",
+            "",
+            `Utterance: ${text}`
+          ].join("\n")
+        }
+      ]
+    }
+  ], {
+    outputType: "markdown",
+    maxOutputTokens: pushToTalkResponseMaxOutputTokens
+  });
+
+  return {
+    action: "cooper_response",
+    response: response.output,
+    model: response.model,
+    usage: response.usage,
+    message: "Cooper responded to the push-to-talk request."
+  };
+}
+
+async function stopActiveComputerUseTasks(reason) {
+  return updateDb((db) => {
+    const now = new Date().toISOString();
+    const tasks = (db.operatorTasks || []).filter((task) =>
+      ["computer_use_browser", "computer_use_desktop", "codex_app_server"].includes(task.skill) &&
+      isOperatorTaskActive(task)
+    );
+    tasks.forEach((task) => {
+      task.status = "stopped";
+      task.stoppedAt = now;
+      task.updatedAt = now;
+      task.logs.push(createOperatorLog("stopped", "Push-to-talk stop", reason, now));
+      task.approvals.forEach((approval) => {
+        if (approval.status === "pending") {
+          approval.status = "cancelled";
+          approval.resolvedAt = now;
+        }
+      });
+      clearOperatorTimer(task.id);
+    });
+    return tasks;
+  });
+}
+
+function normalizeResponseUsagePayload(usage, model, completedAt) {
+  const summary = addResponsesApiUsage(null, usage, { model, at: completedAt });
+  return summary?.calls?.[0] || null;
 }
 
 function modelForAttempt(attempt = 1) {
@@ -2646,6 +2873,7 @@ function publicState(db) {
     toolCalls: sortByDate(db.toolCalls || []).slice(0, 20).map(publicToolCall),
     gstackRuns: sortByDate(db.gstackRuns || []).slice(0, 20).map(publicGstackRun),
     arcade: arcadeSettingsState(db),
+    pushToTalk: pushToTalkConfigFromEnv(process.env),
     mcpApps: {
       servers: publicMcpAppServers()
     },
@@ -2965,6 +3193,53 @@ function normalizeTranscript(transcript) {
       itemId: cleanText(entry.itemId)
     }))
     .filter((entry) => entry.text);
+}
+
+function normalizeCallUsage(value) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    model: cleanText(value.model) || "gpt-realtime-2",
+    transcriptionModel: cleanText(value.transcriptionModel) || "gpt-4o-mini-transcribe",
+    startedAt: cleanText(value.startedAt),
+    updatedAt: cleanText(value.updatedAt) || new Date().toISOString(),
+    responses: positiveInteger(value.responses),
+    transcriptionEvents: positiveInteger(value.transcriptionEvents),
+    response: normalizeUsageTotals(value.response),
+    transcription: normalizeUsageTotals(value.transcription),
+    costUsd: positiveMoney(value.costUsd),
+    costSource: cleanText(value.costSource) || "actual_usage",
+    costBreakdown: {
+      realtimeUsd: positiveMoney(value.costBreakdown?.realtimeUsd),
+      transcriptionUsd: positiveMoney(value.costBreakdown?.transcriptionUsd)
+    }
+  };
+}
+
+function normalizeUsageTotals(value = {}) {
+  return {
+    totalTokens: positiveInteger(value.totalTokens),
+    inputTokens: positiveInteger(value.inputTokens),
+    outputTokens: positiveInteger(value.outputTokens),
+    inputTextTokens: positiveInteger(value.inputTextTokens),
+    inputAudioTokens: positiveInteger(value.inputAudioTokens),
+    inputImageTokens: positiveInteger(value.inputImageTokens),
+    cachedTokens: positiveInteger(value.cachedTokens),
+    cachedTextTokens: positiveInteger(value.cachedTextTokens),
+    cachedAudioTokens: positiveInteger(value.cachedAudioTokens),
+    cachedImageTokens: positiveInteger(value.cachedImageTokens),
+    outputTextTokens: positiveInteger(value.outputTextTokens),
+    outputAudioTokens: positiveInteger(value.outputAudioTokens)
+  };
+}
+
+function positiveInteger(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
+}
+
+function positiveMoney(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number > 0 ? Math.round(number * 1_000_000) / 1_000_000 : 0;
 }
 
 function normalizeSpeaker(value) {
@@ -3527,6 +3802,13 @@ function isAuthenticated(req) {
   }
 }
 
+function isPushToTalkAuthenticated(req) {
+  if (!pushToTalkToken) return false;
+  const headerToken = cleanText(req.headers["x-cooper-ptt-token"]);
+  const bearerToken = cleanText(req.headers.authorization).replace(/^Bearer\s+/i, "");
+  return safeCompare(headerToken, pushToTalkToken) || safeCompare(bearerToken, pushToTalkToken);
+}
+
 function signSession(expiresAt) {
   const payload = Buffer.from(JSON.stringify({
     exp: expiresAt,
@@ -3677,6 +3959,12 @@ async function runOperatorTaskStep(taskId) {
       const launchResult = await launchOperatorBrowser(task);
       task.browserLaunchedAt = now;
       task.logs.push(createOperatorLog(launchResult.ok ? "browser.opened" : "browser.skipped", launchResult.title, launchResult.detail, now));
+    }
+
+    if (task.stepIndex === 1 && task.skill === "computer_use_desktop" && hasApprovedOperatorApproval(task, "local_bridge") && !task.localBridgeStartedAt) {
+      const launchResult = await launchComputerUseDesktop(task);
+      task.localBridgeStartedAt = now;
+      task.logs.push(createOperatorLog(launchResult.ok ? "desktop.opened" : "desktop.skipped", launchResult.title, launchResult.detail, now));
     }
 
     const completedStep = currentOperatorStep(task);
@@ -3994,6 +4282,83 @@ async function launchOperatorBrowser(task) {
   };
 }
 
+async function launchComputerUseDesktop(task) {
+  const intent = task.computerIntent || {};
+  const appName = cleanText(intent.appName || extractDesktopAppName(task.goal));
+  const targetUrl = cleanText(intent.targetUrl || task.targetUrl);
+  const allowedApps = desktopAllowList();
+
+  if (targetUrl) {
+    return launchDesktopTarget(targetUrl, `Opened ${targetUrl} on the local desktop.`);
+  }
+
+  if (!appName) {
+    return {
+      ok: false,
+      title: "No desktop target",
+      detail: "Computer Use desktop task needs an app name or URL before it can open anything."
+    };
+  }
+
+  const allowed = allowedApps.find((candidate) => candidate.toLowerCase() === appName.toLowerCase());
+  if (!allowed) {
+    return {
+      ok: false,
+      title: "App not allow-listed",
+      detail: `${appName} is not in COOPER_COMPUTER_USE_ALLOWED_APPS. Allowed apps: ${allowedApps.join(", ") || "none"}.`
+    };
+  }
+
+  if (process.platform !== "darwin") {
+    return {
+      ok: false,
+      title: "Desktop launch unavailable",
+      detail: `Automatic desktop app launch is currently implemented for macOS only. Open ${allowed} manually.`
+    };
+  }
+
+  spawn("open", ["-a", allowed], { detached: true, stdio: "ignore" }).unref();
+  return {
+    ok: true,
+    title: "Desktop app opened",
+    detail: `Opened ${allowed}. Computer Use will still pause before sensitive or write actions.`
+  };
+}
+
+function launchDesktopTarget(target, detail) {
+  if (process.platform !== "darwin") {
+    return {
+      ok: false,
+      title: "Desktop URL launch unavailable",
+      detail: `Automatic URL launch is currently implemented for macOS only. Open ${target} manually.`
+    };
+  }
+  spawn("open", [target], { detached: true, stdio: "ignore" }).unref();
+  return {
+    ok: true,
+    title: "Desktop target opened",
+    detail
+  };
+}
+
+function desktopAllowList() {
+  const configured = process.env.COOPER_COMPUTER_USE_ALLOWED_APPS;
+  const defaults = "Spotify,Claude,Claude Code,Google Chrome,Safari,Slack,Notion,Finder,Terminal,Visual Studio Code";
+  return String(configured || defaults)
+    .split(",")
+    .map(cleanText)
+    .filter(Boolean);
+}
+
+function extractDesktopAppName(goal = "") {
+  const text = cleanText(goal);
+  const match = text.match(/\b(?:open|launch|start|use|work in|work with)\s+([A-Za-z][A-Za-z0-9 ._-]{1,40})/i);
+  if (!match) return "";
+  return match[1]
+    .replace(/\b(?:and|then|to|for|please|app|application)\b.*$/i, "")
+    .trim();
+}
+
 function currentOperatorStep(task) {
   return task.steps[Math.min(task.stepIndex, task.steps.length - 1)] || "Run local Operator step.";
 }
@@ -4058,6 +4423,7 @@ await updateDb((db) => {
     call.projectId = cleanText(call.projectId);
     call.projectTitle = cleanText(call.projectTitle);
     call.projectContextSnapshot = cleanText(call.projectContextSnapshot);
+    call.realtimeUsage = normalizeCallUsage(call.realtimeUsage);
     const existingSuggestions = new Map((call.suggestions || []).map((suggestion) => [suggestion.kind, suggestion]));
     call.suggestions = defaultSuggestions(call.transcript.length > 0).map((suggestion) => ({
       ...suggestion,
@@ -4091,6 +4457,9 @@ await updateDb((db) => {
     job.model = cleanText(job.model) || workModel;
     job.fallbackModel = cleanText(job.fallbackModel) || fallbackWorkModel;
     job.maxOutputTokens = Number(job.maxOutputTokens || outputTokenBudget(recipe));
+    job.responseUsage = normalizeResponsesApiUsage(job.responseUsage);
+    job.outputTokens = Number(job.outputTokens || job.responseUsage?.outputTokens || 0);
+    job.costUsd = Number(job.costUsd || job.responseUsage?.costUsd || 0);
     job.reasoningEffort = cleanText(job.reasoningEffort) || "medium";
     job.apiStatus = cleanText(job.apiStatus) || (job.status === "completed" ? "completed" : job.status === "failed" ? "failed" : "queued");
     job.activeStepSummary = cleanText(job.activeStepSummary);

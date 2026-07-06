@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Realtime Desktop Agent</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="call-panel">
+        <div class="brand">
+          <div class="mark" aria-hidden="true"></div>
+          <div>
+            <h1>Realtime Desktop Agent</h1>
+            <p id="modelLabel">gpt-realtime-2</p>
+          </div>
+        </div>
+
+        <div class="status-stack">
+          <div class="metric">
+            <span>Connection</span>
+            <strong id="connectionState">Broker starting</strong>
+          </div>
+          <div class="metric">
+            <span>Microphone</span>
+            <strong id="micState">Idle</strong>
+          </div>
+          <div class="metric">
+            <span>Workspace</span>
+            <strong id="workspaceState">Loading</strong>
+          </div>
+        </div>
+
+        <div class="controls">
+          <button id="startCall" class="primary">Start Call</button>
+          <button id="endCall" disabled>End Call</button>
+          <button id="muteCall" disabled>Mute</button>
+          <button id="interruptCall" disabled>Interrupt</button>
+        </div>
+
+        <div id="errorBanner" class="error-banner" hidden></div>
+
+        <section class="event-log" aria-label="Tool activity">
+          <h2>Activity</h2>
+          <div id="eventLog" class="event-list"></div>
+        </section>
+      </aside>
+
+      <section class="canvas-region">
+        <header class="section-header">
+          <div>
+            <p>Canvas</p>
+            <h2>Working Memory</h2>
+          </div>
+          <span id="cardCount">0 cards</span>
+        </header>
+        <div id="canvasGrid" class="canvas-grid"></div>
+      </section>
+
+      <section class="transcript-region">
+        <header class="section-header compact">
+          <div>
+            <p>Transcript</p>
+            <h2>Live Call</h2>
+          </div>
+          <span id="callTimer">00:00</span>
+        </header>
+        <div id="transcriptList" class="transcript-list"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

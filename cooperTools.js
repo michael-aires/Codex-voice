@@ -523,3 +523,222 @@ export const operatorToolDefinitions = [
 ];
 
 export const operatorToolNames = new Set(operatorToolDefinitions.map((tool) => tool.name));
+
+export const computerUseToolDefinitions = [
+  {
+    type: "function",
+    name: "open_chrome_tab",
+    description: "Open a new Google Chrome tab on the local Mac. Use this before searching or when Michael asks for a fresh Chrome tab. Prints the tool call to the server terminal.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Optional URL. Omit or use about:blank for a blank tab."
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    name: "search_web",
+    description: "Open Chrome, type a search query into the address/search bar, and press Enter. Use when Michael asks to search, google, look up, or find something on the web. Prints the tool call to the server terminal.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "The exact web search query."
+        },
+        browser: {
+          type: "string",
+          enum: ["chrome", "safari"],
+          description: "Browser to use. Default to chrome unless Michael asks for Safari."
+        }
+      },
+      required: ["query"]
+    }
+  },
+  {
+    type: "function",
+    name: "click_link_with_vision",
+    description: "Take a screenshot of the current page, ask a vision model to locate the link/result/button Michael describes, then click that screen location. Use when Michael says click a result, open that link, choose the Gmail item, or select a visible page element. Prints the tool call to the server terminal.",
+    parameters: {
+      type: "object",
+      properties: {
+        link_description: {
+          type: "string",
+          description: "Natural-language description of the visible link, result, button, or UI element to click."
+        },
+        min_confidence: {
+          type: "number",
+          description: "Optional confidence threshold from 0 to 1. Default 0.35."
+        }
+      },
+      required: ["link_description"]
+    }
+  },
+  {
+    type: "function",
+    name: "open_local_app",
+    description: "Open an allow-listed local Mac app such as Google Chrome, Safari, Finder, Terminal, Claude Code, Codex, Spotify, Slack, Notion, or VS Code.",
+    parameters: {
+      type: "object",
+      properties: {
+        app_name: {
+          type: "string",
+          description: "The exact app name to open."
+        }
+      },
+      required: ["app_name"]
+    }
+  },
+  {
+    type: "function",
+    name: "open_web_app",
+    description: "Open a common web app in Chrome or Safari, including Gmail, Google Drive, Google Docs, Google Sheets, Calendar, GitHub, Notion, Claude, or ChatGPT.",
+    parameters: {
+      type: "object",
+      properties: {
+        app: {
+          type: "string",
+          description: "Web app name, such as gmail, drive, docs, sheets, calendar, github, notion, claude, or chatgpt."
+        },
+        browser: {
+          type: "string",
+          enum: ["chrome", "safari"],
+          description: "Browser to use. Default to chrome."
+        },
+        url: {
+          type: "string",
+          description: "Optional direct URL if the app is not in the shortcut list."
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    name: "open_finder_location",
+    description: "Open Finder to a local folder or file path.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Local file or folder path. Omit for the home folder."
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    name: "open_terminal_workspace",
+    description: "Open Terminal at a workspace path. Optionally execute a command only when execute or confirmed is true.",
+    parameters: {
+      type: "object",
+      properties: {
+        cwd: {
+          type: "string",
+          description: "Working directory to open in Terminal."
+        },
+        command: {
+          type: "string",
+          description: "Optional command. It will not run unless execute is true."
+        },
+        execute: {
+          type: "boolean",
+          description: "Set true only after Michael explicitly confirms command execution."
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    name: "start_computer_use_task",
+    description: "Start a supervised Cooper Computer Use task that can operate the local browser or desktop through the Computer Use workspace. Use this when Michael asks to open an app, open a website, download something, work in Claude Code/Codex, inspect a UI, or control the computer. Always route through approval-gated local execution.",
+    parameters: {
+      type: "object",
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["desktop_app", "browser", "open_url", "download", "codex_desktop", "codex_bridge"],
+          description: "The control lane. Use desktop_app for local apps such as Spotify, Claude, Claude Code, Slack, or Finder; browser/open_url/download for websites; codex_desktop for supervised UI control of Codex or Claude Code; codex_bridge for the supported Codex app-server/CLI bridge."
+        },
+        goal: {
+          type: "string",
+          description: "The exact outcome Michael wants, including success criteria and anything to avoid."
+        },
+        app_name: {
+          type: "string",
+          description: "Optional desktop app name to open or control, such as Spotify, Claude, Claude Code, Chrome, Slack, Notion, Finder, or Terminal."
+        },
+        target_url: {
+          type: "string",
+          description: "Optional URL to open, inspect, or download from."
+        },
+        target: {
+          type: "string",
+          description: "Optional human-readable target such as a file name, page name, button, document, repo, or destination."
+        },
+        allowed_domains: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional domains the browser lane may use."
+        }
+      },
+      required: ["mode", "goal"]
+    }
+  },
+  {
+    type: "function",
+    name: "stop_computer_use_tasks",
+    description: "Stop all active Cooper Computer Use tasks. Use when Michael says stop, stop computer use, cancel everything, pause the computer, or take hands off.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description: "Short reason Michael gave for stopping the tasks."
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    name: "cancel_computer_use_task",
+    description: "Cancel one selected Cooper Computer Use task.",
+    parameters: {
+      type: "object",
+      properties: {
+        task_id: {
+          type: "string",
+          description: "Optional task id. If omitted, cancel the selected or active Computer Use task."
+        },
+        reason: {
+          type: "string",
+          description: "Short reason Michael gave for cancellation."
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    name: "get_computer_use_status",
+    description: "Inspect the selected, latest, or specified Cooper Computer Use task so the agent can report what is happening, what is blocked, which app/browser target is active, and what approval is needed.",
+    parameters: {
+      type: "object",
+      properties: {
+        task_id: {
+          type: "string",
+          description: "Optional task id. If omitted, inspect the selected task, then active Computer Use task, then most recent Computer Use task."
+        },
+        include_logs: {
+          type: "boolean",
+          description: "Whether to include recent execution logs. Defaults to true."
+        }
+      }
+    }
+  }
+];
+
+export const computerUseToolNames = new Set(computerUseToolDefinitions.map((tool) => tool.name));

@@ -7,7 +7,9 @@
     "dev": "node server.js",
     "build": "vite build",
     "start": "NODE_ENV=production node server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "ptt:build": "swiftc native/push-to-talk/CooperPushToTalk.swift -framework AppKit -framework AVFoundation -framework AudioToolbox -framework Carbon -o native/push-to-talk/cooper-ptt",
+    "ptt:run": "native/push-to-talk/cooper-ptt"
   },
   "dependencies": {
     "@arcadeai/arcadejs": "^2.4.1",

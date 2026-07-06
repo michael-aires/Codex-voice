@@ -323,6 +323,7 @@ export function createOperatorTask(input = {}, now = new Date().toISOString()) {
     templateIds: Array.isArray(input.templateIds) && input.templateIds.length
       ? input.templateIds.map(cleanText).filter(Boolean)
       : preset?.templateIds || [],
+    computerIntent: normalizeComputerIntent(input.computerIntent || input),
     relatedCallId: cleanText(input.relatedCallId),
     jobIds: Array.isArray(input.jobIds) ? input.jobIds.map(cleanText).filter(Boolean) : [],
     jobsQueuedAt: cleanText(input.jobsQueuedAt),
@@ -358,6 +359,7 @@ export function hydrateOperatorTask(task = {}) {
     riskLevel: cleanText(task.riskLevel) || riskForOperatorTask(task),
     artifactKinds: Array.isArray(task.artifactKinds) ? task.artifactKinds.map(cleanText).filter(Boolean) : [],
     templateIds: Array.isArray(task.templateIds) ? task.templateIds.map(cleanText).filter(Boolean) : [],
+    computerIntent: normalizeComputerIntent(task.computerIntent || task),
     relatedCallId: cleanText(task.relatedCallId),
     jobIds: Array.isArray(task.jobIds) ? task.jobIds.map(cleanText).filter(Boolean) : [],
     jobsQueuedAt: cleanText(task.jobsQueuedAt),
@@ -417,6 +419,16 @@ export function createOperatorApproval(input = {}, at = new Date().toISOString()
     status: "pending",
     requestedAt: at,
     resolvedAt: null
+  };
+}
+
+function normalizeComputerIntent(input = {}) {
+  return {
+    mode: cleanText(input.mode),
+    appName: cleanText(input.appName || input.app_name),
+    target: cleanText(input.target),
+    targetUrl: cleanText(input.targetUrl || input.target_url),
+    requestedBy: cleanText(input.requestedBy || input.requested_by)
   };
 }
 

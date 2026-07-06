@@ -66,7 +66,25 @@ COOPER_JOB_MAX_OUTPUT_TOKENS=6500
 COOPER_PROJECT_CONTEXT_CHARS=18000
 COOPER_PROJECT_SOURCE_MAX_CHARS=250000
 COOPER_PROJECT_UPLOAD_MAX_MB=20
+COOPER_PTT_TOKEN=replace-with-a-long-random-local-token
+COOPER_PTT_MAX_AUDIO_MB=18
+COOPER_PTT_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
+COOPER_PTT_RESPONSE_MAX_OUTPUT_TOKENS=1200
+COOPER_PTT_HOTKEY=control+option+space
+COOPER_VISION_CLICK_MODEL=gpt-5.4
+COOPER_COMPUTER_USE_ALLOWED_APPS=Spotify,Claude,Claude Code,Google Chrome,Safari,Slack,Notion,Finder,Terminal,Visual Studio Code,Codex
 ```
+
+Optional macOS global push-to-talk:
+
+```bash
+npm run ptt:build
+mkdir -p ~/.cooper
+cp native/push-to-talk/push-to-talk.example.json ~/.cooper/push-to-talk.json
+npm run ptt:run
+```
+
+Set the same long random `COOPER_PTT_TOKEN` in `.env` and in `~/.cooper/push-to-talk.json`. The helper uses macOS `RegisterEventHotKey`, not a global event tap, captures microphone audio only while the configured key is held, shows a top-center HUD, and posts the completed utterance to the local Cooper server after release.
 
 ## Run
 
@@ -86,6 +104,12 @@ The test suite currently locks Cooper's wake phrase behavior so direct invitatio
 
 ## Planning Docs
 
+- [Product documentation index](docs/product/README.md)
+- [Product Requirements Document](docs/product/cooper-prd.md)
+- [Functional Requirements Document](docs/product/cooper-frd.md)
+- [Key user flows](docs/product/cooper-user-flows.md)
+- [Site map](docs/product/cooper-sitemap.md)
+- [Page and component inventory](docs/product/cooper-page-component-list.md)
 - [Technical overview](docs/01-technical-overview.md)
 - [Visual collaboration canvas plan](docs/canvas-collaboration-plan.md)
 - [Operator agent factory plan](docs/06-operator-agent-factory-plan.md)
@@ -111,6 +135,12 @@ The test suite currently locks Cooper's wake phrase behavior so direct invitatio
 - Cooper can search and fetch Notion context with `search_notion_workspace` and `fetch_notion_page`, using Arcade when mapped/pre-authorized or direct Notion API reads when `NOTION_API_KEY` is configured.
 - GStack-inspired advisory skill tool for CEO review, engineering review, code review, QA review, spec drafting, office hours, and design critique.
 - Cooper Operator workspace with explicit OpenAI tool lanes for artifact generation, supervised Computer Use browser/desktop work, Codex app-server/CLI bridging, Codex MCP/Agents SDK orchestration, and OpenAI tool-stack planning.
+- Optional macOS push-to-talk helper with a configurable global hotkey, native HUD, local-only idle behavior, transcription after release, and command routing into Cooper Computer Use.
+- Cooper Computer Use deterministic local tools:
+  - `open_chrome_tab` opens a fresh Chrome tab.
+  - `search_web` opens Chrome or Safari, types the query into the address/search bar, and presses Enter.
+  - `click_link_with_vision` takes a screenshot, asks a vision-capable OpenAI model to locate the described link/result/button, and clicks it.
+  - `open_local_app`, `open_web_app`, `open_finder_location`, and `open_terminal_workspace` cover repeatable Mac app, Google workspace, Finder, and Terminal workflows.
 - Settings page for pre-authorizing mapped Arcade tools before Cooper can use them in live calls.
 - Backend Arcade router at `/api/tools/execute` that proxies pre-authorized Cooper tool calls through Arcade, logs tool activity, returns tool results into the same Realtime session, and requires confirmation for write actions.
 - Backend GStack skill runner at `/api/tools/execute` that calls the OpenAI Responses API, returns structured JSON into the same Realtime session, and logs only metadata such as skill, status, timestamps, lengths, and errors.
@@ -134,6 +164,9 @@ The test suite currently locks Cooper's wake phrase behavior so direct invitatio
 - Project source text is stored locally in `data/cooper.json`; Cooper receives a compact active-project context packet at call start.
 - GStack skill prompts live in `server/gstack-skills/` and are adapted from GStack under the MIT License. They are advisory-only and cannot mutate code, deploy, create PRs, or access private repo files.
 - Cooper remains silent by default during meetings. He speaks when clearly addressed by a Cooper wake phrase, when you press **Ask Cooper**, or when you submit a prompt.
+- The macOS push-to-talk helper is local-first: no microphone audio is streamed or sent while idle. OpenAI transcription/Responses requests happen only after you release the configured hotkey.
+- Every Computer Use tool call is printed to the local server terminal as `[cooper-tool:...]`.
+- Browser typing/clicking uses macOS automation. If Chrome/Safari search or vision-click fails, enable Accessibility permission for Terminal or the built helper in System Settings.
 
 ## Docs Used
 

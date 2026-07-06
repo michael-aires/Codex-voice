@@ -1,0 +1,6 @@
+{
+  "serverURL": "http://127.0.0.1:5000",
+  "token": "replace-with-the-same-value-as-COOPER_PTT_TOKEN",
+  "keyCode": 49,
+  "modifiers": ["control", "option"]
+}
