@@ -1,0 +1,1 @@
+Aries does not replace Zoom, Notion, GitHub, or QA. It compiles context between them: turning organizational conversation into governed, traceable, and verifiably completed work.

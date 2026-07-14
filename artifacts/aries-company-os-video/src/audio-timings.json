@@ -1,0 +1,57 @@
+[
+  {
+    "id": "context-gap",
+    "audio": "voiceover/01-context-gap.mp3",
+    "durationSeconds": 11.1
+  },
+  {
+    "id": "durable-session",
+    "audio": "voiceover/02-durable-session.mp3",
+    "durationSeconds": 13.5
+  },
+  {
+    "id": "zoom-first",
+    "audio": "voiceover/03-zoom-first.mp3",
+    "durationSeconds": 11.5
+  },
+  {
+    "id": "distill",
+    "audio": "voiceover/04-distill.mp3",
+    "durationSeconds": 12.8
+  },
+  {
+    "id": "bug-triage",
+    "audio": "voiceover/05-bug-triage.mp3",
+    "durationSeconds": 21
+  },
+  {
+    "id": "feature-request",
+    "audio": "voiceover/06-feature-request.mp3",
+    "durationSeconds": 22.4
+  },
+  {
+    "id": "customer-onboarding",
+    "audio": "voiceover/07-customer-onboarding.mp3",
+    "durationSeconds": 23.9
+  },
+  {
+    "id": "human-gates",
+    "audio": "voiceover/08-human-gates.mp3",
+    "durationSeconds": 14.7
+  },
+  {
+    "id": "delivery-proof",
+    "audio": "voiceover/09-delivery-proof.mp3",
+    "durationSeconds": 10.4
+  },
+  {
+    "id": "learning-loop",
+    "audio": "voiceover/10-learning-loop.mp3",
+    "durationSeconds": 8.7
+  },
+  {
+    "id": "company-os",
+    "audio": "voiceover/11-company-os.mp3",
+    "durationSeconds": 13.4
+  }
+]

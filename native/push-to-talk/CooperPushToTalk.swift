@@ -11,7 +11,7 @@ struct CooperPTTConfig: Codable {
     var modifiers: [String]
 
     static let defaultConfig = CooperPTTConfig(
-        serverURL: "http://127.0.0.1:5000",
+        serverURL: "http://127.0.0.1:3417",
         token: "",
         keyCode: 49,
         modifiers: ["control", "option"]

@@ -1,0 +1,1 @@
+The post-session view separates synthesis from authority. Confirm the explicit decision, edit the ambiguous one, assign owners to actions, and leave unresolved questions open. Rejected interpretations remain visible in the audit trail instead of quietly becoming work.

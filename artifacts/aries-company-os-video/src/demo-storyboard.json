@@ -1,0 +1,92 @@
+[
+  {
+    "id": "demo-open",
+    "kicker": "AIRES Company OS / Product demo",
+    "title": "Start with the conversation. Leave with governed work.",
+    "support": "An illustrative walkthrough of one source-grounded session.",
+    "voiceover": "Here is the Company OS as a concrete product experience. We will start a session, select the exact context it can use, create a document while the conversation is active, and finish by reviewing the synthesis and decisions.",
+    "visual": "open",
+    "sourceAnchors": ["lines 104–150", "lines 769–817"]
+  },
+  {
+    "id": "start-session",
+    "kicker": "01 / Start a session",
+    "title": "Begin from Today.",
+    "support": "A person starts a governed workspace before the meeting, during it, or after a signal arrives.",
+    "voiceover": "From Today, choose Start session. A session can begin from a live conversation, a customer milestone, a Notion page, a pull request, an imported meeting, or simply a blank inquiry.",
+    "visual": "today",
+    "sourceAnchors": ["lines 113–130", "lines 745–768"]
+  },
+  {
+    "id": "define-session",
+    "kicker": "02 / Define the workspace",
+    "title": "Give the session a purpose.",
+    "support": "Name the outcome, connect the account and project, and keep authority explicit.",
+    "voiceover": "Name the session and its intended outcome, then associate the customer, project, and participants. This creates a bounded workspace for evidence, decisions, artifacts, approvals, and downstream work.",
+    "visual": "define",
+    "sourceAnchors": ["lines 104–150", "lines 893–935"]
+  },
+  {
+    "id": "select-context",
+    "kicker": "03 / Select context",
+    "title": "Choose exactly what Cooper can use.",
+    "support": "Bring in authorized Notion pages, GitHub context, meeting evidence, or uploaded files.",
+    "voiceover": "Next, select context. Add the relevant Notion customer page and requirements, then choose the GitHub repository and pull request. Zoom evidence and uploaded files can join the same bundle. Every item stays visible, removable, and source-linked.",
+    "visual": "context",
+    "sourceAnchors": ["lines 440–465", "lines 716–729", "lines 980–986"]
+  },
+  {
+    "id": "session-ready",
+    "kicker": "04 / Session workspace",
+    "title": "Context becomes a working briefing.",
+    "support": "The collaborator rail holds judgment and questions; the canvas holds evidence and work.",
+    "voiceover": "The session opens with the chosen context already assembled. Cooper gives a concise briefing, surfaces open questions, and keeps the source bundle beside the work canvas instead of burying the team in raw transcripts or repository noise.",
+    "visual": "workspace",
+    "sourceAnchors": ["lines 769–806", "lines 926–935"]
+  },
+  {
+    "id": "make-doc",
+    "kicker": "05 / In-session action",
+    "title": "Make a document without leaving the session.",
+    "support": "Turn the current conversation and selected context into a reviewable artifact.",
+    "voiceover": "During the session, open Actions and choose Make a document. Select a requirements brief, decision memo, bug brief, or customer follow-up. Here, we create a requirements brief from the selected context and the discussion so far.",
+    "visual": "make-doc",
+    "sourceAnchors": ["lines 293–303", "lines 709–714", "lines 808–817"]
+  },
+  {
+    "id": "review-doc",
+    "kicker": "06 / Review before write",
+    "title": "The artifact is drafted. The human still decides.",
+    "support": "Inspect the problem, scope, acceptance criteria, and evidence before publishing.",
+    "voiceover": "The draft opens directly on the canvas. Each material claim carries a source anchor. The user can edit scope, challenge an assumption, and preview the exact Notion destination. Publishing remains a separate approval-gated action with read-back verification.",
+    "visual": "doc",
+    "sourceAnchors": ["lines 556–564", "lines 608–613", "lines 669–688"]
+  },
+  {
+    "id": "end-session",
+    "kicker": "07 / End the live work",
+    "title": "End the session. Keep the context alive.",
+    "support": "Closing the live interaction starts a governed synthesis; it does not erase the evidence.",
+    "voiceover": "When the live work is complete, choose End and synthesize. Aries preserves the artifacts and sources, prepares a recap, and identifies decisions, actions, commitments, and unresolved questions for review.",
+    "visual": "end",
+    "sourceAnchors": ["lines 152–167", "lines 630–636", "lines 947–962"]
+  },
+  {
+    "id": "post-session",
+    "kicker": "08 / Post-session synthesis",
+    "title": "Review the synthesis and decisions.",
+    "support": "Confirm what was decided, correct what was inferred, and assign the next action.",
+    "voiceover": "The post-session view separates synthesis from authority. Confirm the explicit decision, edit the ambiguous one, assign owners to actions, and leave unresolved questions open. Rejected interpretations remain visible in the audit trail instead of quietly becoming work.",
+    "visual": "synthesis",
+    "sourceAnchors": ["lines 282–303", "lines 534–570", "lines 593–599"]
+  },
+  {
+    "id": "demo-close",
+    "kicker": "09 / Governed closeout",
+    "title": "One session. Every outcome traceable.",
+    "support": "Approved decisions, documents, delivery context, and follow-up return to durable memory.",
+    "voiceover": "Once approved, the document is read back from Notion, GitHub context stays linked, and the follow-up is ready from the same evidence. The session closes as a durable, traceable account of what happened, what was decided, and what comes next.",
+    "visual": "close",
+    "sourceAnchors": ["lines 134–150", "lines 219–223", "lines 630–636"]
+  }
+]

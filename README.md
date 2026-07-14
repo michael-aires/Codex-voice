@@ -37,6 +37,20 @@ Arcade write tools are blocked by default. Keep `COOPER_ENABLE_ARCADE_WRITES=fal
 
 After the app is running, open **Settings** and pre-authorize each mapped Arcade tool before using it during a call. Cooper will not execute Arcade-backed voice tools until their Settings authorization status is `Connected`.
 
+Starting a Cooper session opens a context checkpoint. Notion and GitHub picker searches run through the mapped, pre-authorized Arcade tools; past call notes, pasted text, Markdown, text, and PDF uploads are resolved server-side into one bounded packet. The packet is persisted with the call and included in both Realtime session creation and the browser `session.update`.
+
+When a session starts from a Notion-backed Sprint task on Today, that ticket is automatically preselected as the locked primary source. Cooper resolves the current ticket properties and page blocks before entering the room; the Today summary remains supporting context rather than the source of truth. Related pages, PRs, and meeting notes remain explicit optional sources so the evidence packet does not silently crawl the workspace.
+
+Daily Catch Up uses the same Arcade Calendar and active-sprint Notion sources as Today. It refreshes whenever the server starts, at 7:00 a.m. in the configured local timezone while the server is running, and whenever **Latest data** is pressed:
+
+```bash
+COOPER_TIME_ZONE=America/Vancouver
+COOPER_DAILY_BRIEF_HOUR=7
+COOPER_DAILY_BRIEF_ASSIGNEES=Michael Moll,michael@aires.ai,michael
+```
+
+The brief is persisted in `data/cooper.json`. If the local server is off at 7:00 a.m., the startup refresh prepares the current day when the server next launches.
+
 `COOPER_MCP_APP_SERVERS` accepts either the MCP Apps shape above or an array such as `[{"type":"http","url":"http://localhost:3108/mcp","serverId":"local-mcp-apps"}]`. Cooper can render a `ui://` resource from a configured HTTP MCP server into the call canvas, or render a small inline AG-UI/MCP App preview when no resource URI is available.
 
 Optional direct Notion read fallback:
@@ -49,6 +63,16 @@ NOTION_BLOCK_LIMIT=50
 ```
 
 Direct Notion access is read-only in Cooper and only sees pages/databases shared with the Notion integration. If Arcade Notion mappings are configured, Cooper prefers Arcade so OAuth and audit behavior stay centralized.
+
+Optional embedded Zoom meeting support:
+
+```bash
+ZOOM_SDK_KEY=your-zoom-meeting-sdk-client-id
+ZOOM_SDK_SECRET=your-zoom-meeting-sdk-client-secret
+ZOOM_ENABLE_HOST_ROLE=false
+```
+
+Cooper embeds Zoom with the Zoom Meeting SDK for Web Component View on the call canvas. Participant joins use a server-generated Meeting SDK JWT. Starting as host is intentionally disabled until a ZAK OAuth flow is added.
 
 Optional settings:
 
@@ -66,6 +90,8 @@ COOPER_JOB_MAX_OUTPUT_TOKENS=6500
 COOPER_PROJECT_CONTEXT_CHARS=18000
 COOPER_PROJECT_SOURCE_MAX_CHARS=250000
 COOPER_PROJECT_UPLOAD_MAX_MB=20
+COOPER_CONTEXT_PACKET_MAX_CHARS=36000
+COOPER_CONTEXT_SEARCH_LIMIT=50
 COOPER_PTT_TOKEN=replace-with-a-long-random-local-token
 COOPER_PTT_MAX_AUDIO_MB=18
 COOPER_PTT_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
@@ -118,12 +144,14 @@ The test suite currently locks Cooper's wake phrase behavior so direct invitatio
 ## What Is Included
 
 - Splash entry and mobile-first Cooper workspace.
+- Persisted Daily Catch Up built from today’s Google Calendar and Michael’s current-sprint Notion work, with startup/7 a.m./manual refresh, slide presentation, and a one-click spoken Cooper walkthrough.
 - Password gate backed by `COOPER_APP_PASSWORD` and an HTTP-only signed session cookie.
 - Project workspaces for sprint tickets, feature epics, agent output, PRDs, and implementation notes.
 - Project context ingestion from pasted text, Markdown/text uploads, and PDF uploads.
 - Live call context ingestion from pasted notes or uploaded Markdown/text/PDF files, with the active Realtime session refreshed after new context is added.
 - Full-screen WebRTC call mode with microphone input, model audio output, and animated waveform.
 - Live collaboration canvas during calls for Mermaid diagrams, UI wireframes, HTML prototypes, running jobs, and completed visual artifacts.
+- Embedded Zoom tab in the Cooper call canvas, backed by server-side Meeting SDK JWT signing so Zoom SDK secrets never ship to the browser.
 - AIRES design-system treatment across the app: soft-black chrome, warm-grey canvas, sharp cards, sparse Volt accents, and document-style artifact previews.
 - Server-side Realtime session endpoint using `/v1/realtime/calls` with multipart `FormData` fields named `sdp` and `session`.
 - `oai-events` data channel plus a sample `check_calendar(date, time)` function tool registered through `session.update`.
@@ -180,5 +208,8 @@ The test suite currently locks Cooper's wake phrase behavior so direct invitatio
 - [Arcade MCP gateways](https://docs.arcade.dev/en/guides/mcp-gateways)
 - [Notion API search](https://developers.notion.com/reference/post-search)
 - [Notion block children](https://developers.notion.com/reference/get-block-children)
+- [Zoom Meeting SDK for Web](https://developers.zoom.us/docs/meeting-sdk/web/)
+- [Zoom Meeting SDK authorization](https://developers.zoom.us/docs/meeting-sdk/auth/)
+- [Zoom Meeting SDK Web get started](https://developers.zoom.us/docs/meeting-sdk/web/get-started/)
 - [AG-UI introduction](https://docs.ag-ui.com/introduction)
 - [CopilotKit MCP Apps with AG-UI](https://www.copilotkit.ai/blog/bring-mcp-apps-into-your-own-app-with-copilotkit-and-ag-ui)

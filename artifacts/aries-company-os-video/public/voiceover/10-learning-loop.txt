@@ -1,0 +1,1 @@
+Delivery evidence returns to the session and customer memory, so the next meeting begins from verified history instead of reconstructed memory.

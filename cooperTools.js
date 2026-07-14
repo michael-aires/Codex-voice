@@ -331,14 +331,14 @@ export const cooperToolDefinitions = [
   {
     type: "function",
     name: "run_aires_requirements_framework",
-    description: "Use the AIRES Requirements Framework to explain its document library, workshop a selected framework document against provided context, run interview-style requirements discovery, or queue an AIRES-branded scoped requirements artifact from live meeting/project context.",
+    description: "Unified AIRES Requirements Workshop orchestrator. Recommend the right artifacts from conversation context, explain or workshop the framework, provide a spoken draft outline, queue one document or the full AIRES suite in the background, and report live run status while the call continues.",
     parameters: {
       type: "object",
       properties: {
         mode: {
           type: "string",
-          enum: ["list_framework", "explain_documents", "explain_document", "workshop_document", "interview", "queue_artifact"],
-          description: "Use list_framework for a quick overview, explain_documents to explain all framework docs, explain_document for one doc, workshop_document to apply a selected doc to context/drafts, interview to ask context-gathering questions, and queue_artifact to create an AIRES scoped requirements HTML artifact."
+          enum: ["list_framework", "explain_documents", "explain_document", "workshop_document", "interview", "recommend_artifacts", "draft_outline", "queue_artifact", "queue_suite", "status"],
+          description: "Use recommend_artifacts when Michael asks what to create, draft_outline to explain the gist before building, queue_artifact for one document, queue_suite for all or several documents, and status to report background progress."
         },
         topic: {
           type: "string",
@@ -351,6 +351,26 @@ export const cooperToolDefinitions = [
         artifact_title: {
           type: "string",
           description: "Optional title for the generated scoped requirements artifact."
+        },
+        template_id: {
+          type: "string",
+          enum: airesTemplateToolIds,
+          description: "Specific AIRES template for draft_outline or queue_artifact."
+        },
+        template_ids: {
+          type: "array",
+          items: { type: "string", enum: airesTemplateToolIds },
+          description: "Optional subset for queue_suite. Omit to generate the complete nine-document suite."
+        },
+        run_id: {
+          type: "string",
+          description: "Optional durable requirements run id for status checks or continuing a grouped suite."
+        },
+        max_recommendations: {
+          type: "integer",
+          minimum: 1,
+          maximum: 9,
+          description: "Maximum recommendations to return. Defaults to four."
         },
         document_key: {
           type: "string",

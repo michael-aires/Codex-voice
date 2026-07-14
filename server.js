@@ -23,6 +23,12 @@ import {
   getAiresExampleList
 } from "./server/airesExamples.js";
 import {
+  buildRequirementsDraftOutline,
+  isRequirementsWorkshopJob,
+  recommendRequirementsArtifacts,
+  requirementsSuitePlan
+} from "./server/requirementsWorkshop.js";
+import {
   OPERATOR_PRESETS,
   createOperatorApproval,
   createOperatorArtifact,
@@ -44,7 +50,43 @@ import {
   localComputerToolNames
 } from "./server/localComputerTools.js";
 import { runGstackSkill } from "./server/tools/runGstackSkill.js";
+import {
+  generateZoomMeetingSdkSignature,
+  normalizeZoomMeetingNumber
+} from "./server/zoomMeetingSdk.js";
+import {
+  buildSessionResumePacket,
+  formatSessionResumeContext
+} from "./server/sessionResume.js";
 import { addResponsesApiUsage, normalizeResponsesApiUsage } from "./src/callCost.js";
+import { artifactOutputTypeFromMetadata } from "./src/artifactPresentation.js";
+import {
+  buildContextPacket,
+  composeRealtimeSessionContext,
+  extractNotionObjectId,
+  filterContextRecords,
+  formatNotionMetadataContext,
+  formatNotionResolvedContext,
+  normalizeContextProvider,
+  normalizeContextSearchResults,
+  normalizeSelectedContextSource,
+  publicContextPacket
+} from "./server/contextCheckpoint.js";
+import {
+  arcadeOutputValue,
+  normalizeCalendarEvents,
+  normalizeLocalProjects,
+  normalizeNotionSprintMetadata,
+  normalizeNotionTaskMetadata,
+  normalizePastSessions,
+  notionPropertyValue,
+  sortNotionTasks,
+  zonedDayBounds
+} from "./server/todayFeed.js";
+import {
+  buildDailyBrief,
+  millisecondsUntilLocalHour
+} from "./server/dailyBrief.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === "production";
@@ -60,6 +102,8 @@ const jobMaxOutputTokens = Number(process.env.COOPER_JOB_MAX_OUTPUT_TOKENS || 90
 const projectContextChars = Number(process.env.COOPER_PROJECT_CONTEXT_CHARS || 18000);
 const projectSourceMaxChars = Number(process.env.COOPER_PROJECT_SOURCE_MAX_CHARS || 250000);
 const projectUploadMaxBytes = Number(process.env.COOPER_PROJECT_UPLOAD_MAX_MB || 20) * 1024 * 1024;
+const contextPacketMaxChars = Number(process.env.COOPER_CONTEXT_PACKET_MAX_CHARS || 36000);
+const contextSearchLimit = Number(process.env.COOPER_CONTEXT_SEARCH_LIMIT || 50);
 const pushToTalkMaxAudioBytes = Number(process.env.COOPER_PTT_MAX_AUDIO_MB || 18) * 1024 * 1024;
 const pushToTalkToken = process.env.COOPER_PTT_TOKEN || "";
 const pushToTalkTranscriptionModel = process.env.COOPER_PTT_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe";
@@ -79,6 +123,40 @@ const arcadeToolMappings = {
   inspect_engineering_context: process.env.ARCADE_ENGINEERING_CONTEXT_TOOL || "",
   create_followup_action: process.env.ARCADE_CREATE_FOLLOWUP_TOOL || ""
 };
+const todayTimeZone = process.env.COOPER_TIME_ZONE || "America/Vancouver";
+const todayCacheMs = Math.max(30000, Number(process.env.COOPER_TODAY_CACHE_SECONDS || 120) * 1000);
+const todayCalendarTool = process.env.ARCADE_CALENDAR_EVENTS_TOOL || "GoogleCalendar.ListEvents";
+const todayNotionMetadataTool = process.env.ARCADE_NOTION_METADATA_TOOL || "NotionToolkit.GetObjectMetadata";
+const todayNotionSprintAnchorPageId = extractNotionId(
+  process.env.COOPER_NOTION_SPRINT_ANCHOR_PAGE_ID
+    || process.env.COOPER_NOTION_SPRINT_ANCHOR_URL
+    || "39c5efcc-eccd-8038-a3b7-f874099756ba"
+);
+const todayNotionSprintDatabaseId = extractNotionId(
+  process.env.COOPER_NOTION_SPRINT_DATABASE_ID || "6772d5ef-4e05-49b4-b41b-a5286f0f4cfa"
+);
+const todayNotionActiveSprintId = extractNotionId(process.env.COOPER_NOTION_ACTIVE_SPRINT_ID || "");
+const dailyBriefHour = Math.min(23, Math.max(0, Number(process.env.COOPER_DAILY_BRIEF_HOUR || 7)));
+const dailyBriefAssignees = String(process.env.COOPER_DAILY_BRIEF_ASSIGNEES || "Michael Moll,michael@aires.ai,michael")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const arcadeDiscoveryCatalog = [
+  { service: "Notion", toolkit: "NotionToolkit", toolName: "NotionToolkit.SearchByTitle", capability: "Search pages and databases", kind: "read" },
+  { service: "Notion", toolkit: "NotionToolkit", toolName: "NotionToolkit.GetPageContentById", capability: "Load page content", kind: "read" },
+  { service: "Notion", toolkit: "NotionToolkit", toolName: "NotionToolkit.CreatePage", capability: "Create follow-up pages", kind: "write" },
+  { service: "Google Calendar", toolkit: "GoogleCalendar", toolName: "GoogleCalendar.ListEvents", capability: "Read meetings", kind: "read" },
+  { service: "Google Calendar", toolkit: "GoogleCalendar", toolName: "GoogleCalendar.CreateEvent", capability: "Create events", kind: "write" },
+  { service: "Google Drive", toolkit: "GoogleDrive", toolName: "GoogleDrive.SearchFiles", capability: "Search files", kind: "read" },
+  { service: "Google Docs", toolkit: "GoogleDocs", toolName: "GoogleDocs.SearchDocuments", capability: "Search docs", kind: "read" },
+  { service: "GitHub", toolkit: "Github", toolName: "Github.GetUserOpenItems", capability: "Read assigned issues and PRs", kind: "read" },
+  { service: "GitHub", toolkit: "Github", toolName: "Github.GetFileContents", capability: "Read repository files", kind: "read" },
+  { service: "Slack", toolkit: "Slack", toolName: "Slack.ListConversations", capability: "List channels", kind: "read" },
+  { service: "Slack", toolkit: "Slack", toolName: "Slack.GetMessages", capability: "Read messages", kind: "read" },
+  { service: "Slack", toolkit: "Slack", toolName: "Slack.SendMessage", capability: "Send approved messages", kind: "write" },
+  { service: "Linear", toolkit: "Linear", toolName: "Linear.GetRecentActivity", capability: "Read assigned work", kind: "read" },
+  { service: "Linear", toolkit: "Linear", toolName: "Linear.CreateIssue", capability: "Create approved issues", kind: "write" }
+];
 const arcadeWritesEnabled = process.env.COOPER_ENABLE_ARCADE_WRITES === "true";
 const notionVersion = process.env.NOTION_VERSION || "2026-03-11";
 const notionSearchLimit = Number(process.env.NOTION_SEARCH_LIMIT || 5);
@@ -87,6 +165,9 @@ const mcpAppServers = parseMcpAppServers(
   process.env.COOPER_MCP_APP_SERVERS ||
     (arcadeMcpGatewayUrl ? JSON.stringify([{ type: "http", url: arcadeMcpGatewayUrl, serverId: "cooper-arcade" }]) : "")
 );
+const zoomSdkKey = process.env.ZOOM_SDK_KEY || process.env.ZOOM_CLIENT_ID || process.env.ZOOM_MEETING_SDK_KEY || "";
+const zoomSdkSecret = process.env.ZOOM_SDK_SECRET || process.env.ZOOM_CLIENT_SECRET || process.env.ZOOM_MEETING_SDK_SECRET || "";
+const zoomHostRoleEnabled = process.env.ZOOM_ENABLE_HOST_ROLE === "true";
 
 const app = express();
 const upload = multer({
@@ -103,6 +184,11 @@ let writeQueue = Promise.resolve();
 let workerActive = false;
 let lastGenerationAt = 0;
 let arcadeClient = null;
+let arcadeDiscoveryClient = null;
+let todayRemoteCache = null;
+let todayRemoteRefresh = null;
+let dailyBriefRefresh = null;
+let dailyBriefTimer = null;
 
 app.use(express.text({ type: ["application/sdp", "text/plain"], limit: "2mb" }));
 app.use(express.json({ limit: "24mb" }));
@@ -175,6 +261,10 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get("/prototypes/session-context-overview", (_req, res) => {
+  res.sendFile(join(__dirname, "docs", "cooper-session-context-overview-prototype.html"));
+});
+
 const baseSession = {
   type: "realtime",
   model: "gpt-realtime-2",
@@ -228,6 +318,14 @@ const artifactRecipes = {
       "Identify the highest-leverage initiative or problem implied by the transcript and state the goal in one paragraph.",
       "Write a pragmatic SDLC execution plan in Markdown with phases, milestones, acceptance criteria, dependencies, risks, and review cadence. Break out any prototype, PRD, design, implementation, and validation work into concrete tasks.",
       "Add suggested Cooper follow-up work Michael can approve, including PRD creation, HTML prototype creation, and code sketch work when those are relevant."
+    ]
+  },
+  qa_checklist: {
+    title: "QA checklist",
+    outputType: "markdown",
+    steps: [
+      "Extract the user-visible behavior, permissions, data rules, edge cases, integrations, and unresolved assumptions from the selected session context.",
+      "Write a concise Markdown QA plan with acceptance checks, regression coverage, test data, role and permission scenarios, failure states, and a screenshot or evidence contract. Use Given/When/Then where it makes the expected result clearer, and mark any requirement that still needs a product decision."
     ]
   },
   follow_up: {
@@ -339,12 +437,20 @@ app.post("/session", async (req, res) => {
   }
 
   const projectId = cleanText(req.query?.projectId);
-  const db = projectId ? await readDb() : null;
-  const projectContext = db ? buildProjectContext(db, projectId) : "";
+  const callId = cleanText(req.query?.callId);
+  const db = projectId || callId ? await readDb() : null;
+  const call = db && callId ? db.calls.find((item) => item.id === callId) : null;
+  const resolvedProjectId = projectId || call?.projectId || "";
+  const projectContext = call?.projectContextSnapshot || (db && resolvedProjectId ? buildProjectContext(db, resolvedProjectId) : "");
+  const resumeContext = call?.resumePacket ? formatSessionResumeContext(call.resumePacket) : "";
+  const contextPacket = db && call?.contextPacketId
+    ? db.contextPackets.find((item) => item.id === call.contextPacketId)
+    : null;
+  const sessionContext = composeRealtimeSessionContext(projectContext, resumeContext, contextPacket?.context || "");
 
   const fd = new FormData();
   fd.set("sdp", sdp);
-  fd.set("session", JSON.stringify(realtimeSession(projectContext)));
+  fd.set("session", JSON.stringify(realtimeSession(sessionContext)));
 
   try {
     const response = await fetch("https://api.openai.com/v1/realtime/calls", {
@@ -382,6 +488,117 @@ app.post("/session", async (req, res) => {
 app.get("/api/state", async (_req, res) => {
   const db = await readDb();
   res.json(publicState(db));
+});
+
+app.get("/api/today", async (req, res) => {
+  try {
+    const db = await readDb();
+    const remote = await getTodayRemoteSources({ force: req.query.refresh === "1" });
+    const projects = normalizeLocalProjects(
+      db.projects.map((project) => publicProject(
+        project,
+        db.projectSources.filter((source) => source.projectId === project.id)
+      ))
+    ).slice(0, 10);
+    const sessions = normalizePastSessions(db.calls, { limit: 8, timeZone: todayTimeZone });
+
+    res.json({
+      updatedAt: remote.updatedAt,
+      expiresAt: remote.expiresAt,
+      timeZone: todayTimeZone,
+      date: remote.date,
+      meetings: remote.calendar.items,
+      tasks: remote.notion.items,
+      projects,
+      sessions,
+      sprint: remote.notion.sprint || null,
+      sources: {
+        calendar: remote.calendar.source,
+        notion: remote.notion.source,
+        projects: {
+          status: "connected",
+          label: "Cooper projects",
+          count: projects.length,
+          message: projects.length ? "Saved project context is available." : "No active projects yet."
+        },
+        sessions: {
+          status: "connected",
+          label: "Cooper sessions",
+          count: sessions.length,
+          message: sessions.length ? "Saved sessions are available to resume." : "No ended sessions yet."
+        }
+      }
+    });
+  } catch (error) {
+    console.error("Today feed error:", error);
+    res.status(500).json({ error: error.message || "Could not load Today." });
+  }
+});
+
+app.get("/api/daily-brief", async (req, res) => {
+  try {
+    const force = req.query.refresh === "1";
+    const date = zonedDayBounds(new Date(), todayTimeZone).date;
+    const db = await readDb();
+    const saved = db.dailyBriefs.find((brief) => brief.date === date);
+    const brief = force || !saved
+      ? await refreshDailyBrief({ trigger: force ? "manual" : "on_demand", force: true })
+      : saved;
+    res.json({ brief });
+  } catch (error) {
+    console.error("Daily brief error:", error);
+    res.status(500).json({ error: error.message || "Could not load the daily brief." });
+  }
+});
+
+app.post("/api/daily-brief/refresh", async (_req, res) => {
+  try {
+    const brief = await refreshDailyBrief({ trigger: "manual", force: true });
+    res.json({ brief });
+  } catch (error) {
+    console.error("Daily brief refresh error:", error);
+    res.status(500).json({ error: error.message || "Could not refresh the daily brief." });
+  }
+});
+
+app.get("/api/zoom/config", (_req, res) => {
+  res.json({
+    configured: Boolean(zoomSdkKey && zoomSdkSecret),
+    sdkKey: zoomSdkKey || "",
+    hostRoleEnabled: zoomHostRoleEnabled
+  });
+});
+
+app.post("/api/zoom/signature", (req, res) => {
+  if (!zoomSdkKey || !zoomSdkSecret) {
+    res.status(500).json({ error: "Missing ZOOM_SDK_KEY and ZOOM_SDK_SECRET on the server." });
+    return;
+  }
+
+  const meetingNumber = normalizeZoomMeetingNumber(req.body?.meetingNumber);
+  const role = Number(req.body?.role || 0) === 1 ? 1 : 0;
+
+  if (!meetingNumber) {
+    res.status(400).json({ error: "A Zoom meeting number is required." });
+    return;
+  }
+
+  if (role === 1 && !zoomHostRoleEnabled) {
+    res.status(403).json({ error: "Starting as host is disabled. Join as participant or enable ZOOM_ENABLE_HOST_ROLE with a ZAK flow." });
+    return;
+  }
+
+  res.json({
+    sdkKey: zoomSdkKey,
+    meetingNumber,
+    role,
+    signature: generateZoomMeetingSdkSignature({
+      meetingNumber,
+      role,
+      sdkKey: zoomSdkKey,
+      sdkSecret: zoomSdkSecret
+    })
+  });
 });
 
 app.get("/api/operator/state", async (_req, res) => {
@@ -666,9 +883,170 @@ app.post("/api/projects/:id/uploads", upload.single("file"), async (req, res) =>
   }
 });
 
+app.get("/api/context-sources/search", async (req, res) => {
+  const provider = normalizeContextProvider(req.query?.provider);
+  if (!["notion", "github", "meeting"].includes(provider)) {
+    res.status(400).json({ error: "Choose Notion, GitHub, or meeting notes as the context provider." });
+    return;
+  }
+
+  const requestedLimit = Number(req.query?.limit);
+  const options = {
+    query: cleanText(req.query?.query),
+    type: cleanText(req.query?.type) || "all",
+    repository: cleanText(req.query?.repository) || "all",
+    databaseId: extractNotionId(req.query?.databaseId || ""),
+    limit: provider === "notion" && requestedLimit === -1
+      ? -1
+      : clampNumber(req.query?.limit, 1, 100, contextSearchLimit)
+  };
+
+  try {
+    const result = await searchContextSources(provider, options);
+    if (result.status !== "completed") {
+      res.status(contextSourceFailureStatus(result.status)).json({
+        provider,
+        status: result.status,
+        message: result.message || "This context provider is not ready.",
+        authorizationUrl: result.authorizationUrl || null,
+        mappingEnv: result.mappingEnv || null,
+        results: []
+      });
+      return;
+    }
+
+    res.json({
+      provider,
+      query: options.query,
+      source: result.source || "local",
+      results: result.results,
+      repositories: [...new Set(result.results.map((item) => item.repository).filter(Boolean))].sort()
+    });
+  } catch (error) {
+    res.status(500).json({ provider, error: error.message || "Context search failed.", results: [] });
+  }
+});
+
+app.post("/api/context-packets", async (req, res) => {
+  const selected = (Array.isArray(req.body?.sources) ? req.body.sources : [])
+    .map(normalizeSelectedContextSource)
+    .filter(Boolean)
+    .slice(0, 20);
+  const db = await readDb();
+  const resolvedSources = [];
+
+  for (const source of selected) {
+    resolvedSources.push(await resolveContextPacketSource(source, db));
+  }
+
+  const now = new Date().toISOString();
+  const packet = buildContextPacket({
+    id: randomUUID(),
+    meeting: req.body?.meeting,
+    intent: cleanText(req.body?.intent),
+    sources: resolvedSources,
+    createdAt: now,
+    updatedAt: now
+  }, { maxChars: contextPacketMaxChars });
+
+  await updateDb((nextDb) => {
+    nextDb.contextPackets.push(packet);
+  });
+
+  res.status(201).json({
+    packet: publicContextPacket(packet),
+    sessionContext: packet.context
+  });
+});
+
+app.get("/api/context-packets/:id", async (req, res) => {
+  const db = await readDb();
+  const packet = db.contextPackets.find((item) => item.id === req.params.id);
+  if (!packet) {
+    res.status(404).json({ error: "Context packet not found." });
+    return;
+  }
+  res.json({ packet: publicContextPacket(packet), sessionContext: packet.context });
+});
+
+app.post("/api/context-packets/:id/uploads", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: "Upload a Markdown, text, or PDF file." });
+    return;
+  }
+
+  try {
+    const extracted = await extractProjectUpload(req.file);
+    const now = new Date().toISOString();
+    const result = await updateDb((db) => {
+      const index = db.contextPackets.findIndex((item) => item.id === req.params.id);
+      if (index < 0) return null;
+      const current = db.contextPackets[index];
+      const uploadedSource = {
+        id: randomUUID(),
+        provider: "file",
+        type: "file",
+        title: cleanText(req.body?.title) || extracted.title,
+        meta: `${extracted.sourceType.toUpperCase()} upload`,
+        content: extracted.content,
+        updatedAt: now,
+        resolutionStatus: "completed"
+      };
+      const next = buildContextPacket({
+        ...current,
+        sources: [...(current.sources || []), uploadedSource],
+        updatedAt: now
+      }, { maxChars: contextPacketMaxChars });
+      db.contextPackets[index] = next;
+      return next;
+    });
+
+    if (!result) {
+      res.status(404).json({ error: "Context packet not found." });
+      return;
+    }
+
+    res.status(201).json({ packet: publicContextPacket(result), sessionContext: result.context });
+  } catch (error) {
+    res.status(400).json({ error: error.message || "Could not ingest uploaded context." });
+  }
+});
+
 app.get("/api/tools/arcade/status", async (_req, res) => {
   const db = await readDb();
   res.json(arcadeSettingsState(db));
+});
+
+app.get("/api/tools/arcade/discovery", async (_req, res) => {
+  try {
+    res.json(await arcadeDiscoveryState());
+  } catch (error) {
+    res.status(500).json({
+      configured: Boolean(process.env.ARCADE_API_KEY),
+      userId: arcadeUserId,
+      error: error.message || "Could not load Arcade discovery."
+    });
+  }
+});
+
+app.post("/api/tools/arcade/connect", async (req, res) => {
+  const service = cleanText(req.body?.service);
+  if (!arcadeDiscoveryCatalog.some((item) => item.service === service)) {
+    res.status(400).json({ error: `Unknown Arcade service: ${service || "(missing)"}.` });
+    return;
+  }
+
+  if (!process.env.ARCADE_API_KEY) {
+    res.status(400).json({ error: "Missing ARCADE_API_KEY on the server." });
+    return;
+  }
+
+  try {
+    const authorization = await startArcadeServiceAuthorization(service);
+    res.json({ service, authorization: publicArcadeProviderAuthorization(authorization) });
+  } catch (error) {
+    res.status(500).json({ error: error.message || `Could not connect ${service} through Arcade.` });
+  }
 });
 
 app.post("/api/tools/arcade/authorize", async (req, res) => {
@@ -684,7 +1062,7 @@ app.post("/api/tools/arcade/authorize", async (req, res) => {
   }
 
   try {
-    const response = await startArcadeAuthorization(name, req);
+    const response = await startArcadeAuthorization(name);
     const db = await readDb();
     res.json({ authorization: publicArcadeAuthorization(response), arcade: arcadeSettingsState(db) });
   } catch (error) {
@@ -702,7 +1080,7 @@ app.post("/api/tools/arcade/authorize-all", async (req, res) => {
   const results = [];
   for (const name of names) {
     try {
-      const authorization = await startArcadeAuthorization(name, req);
+      const authorization = await startArcadeAuthorization(name);
       results.push({ name, ok: true, authorization: publicArcadeAuthorization(authorization) });
     } catch (error) {
       results.push({ name, ok: false, error: error.message || "Authorization failed." });
@@ -834,24 +1212,60 @@ app.get("/api/calls/:id", async (req, res) => {
   res.json({ call: publicCall(call), artifacts: db.artifacts.filter((item) => item.callId === call.id).map(publicArtifact) });
 });
 
+app.get("/api/calls/:id/resume", async (req, res) => {
+  const db = await readDb();
+  const call = db.calls.find((item) => item.id === req.params.id);
+  if (!call) {
+    res.status(404).json({ error: "Call not found." });
+    return;
+  }
+
+  res.json({ call: publicCall(call), resumePacket: buildCallResumePacket(db, call) });
+});
+
 app.post("/api/calls", async (req, res) => {
   const now = new Date().toISOString();
   const requestedProjectId = cleanText(req.body?.projectId);
+  const resumedFromCallId = cleanText(req.body?.resumedFromCallId);
+  const contextPacketId = cleanText(req.body?.contextPacketId);
 
-  const call = await updateDb((db) => {
-    const project = requestedProjectId
-      ? db.projects.find((item) => item.id === requestedProjectId)
+  const result = await updateDb((db) => {
+    const sourceCall = resumedFromCallId
+      ? db.calls.find((item) => item.id === resumedFromCallId)
       : null;
+    if (resumedFromCallId && !sourceCall) return { error: "Session to resume was not found." };
+    const contextPacket = contextPacketId
+      ? db.contextPackets.find((item) => item.id === contextPacketId)
+      : null;
+    if (contextPacketId && !contextPacket) return { error: "Selected context packet was not found." };
+
+    const projectId = requestedProjectId || sourceCall?.projectId || "";
+    const project = projectId
+      ? db.projects.find((item) => item.id === projectId)
+      : null;
+    const resumePacket = sourceCall ? buildCallResumePacket(db, sourceCall) : null;
+    if (sourceCall) sourceCall.resumePacket = resumePacket;
+    const callId = randomUUID();
     const nextCall = {
-      id: randomUUID(),
-      title: cleanText(req.body?.title) || `Cooper call ${new Date().toLocaleString()}`,
+      id: callId,
+      title: cleanText(req.body?.title) || (sourceCall ? `Continue: ${sourceCall.title}` : `Cooper call ${new Date().toLocaleString()}`),
       status: "active",
       startedAt: req.body?.startedAt || now,
       endedAt: null,
       durationSeconds: 0,
       projectId: project?.id || "",
       projectTitle: project?.title || "",
-      projectContextSnapshot: project ? buildProjectContext(db, project.id) : "",
+      projectContextSnapshot: [
+        project ? buildProjectContext(db, project.id) : sourceCall?.projectContextSnapshot || "",
+        contextPacket?.context || ""
+      ].filter(Boolean).join("\n\n"),
+      contextPacketId: contextPacket?.id || "",
+      contextSourceCount: Number(contextPacket?.sourceCount || 0),
+      resumedFromCallId: sourceCall?.id || "",
+      threadId: sourceCall?.threadId || sourceCall?.id || callId,
+      continuationIndex: sourceCall ? Number(sourceCall.continuationIndex || 0) + 1 : 0,
+      resumePacket,
+      resumeSourcePacket: resumePacket,
       transcript: [],
       suggestions: defaultSuggestions(),
       createdAt: now,
@@ -862,10 +1276,15 @@ app.post("/api/calls", async (req, res) => {
       project.updatedAt = now;
     }
     db.calls.push(nextCall);
-    return nextCall;
+    return { call: nextCall };
   });
 
-  res.status(201).json({ call: publicCall(call) });
+  if (result.error) {
+    res.status(404).json({ error: result.error });
+    return;
+  }
+
+  res.status(201).json({ call: publicCall(result.call) });
 });
 
 app.patch("/api/calls/:id", async (req, res) => {
@@ -928,6 +1347,7 @@ app.post("/api/calls/:id/end", async (req, res) => {
     call.durationSeconds = Number(req.body?.durationSeconds || call.durationSeconds || 0);
     if (req.body?.realtimeUsage) call.realtimeUsage = normalizeCallUsage(req.body.realtimeUsage);
     call.suggestions = defaultSuggestions(call.transcript.length > 0);
+    call.resumePacket = buildCallResumePacket(db, call);
     call.updatedAt = new Date().toISOString();
     return call;
   });
@@ -943,7 +1363,8 @@ app.post("/api/calls/:id/artifacts", async (req, res) => {
   const kind = artifactRecipes[req.body?.kind] ? req.body.kind : "post_call_kit";
   const customPrompt = cleanText(req.body?.customPrompt || "");
   const result = await enqueueArtifactJob(req.params.id, kind, customPrompt, {
-    title: cleanText(req.body?.title)
+    title: cleanText(req.body?.title),
+    workstream: cleanText(req.body?.workstream)
   });
 
   if (!result.ok) {
@@ -1027,6 +1448,11 @@ function enqueueArtifactJobInDb(db, callId, kind, customPrompt = "", options = {
     callId,
     kind,
     title,
+    workstream: cleanText(options.workstream) || null,
+    requirementsRunId: cleanText(options.requirementsRunId) || null,
+    templateId: cleanText(options.templateId) || null,
+    requirementsStage: cleanText(options.requirementsStage) || null,
+    sequence: Number(options.sequence || 0) || null,
     status: "queued",
     customPrompt,
     stepIndex: 0,
@@ -1277,6 +1703,10 @@ async function completeArtifact(job, call) {
       jobId: job.id,
       kind: job.kind,
       title: safeTitle,
+      workstream: job.workstream || null,
+      requirementsRunId: job.requirementsRunId || null,
+      templateId: job.templateId || null,
+      requirementsStage: job.requirementsStage || null,
       outputType,
       extension,
       mimeType,
@@ -1919,6 +2349,7 @@ async function executeGenerateAiresTemplateArtifactTool(args, context = {}) {
   const title = cleanText(args.title);
   const instruction = limitText(args.instruction, 4000);
   const suppliedContext = limitText(args.context, 8000);
+  const requirementsRunId = cleanText(context.requirementsRunId) || randomUUID();
 
   if (!callId) {
     return {
@@ -1930,7 +2361,7 @@ async function executeGenerateAiresTemplateArtifactTool(args, context = {}) {
   }
 
   const examples = requestedTemplate === "all"
-    ? getAiresExampleList()
+    ? requirementsSuitePlan().map((item) => findAiresExample(item.id)).filter(Boolean)
     : requestedTemplates.length
       ? requestedTemplates.map((id) => findAiresExample(id)).filter(Boolean)
       : [findAiresExample(requestedTemplate)].filter(Boolean);
@@ -1952,7 +2383,7 @@ async function executeGenerateAiresTemplateArtifactTool(args, context = {}) {
 
   const queued = [];
   const failures = [];
-  for (const example of uniqueExamples) {
+  for (const [sequence, example] of uniqueExamples.entries()) {
     const extraContext = [
       title && uniqueExamples.length === 1 ? `Requested artifact title: ${title}` : "",
       instruction.text ? `Michael's voice instruction:\n${instruction.text}` : "",
@@ -1962,7 +2393,12 @@ async function executeGenerateAiresTemplateArtifactTool(args, context = {}) {
     const kind = artifactRecipes[example.recipeKind] ? example.recipeKind : "aires_requirements";
     const result = await enqueueArtifactJob(callId, kind, customPrompt, {
       allowEmptyTranscript: true,
-      title: uniqueExamples.length === 1 && title ? title : example.title
+      title: uniqueExamples.length === 1 && title ? title : example.title,
+      workstream: "aires_requirements",
+      requirementsRunId,
+      templateId: example.id,
+      requirementsStage: requirementsSuitePlan([example.id])[0]?.stage || "Scope",
+      sequence: sequence + 1
     });
 
     if (result.ok) {
@@ -1997,6 +2433,7 @@ async function executeGenerateAiresTemplateArtifactTool(args, context = {}) {
     status: failures.length ? "partial" : "queued",
     tool: "generate_aires_template_artifact",
     riskLevel: "advisory",
+    runId: requirementsRunId,
     jobId: queued[0]?.jobId || "",
     jobs: queued,
     failures,
@@ -2021,6 +2458,104 @@ async function executeAiresRequirementsTool(args, context = {}) {
   const currentDraft = cleanText(args.current_draft);
   const goal = cleanText(args.goal);
   const requestedOutput = cleanText(args.requested_output);
+  const templateId = cleanText(args.template_id);
+  const templateIds = Array.isArray(args.template_ids)
+    ? args.template_ids.map((item) => cleanText(item)).filter(Boolean)
+    : [];
+  const runId = cleanText(args.run_id);
+
+  if (mode === "recommend_artifacts") {
+    const recommendations = recommendRequirementsArtifacts({
+      context: sourceContext || topic,
+      maxRecommendations: args.max_recommendations
+    });
+    return {
+      status: "completed",
+      tool: "run_aires_requirements_framework",
+      riskLevel: "advisory",
+      value: {
+        topic: topic || "current discussion",
+        recommendations,
+        suggestedSequence: recommendations.map((item) => item.id),
+        voice_summary: recommendations.length
+          ? `I recommend starting with ${recommendations[0].title}. ${recommendations[0].reason}`
+          : "I need a little more context before recommending the right requirements artifact."
+      }
+    };
+  }
+
+  if (mode === "draft_outline") {
+    const outline = buildRequirementsDraftOutline({
+      topic,
+      context: sourceContext,
+      documentId: templateId
+    });
+    return {
+      status: "completed",
+      tool: "run_aires_requirements_framework",
+      riskLevel: "advisory",
+      value: {
+        ...outline,
+        voice_summary: `${outline.gist} I would use ${outline.recommendedDocument?.title || "scoped requirements"} and confirm ${outline.missingQuestions[0] || "the first validation slice"}.`
+      }
+    };
+  }
+
+  if (mode === "queue_suite") {
+    return executeGenerateAiresTemplateArtifactTool({
+      template_id: templateIds.length ? "" : "all",
+      template_ids: templateIds,
+      title: artifactTitle,
+      instruction: requestedOutput || goal || `Generate the AIRES requirements suite for ${topic || "the current discussion"}.`,
+      context: sourceContext
+    }, {
+      ...context,
+      requirementsRunId: runId || randomUUID()
+    });
+  }
+
+  if (mode === "status") {
+    const callId = cleanText(context.callId);
+    const db = await readDb();
+    const relevantJobs = sortByDate((db.jobs || []).filter((job) => (
+      job.callId === callId && isRequirementsWorkshopJob(job)
+    )));
+    const selectedRunId = runId || relevantJobs.find((job) => job.requirementsRunId)?.requirementsRunId || "";
+    const selectedJobs = selectedRunId
+      ? relevantJobs.filter((job) => job.requirementsRunId === selectedRunId)
+      : relevantJobs;
+    const counts = selectedJobs.reduce((summary, job) => {
+      summary[job.status] = Number(summary[job.status] || 0) + 1;
+      return summary;
+    }, {});
+    const active = Number(counts.queued || 0) + Number(counts.running || 0);
+    const failed = Number(counts.failed || 0);
+    return {
+      status: "completed",
+      tool: "run_aires_requirements_framework",
+      riskLevel: "advisory",
+      value: {
+        runId: selectedRunId,
+        counts,
+        jobs: selectedJobs.map((job) => ({
+          id: job.id,
+          title: job.title,
+          templateId: job.templateId || "",
+          stage: job.requirementsStage || "",
+          status: job.status,
+          progress: job.progress,
+          artifactId: job.artifactId || ""
+        })),
+        voice_summary: !selectedJobs.length
+          ? "There is no requirements work running for this call yet."
+          : active
+            ? `${active} requirements document${active === 1 ? " is" : "s are"} still running, with ${Number(counts.completed || 0)} complete.`
+            : failed
+              ? `${Number(counts.completed || 0)} requirements documents completed and ${failed} need attention.`
+              : `The requirements run is complete with ${Number(counts.completed || 0)} artifacts ready on the canvas.`
+      }
+    };
+  }
 
   if (mode === "explain_documents" || mode === "explain_document") {
     return explainAiresFrameworkDocuments({
@@ -2073,6 +2608,13 @@ async function executeAiresRequirementsTool(args, context = {}) {
         ],
         documents: documents.value?.documents || [],
         workshopModes: documents.value?.workshopModes || [],
+        orchestrationModes: [
+          "Recommend the right next artifacts",
+          "Explain a spoken draft before generating",
+          "Interview for missing requirements context",
+          "Generate one document or the full suite in the background",
+          "Report grouped run status while the call continues"
+        ],
         voice_summary: "The AIRES framework moves messy context through Capture, Distill, Scope, Slice, and Verify, then turns it into scoped requirements with MoSCoW, INVEST slices, acceptance criteria, and a Definition of Ready."
       }
     };
@@ -2096,7 +2638,7 @@ async function executeAiresRequirementsTool(args, context = {}) {
     return {
       status: "error",
       tool: "run_aires_requirements_framework",
-      message: "Use mode list_framework, explain_documents, explain_document, workshop_document, interview, or queue_artifact.",
+      message: "Use mode list_framework, explain_documents, explain_document, workshop_document, interview, recommend_artifacts, draft_outline, queue_artifact, queue_suite, or status.",
       retryable: false
     };
   }
@@ -2111,35 +2653,185 @@ async function executeAiresRequirementsTool(args, context = {}) {
     };
   }
 
-  const customPrompt = [
-    artifactTitle ? `Artifact title: ${artifactTitle}` : "",
-    topic ? `Topic: ${topic}` : "",
-    sourceContext ? `Source context:\n${sourceContext}` : "",
-    "Apply the AIRES Requirements Framework exactly: Capture -> Distill -> Scope -> Slice -> Verify. Preserve vivid user phrases, label assumptions, avoid inventing customer-specific facts, and create the thinnest useful first slice.",
-    "Use the AIRES visual system: architectural, monochrome, precise, soft black, warm grey, sparse Volt accent, no gradients, no stock imagery, no emoji."
-  ].filter(Boolean).join("\n\n");
-
-  const result = await enqueueArtifactJob(callId, "aires_requirements", customPrompt, {
-    allowEmptyTranscript: Boolean(customPrompt)
+  return executeGenerateAiresTemplateArtifactTool({
+    template_id: templateId || "scoped_requirements_rep_velocity",
+    title: artifactTitle,
+    instruction: requestedOutput || goal || `Apply Capture -> Distill -> Scope -> Slice -> Verify to ${topic || "the current discussion"}.`,
+    context: sourceContext
+  }, {
+    ...context,
+    requirementsRunId: runId || randomUUID()
   });
+}
 
-  if (!result.ok) {
+async function searchContextSources(provider, options) {
+  if (provider === "meeting") {
+    const db = await readDb();
+    const records = normalizeContextSearchResults("meeting", sortByDate(db.calls));
     return {
-      status: "error",
-      tool: "run_aires_requirements_framework",
-      message: result.error || "Could not queue AIRES requirements work.",
-      retryable: false
+      status: "completed",
+      source: "Cooper call library",
+      results: filterContextRecords(records, options)
     };
   }
 
+  if (!options.query && provider !== "notion") {
+    return { status: "completed", source: provider === "notion" ? "Notion" : "GitHub", results: [] };
+  }
+
+  let execution;
+  if (provider === "notion") {
+    const select = options.databaseId
+      ? "page"
+      : options.type === "database"
+        ? "database"
+        : options.type === "page" || options.type === "ticket"
+          ? "page"
+          : undefined;
+    execution = await executeNotionSearchTool({
+      query: options.query || undefined,
+      select,
+      page_size: options.limit
+    });
+  } else {
+    execution = await executeArcadeMappedTool("inspect_engineering_context", {
+      query: options.query,
+      repo: options.repository === "all" ? undefined : options.repository,
+      include_code: false,
+      per_page: options.limit
+    });
+    if (execution.status === "mapping_required" && arcadeToolMappings.search_workspace_context) {
+      execution = await executeArcadeMappedTool("search_workspace_context", {
+        query: options.query,
+        sources: ["github"]
+      });
+    }
+  }
+
+  if (execution.status !== "completed") return execution;
+  const records = normalizeContextSearchResults(provider, execution.value);
   return {
-    status: "queued",
-    tool: "run_aires_requirements_framework",
-    kind: "aires_requirements",
-    title: result.job.title,
-    jobId: result.job.id,
-    message: "AIRES scoped requirements are running in Cooper's work queue."
+    status: "completed",
+    source: execution.source || `Arcade ${provider}`,
+    results: filterContextRecords(records, { ...options, parentId: options.databaseId })
   };
+}
+
+async function resolveContextPacketSource(source, db) {
+  if (source.provider === "paste") {
+    return { ...source, resolutionStatus: "completed" };
+  }
+
+  if (source.provider === "meeting") {
+    const call = db.calls.find((item) => item.id === source.id);
+    if (!call) return unresolvedContextSource(source, "Meeting notes were not found in Cooper's call library.");
+    return {
+      ...source,
+      content: formatContextMeeting(call),
+      updatedAt: call.updatedAt || call.endedAt || call.startedAt || source.updatedAt,
+      resolutionStatus: "completed"
+    };
+  }
+
+  let execution;
+  if (source.provider === "notion") {
+    execution = await executeNotionFetchPageTool({
+      page_id_or_url: source.url || source.id,
+      include_blocks: true,
+      max_blocks: notionBlockLimit
+    });
+    if (execution.status !== "completed") {
+      const objectId = extractNotionId(source.url || source.id);
+      if (objectId) {
+        try {
+          const metadata = await fetchNotionObjectMetadata(objectId, source.type === "database" ? "database" : "page");
+          const metadataContext = formatNotionMetadataContext(metadata);
+          if (metadataContext) {
+            return {
+              ...source,
+              content: metadataContext,
+              updatedAt: metadata.last_edited_time || metadata.updatedAt || source.updatedAt,
+              resolutionStatus: "completed",
+              resolutionMessage: "Page blocks were unavailable; loaded Notion database metadata instead."
+            };
+          }
+        } catch (metadataError) {
+          execution = {
+            ...execution,
+            message: [execution.message, metadataError.message].filter(Boolean).join(" Metadata fallback also failed: ")
+          };
+        }
+      }
+    }
+  } else if (source.provider === "github") {
+    execution = await executeArcadeMappedTool("inspect_engineering_context", {
+      query: `Load the selected ${source.type.replaceAll("_", " ")} and its code context: ${source.title}`,
+      repo: source.repository || undefined,
+      ticket_id: source.id,
+      include_code: true
+    });
+    if (execution.status === "mapping_required" && arcadeToolMappings.search_workspace_context) {
+      execution = await executeArcadeMappedTool("search_workspace_context", {
+        query: `${source.title} ${source.repository}`.trim(),
+        sources: ["github"]
+      });
+    }
+  }
+
+  if (!execution || execution.status !== "completed") {
+    return unresolvedContextSource(source, execution?.message || "The connected provider could not resolve this source.", execution?.status);
+  }
+
+  return {
+    ...source,
+    content: source.provider === "notion"
+      ? limitText(formatNotionResolvedContext(execution.value, source), projectSourceMaxChars).text
+      : contextResultText(execution.value),
+    resolutionStatus: "completed",
+    resolutionMessage: ""
+  };
+}
+
+function unresolvedContextSource(source, message, status = "unavailable") {
+  return {
+    ...source,
+    content: source.meta || "",
+    resolutionStatus: cleanText(status) || "unavailable",
+    resolutionMessage: cleanText(message)
+  };
+}
+
+function contextResultText(value) {
+  if (typeof value === "string") return limitText(value, projectSourceMaxChars).text;
+  if (!value || typeof value !== "object") return cleanText(String(value || ""));
+  for (const key of ["markdown", "content", "text", "body", "page_content", "file_content", "diff", "patch"]) {
+    if (typeof value[key] === "string" && cleanText(value[key])) {
+      return limitText(value[key], projectSourceMaxChars).text;
+    }
+  }
+  try {
+    return limitText(JSON.stringify(value, null, 2), projectSourceMaxChars).text;
+  } catch {
+    return "Provider returned structured context that could not be serialized.";
+  }
+}
+
+function formatContextMeeting(call) {
+  const transcript = normalizeTranscript(call.transcript || []);
+  return [
+    `# ${call.title || "Cooper call"}`,
+    call.startedAt ? `Started: ${call.startedAt}` : "",
+    call.endedAt ? `Ended: ${call.endedAt}` : "",
+    "",
+    "## Transcript",
+    ...transcript.map((entry) => `${entry.speaker || entry.role || "Participant"}: ${entry.text}`)
+  ].filter(Boolean).join("\n");
+}
+
+function contextSourceFailureStatus(status) {
+  if (["configuration_required", "mapping_required", "authorization_required"].includes(status)) return 409;
+  if (status === "error") return 502;
+  return 400;
 }
 
 async function executeNotionSearchTool(args) {
@@ -2155,16 +2847,6 @@ async function executeNotionSearchTool(args) {
       missing: ["ARCADE_NOTION_SEARCH_TOOL or NOTION_API_KEY"],
       directEnv: "NOTION_API_KEY",
       arcadeEnv: "ARCADE_NOTION_SEARCH_TOOL"
-    };
-  }
-
-  const query = cleanText(args.query);
-  if (!query) {
-    return {
-      status: "error",
-      tool: "search_notion_workspace",
-      message: "A Notion search query is required.",
-      retryable: false
     };
   }
 
@@ -2325,28 +3007,35 @@ function checkCalendar(date, time) {
 }
 
 async function searchNotionDirect(args) {
-  const filter = cleanText(args.filter) || "all";
-  const pageSize = clampNumber(args.page_size, 1, 10, notionSearchLimit);
-  const body = {
-    query: cleanText(args.query),
-    page_size: pageSize,
-    sort: { direction: "descending", timestamp: "last_edited_time" }
-  };
+  const filter = cleanText(args.select || args.filter) || "all";
+  const fetchAll = Number(args.page_size) === -1;
+  const pageSize = fetchAll ? 100 : clampNumber(args.page_size, 1, 100, notionSearchLimit);
+  const body = { page_size: pageSize, sort: { direction: "descending", timestamp: "last_edited_time" } };
+  const query = cleanText(args.query);
+  if (query) body.query = query;
 
-  if (filter === "pages") {
+  if (filter === "page" || filter === "pages") {
     body.filter = { property: "object", value: "page" };
-  } else if (filter === "data_sources" || filter === "databases") {
+  } else if (filter === "database" || filter === "data_sources" || filter === "databases") {
     body.filter = { property: "object", value: notionSearchDataObject() };
   }
 
-  const payload = await notionRequest("/search", {
-    method: "POST",
-    body: JSON.stringify(body)
-  });
+  const results = [];
+  const seenCursors = new Set();
+  let startCursor = "";
+  while (true) {
+    const payload = await notionRequest("/search", {
+      method: "POST",
+      body: JSON.stringify({ ...body, ...(startCursor ? { start_cursor: startCursor } : {}) })
+    });
+    results.push(...(Array.isArray(payload.results) ? payload.results : []));
+    if (!fetchAll || !payload.has_more || !payload.next_cursor || seenCursors.has(payload.next_cursor)) break;
+    seenCursors.add(payload.next_cursor);
+    startCursor = payload.next_cursor;
+  }
 
-  const results = Array.isArray(payload.results) ? payload.results : [];
   return {
-    query: body.query,
+    query,
     filter,
     count: results.length,
     results: results.map(notionSearchResultSummary)
@@ -2410,7 +3099,9 @@ function notionSearchResultSummary(item) {
       object: item.object,
       title: notionDataSourceTitle(item),
       url: item.url || "",
-      lastEditedAt: item.last_edited_time || ""
+      lastEditedAt: item.last_edited_time || "",
+      parentId: item.parent?.page_id || "",
+      parentType: item.parent?.type || ""
     };
   }
 
@@ -2431,10 +3122,13 @@ function notionPageSummary(page) {
     object: page.object || "page",
     title: notionPageTitle(page),
     url: page.url || "",
+    parentId: page.parent?.database_id || page.parent?.data_source_id || page.parent?.page_id || "",
+    parentType: page.parent?.type || "",
     createdAt: page.created_time || "",
     lastEditedAt: page.last_edited_time || "",
     archived: Boolean(page.archived || page.is_archived),
-    inTrash: Boolean(page.in_trash)
+    inTrash: Boolean(page.in_trash),
+    properties: isPlainObject(page.properties) ? page.properties : {}
   };
 }
 
@@ -2494,12 +3188,7 @@ function notionRichText(items) {
 }
 
 function extractNotionId(value) {
-  const text = cleanText(value);
-  if (!text) return "";
-  const compactMatches = text.replace(/-/g, "").match(/[0-9a-fA-F]{32}/g);
-  const compact = compactMatches?.[compactMatches.length - 1] || "";
-  if (!compact) return "";
-  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+  return extractNotionObjectId(value);
 }
 
 async function executeArcadeMappedTool(name, args) {
@@ -2538,7 +3227,7 @@ async function executeArcadeMappedTool(name, args) {
     };
   }
 
-  const input = sanitizeArcadeInput(name, args);
+  const input = sanitizeArcadeInput(name, args, arcadeToolName);
   const client = getArcadeClient();
   let response;
 
@@ -2608,23 +3297,46 @@ async function executeArcadeMappedTool(name, args) {
   };
 }
 
-async function startArcadeAuthorization(name, req) {
+async function startArcadeAuthorization(name) {
   const arcadeToolName = arcadeToolMappings[name];
   if (!arcadeToolName) {
     throw new Error(`No Arcade tool mapping is configured for ${name}.`);
   }
 
   const client = getArcadeClient();
-  const origin = requestOrigin(req);
   const response = await client.tools.authorize({
     tool_name: arcadeToolName,
-    user_id: arcadeUserId,
-    next_uri: origin || undefined
+    user_id: arcadeUserId
   });
 
   return upsertArcadeAuthorization(name, arcadeToolName, response, {
     error: null,
     lastCheckedAt: new Date().toISOString()
+  });
+}
+
+async function startArcadeServiceAuthorization(service) {
+  const client = getArcadeClient();
+  const catalogItems = arcadeDiscoveryCatalog.filter((item) => (
+    item.service === service && (arcadeWritesEnabled || item.kind !== "write")
+  ));
+  const tools = await Promise.all(catalogItems.map((item) => getArcadeCatalogTool(client, item)));
+  const availableTools = tools.filter((tool) => tool.available && tool.authorization?.providerId);
+  const authorization = availableTools[0]?.authorization;
+
+  if (!authorization?.providerId) {
+    const detail = tools.find((tool) => tool.error)?.error;
+    throw new Error(detail || `Arcade did not report an authorization provider for ${service}.`);
+  }
+
+  const scopes = [...new Set(availableTools.flatMap((tool) => tool.authorization?.scopes || []))];
+  return client.auth.authorize({
+    auth_requirement: {
+      provider_id: authorization.providerId,
+      provider_type: authorization.providerType || "oauth2",
+      oauth2: { scopes }
+    },
+    user_id: arcadeUserId
   });
 }
 
@@ -2676,6 +3388,251 @@ function getArcadeClient() {
   return arcadeClient;
 }
 
+function getArcadeDiscoveryClient() {
+  if (!arcadeDiscoveryClient) {
+    arcadeDiscoveryClient = new Arcade({
+      apiKey: process.env.ARCADE_API_KEY,
+      timeout: 12000,
+      maxRetries: 0
+    });
+  }
+  return arcadeDiscoveryClient;
+}
+
+async function getTodayRemoteSources({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && todayRemoteCache?.expiresAtMs > now) return todayRemoteCache.value;
+  if (todayRemoteRefresh) return todayRemoteRefresh;
+
+  todayRemoteRefresh = (async () => {
+    const bounds = zonedDayBounds(new Date(), todayTimeZone);
+    const [calendarResult, notionResult] = await Promise.allSettled([
+      loadTodayCalendar(bounds),
+      loadTodayNotionSprint()
+    ]);
+    const updatedAt = new Date().toISOString();
+    const expiresAtMs = Date.now() + todayCacheMs;
+    const value = {
+      date: bounds.date,
+      updatedAt,
+      expiresAt: new Date(expiresAtMs).toISOString(),
+      calendar: calendarResult.status === "fulfilled"
+        ? calendarResult.value
+        : failedTodaySource("Google Calendar", calendarResult.reason),
+      notion: notionResult.status === "fulfilled"
+        ? notionResult.value
+        : failedTodaySource("Notion Sprint Board", notionResult.reason)
+    };
+    todayRemoteCache = { expiresAtMs, value };
+    return value;
+  })();
+
+  try {
+    return await todayRemoteRefresh;
+  } finally {
+    todayRemoteRefresh = null;
+  }
+}
+
+async function refreshDailyBrief({ trigger = "manual", force = true } = {}) {
+  if (dailyBriefRefresh) return dailyBriefRefresh;
+  dailyBriefRefresh = (async () => {
+    const remote = await getTodayRemoteSources({ force });
+    const brief = buildDailyBrief({
+      date: remote.date,
+      timeZone: todayTimeZone,
+      meetings: remote.calendar.items,
+      tasks: remote.notion.items,
+      sprint: remote.notion.sprint || null,
+      sources: {
+        calendar: remote.calendar.source,
+        notion: remote.notion.source
+      },
+      assigneeSelectors: dailyBriefAssignees,
+      generatedAt: new Date().toISOString(),
+      trigger
+    });
+    await updateDb((db) => {
+      db.dailyBriefs = Array.isArray(db.dailyBriefs) ? db.dailyBriefs : [];
+      db.dailyBriefs = [brief, ...db.dailyBriefs.filter((item) => item.date !== brief.date)].slice(0, 30);
+    });
+    return brief;
+  })();
+
+  try {
+    return await dailyBriefRefresh;
+  } finally {
+    dailyBriefRefresh = null;
+  }
+}
+
+function scheduleDailyBrief() {
+  if (dailyBriefTimer) clearTimeout(dailyBriefTimer);
+  const delay = millisecondsUntilLocalHour(new Date(), todayTimeZone, dailyBriefHour);
+  dailyBriefTimer = setTimeout(async () => {
+    try {
+      await refreshDailyBrief({ trigger: "scheduled", force: true });
+      console.log(`[Daily Brief] Refreshed at ${dailyBriefHour}:00 ${todayTimeZone}.`);
+    } catch (error) {
+      console.error("[Daily Brief] Scheduled refresh failed:", error.message);
+    } finally {
+      scheduleDailyBrief();
+    }
+  }, delay);
+}
+
+async function loadTodayCalendar(bounds) {
+  const payload = await executeArcadeReadTool(todayCalendarTool, {
+    min_end_datetime: bounds.start,
+    max_start_datetime: bounds.end,
+    max_results: 50
+  });
+  const items = normalizeCalendarEvents(payload, {
+    now: new Date(),
+    timeZone: todayTimeZone
+  });
+  return {
+    items,
+    source: {
+      status: "connected",
+      label: "Google Calendar",
+      count: items.length,
+      message: items.length ? `${items.length} calendar event${items.length === 1 ? "" : "s"} loaded for today.` : "No calendar events today."
+    }
+  };
+}
+
+async function loadTodayNotionSprint() {
+  if (!todayNotionSprintAnchorPageId && !todayNotionActiveSprintId) {
+    throw new Error("Set COOPER_NOTION_SPRINT_ANCHOR_PAGE_ID or COOPER_NOTION_ACTIVE_SPRINT_ID.");
+  }
+
+  let anchorMetadata = null;
+  let activeSprintId = todayNotionActiveSprintId;
+  let databaseId = todayNotionSprintDatabaseId;
+  if (todayNotionSprintAnchorPageId) {
+    anchorMetadata = await fetchNotionObjectMetadata(todayNotionSprintAnchorPageId);
+    databaseId = databaseId || anchorMetadata?.parent?.database_id || "";
+    activeSprintId = activeSprintId
+      || (notionPropertyValue(anchorMetadata?.properties || {}, ["Sprint", "Sprints"]) || [])[0]
+      || "";
+  }
+  if (!activeSprintId) {
+    throw new Error("The configured Notion anchor task is not related to a sprint.");
+  }
+
+  const sprintMetadata = await fetchNotionObjectMetadata(activeSprintId);
+  const sprint = normalizeNotionSprintMetadata(sprintMetadata);
+  if (!sprint.current && !todayNotionActiveSprintId) {
+    throw new Error(`The anchor task points to ${sprint.title}, but Notion does not mark that sprint as Current.`);
+  }
+
+  const taskIds = [...new Set([
+    ...sprint.taskIds,
+    todayNotionSprintAnchorPageId
+  ].filter(Boolean))];
+  const metadataResults = await mapWithConcurrency(taskIds, 5, async (taskId) => {
+    try {
+      return await fetchNotionObjectMetadata(taskId);
+    } catch (error) {
+      console.warn(`Could not load Notion Sprint Board task ${taskId}:`, error.message);
+      return null;
+    }
+  });
+  const items = sortNotionTasks(metadataResults
+    .map((metadata) => normalizeNotionTaskMetadata(metadata, {
+      databaseId,
+      activeSprintId,
+      sprintTitle: sprint.title
+    }))
+    .filter(Boolean));
+
+  return {
+    items,
+    sprint: {
+      id: sprint.id,
+      title: sprint.title,
+      status: sprint.status,
+      dates: sprint.dates,
+      url: sprint.url,
+      totalTasks: sprint.taskIds.length,
+      visibleTasks: items.length,
+      databaseId
+    },
+    source: {
+      status: metadataResults.some(Boolean) ? "connected" : "error",
+      label: "Notion Sprint Board",
+      count: items.length,
+      message: `${items.length} unfinished task${items.length === 1 ? "" : "s"} loaded from ${sprint.title}.`
+    }
+  };
+}
+
+async function fetchNotionObjectMetadata(objectId, objectType = "page") {
+  return executeArcadeReadTool(todayNotionMetadataTool, {
+    object_id: objectId,
+    object_type: objectType
+  });
+}
+
+async function executeArcadeReadTool(toolName, input) {
+  if (!process.env.ARCADE_API_KEY) {
+    throw new Error("Arcade is not configured. Add ARCADE_API_KEY in Settings and connect the provider in Arcade.");
+  }
+  if (!toolName) throw new Error("The Arcade read tool is not configured.");
+
+  console.log(`[Arcade Today] ${toolName}`, JSON.stringify(input));
+  let response;
+  try {
+    response = await getArcadeClient().tools.execute({
+      tool_name: toolName,
+      input,
+      user_id: arcadeUserId
+    });
+  } catch (error) {
+    throw new Error(error.message || `${toolName} could not run.`);
+  }
+
+  const outputError = response?.output?.error;
+  if (outputError) {
+    const requirement = ["TOOL_REQUIREMENTS_NOT_MET", "UPSTREAM_RUNTIME_AUTH_ERROR"].includes(outputError.kind)
+      ? " Reconnect this provider in Settings."
+      : "";
+    throw new Error(`${outputError.message || `${toolName} failed.`}${requirement}`);
+  }
+  if (response?.success === false) {
+    throw new Error(`${toolName} failed. Reconnect this provider in Settings.`);
+  }
+  return arcadeOutputValue(response);
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const output = new Array(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      output[index] = await mapper(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return output;
+}
+
+function failedTodaySource(label, error) {
+  return {
+    items: [],
+    sprint: null,
+    source: {
+      status: /not configured|missing|set COOPER_/i.test(error?.message || "") ? "configuration_required" : "error",
+      label,
+      count: 0,
+      message: error?.message || `${label} could not be loaded.`
+    }
+  };
+}
+
 async function maybeAuthorizeArcadeTool(client, arcadeToolName, response) {
   const errorKind = response?.output?.error?.kind || "";
   if (!["TOOL_REQUIREMENTS_NOT_MET", "UPSTREAM_RUNTIME_AUTH_ERROR"].includes(errorKind)) {
@@ -2704,6 +3661,193 @@ function arcadeSettingsState(db) {
     ),
     recentToolCalls: sortByDate(db.toolCalls || []).slice(0, 12).map(publicToolCall)
   };
+}
+
+async function arcadeDiscoveryState() {
+  if (!process.env.ARCADE_API_KEY) {
+    return {
+      configured: false,
+      userId: arcadeUserId,
+      gatewayUrl: arcadeMcpGatewayUrl || null,
+      connections: [],
+      services: arcadeServiceSummaries([], []),
+      catalogTools: [],
+      error: "Missing ARCADE_API_KEY."
+    };
+  }
+
+  const client = getArcadeDiscoveryClient();
+  const [connectionsResult, toolsResult] = await Promise.all([
+    withTimeout(listArcadeConnections(client), 12000, "Arcade connection list timed out."),
+    withTimeout(listArcadeCatalogTools(client), 16000, "Arcade tool discovery timed out.")
+  ]);
+  const connections = connectionsResult.ok ? connectionsResult.value : [];
+  const catalogTools = toolsResult.ok ? toolsResult.value : [];
+
+  return {
+    configured: true,
+    userId: arcadeUserId,
+    gatewayUrl: arcadeMcpGatewayUrl || null,
+    connections,
+    services: arcadeServiceSummaries(connections, catalogTools),
+    catalogTools,
+    errors: [
+      connectionsResult.ok ? "" : connectionsResult.error,
+      toolsResult.ok ? "" : toolsResult.error
+    ].filter(Boolean)
+  };
+}
+
+async function listArcadeConnections(client) {
+  try {
+    const connections = [];
+    for await (const connection of client.admin.userConnections.list({ user_id: arcadeUserId, limit: 50 })) {
+      connections.push(publicArcadeConnection(connection));
+      if (connections.length >= 50) break;
+    }
+    return connections;
+  } catch (error) {
+    throw new Error(error.message || "Could not list Arcade user connections.");
+  }
+}
+
+async function listArcadeCatalogTools(client) {
+  return Promise.all(arcadeDiscoveryCatalog.map((item) => getArcadeCatalogTool(client, item)));
+}
+
+async function getArcadeCatalogTool(client, item) {
+  try {
+    const tool = await client.tools.get(item.toolName, { user_id: arcadeUserId });
+    return {
+      ...item,
+      available: true,
+      fullName: tool.fully_qualified_name || tool.qualified_name || item.toolName,
+      description: cleanText(tool.description).slice(0, 240),
+      readOnly: Boolean(tool.metadata?.behavior?.read_only),
+      operations: Array.isArray(tool.metadata?.behavior?.operations) ? tool.metadata.behavior.operations : [],
+      authorization: publicArcadeToolRequirement(tool.requirements?.authorization)
+    };
+  } catch (error) {
+    return {
+      ...item,
+      available: false,
+      fullName: item.toolName,
+      description: "",
+      error: error.message || "Tool unavailable."
+    };
+  }
+}
+
+function arcadeServiceSummaries(connections, catalogTools) {
+  return [...new Set(arcadeDiscoveryCatalog.map((item) => item.service))].map((service) => {
+    const tools = catalogTools.filter((tool) => tool.service === service);
+    const connection = findArcadeServiceConnection(service, connections, tools);
+    const availableTools = tools.filter((tool) => tool.available);
+    const writeTools = availableTools.filter((tool) => tool.kind === "write");
+    const authorization = availableTools.map((tool) => tool.authorization).find((item) => item?.providerId) || null;
+    const scopes = [...new Set(availableTools.flatMap((tool) => tool.authorization?.scopes || []))];
+    const toolAuthorizationStatuses = availableTools
+      .map((tool) => tool.authorization?.status)
+      .filter(Boolean);
+    const connectionActive = Boolean(connection && !/inactive|failed|revoked|expired/i.test(connection.status));
+    const connected = toolAuthorizationStatuses.length
+      ? toolAuthorizationStatuses.some((status) => ["active", "completed"].includes(status))
+      : connectionActive;
+    return {
+      service,
+      connected,
+      status: connected ? "completed" : connection?.status || "not_connected",
+      providerId: connection?.providerId || authorization?.providerId || "",
+      providerType: connection?.providerType || authorization?.providerType || "oauth2",
+      scopes,
+      connectable: Boolean(connection?.providerId || authorization?.providerId),
+      providerUser: connection?.providerUser || null,
+      toolCount: availableTools.length,
+      writeToolCount: writeTools.length,
+      capabilities: availableTools.map((tool) => ({
+        capability: tool.capability,
+        kind: tool.kind,
+        toolName: tool.fullName || tool.toolName,
+        authorizationStatus: tool.authorization?.status || ""
+      }))
+    };
+  });
+}
+
+function findArcadeServiceConnection(service, connections, tools) {
+  const needles = [
+    service,
+    ...tools.map((tool) => tool.toolkit),
+    ...tools.map((tool) => tool.authorization?.providerId || "")
+  ].map((value) => cleanText(value).toLowerCase()).filter(Boolean);
+
+  return connections.find((connection) => {
+    const haystack = [
+      connection.providerId,
+      connection.providerDescription,
+      connection.providerType
+    ].map((value) => cleanText(value).toLowerCase()).join(" ");
+    return needles.some((needle) => haystack.includes(needle.replace(/\s+/g, "")) || haystack.includes(needle));
+  }) || null;
+}
+
+function publicArcadeConnection(connection = {}) {
+  return {
+    id: connection.id || connection.connection_id || "",
+    connectionId: connection.connection_id || connection.id || "",
+    status: connection.connection_status || "unknown",
+    providerId: connection.provider_id || "",
+    providerDescription: connection.provider_description || "",
+    providerType: connection.provider_type || "",
+    providerUser: sanitizeProviderUserInfo(connection.provider_user_info),
+    scopes: Array.isArray(connection.scopes) ? connection.scopes : [],
+    userId: connection.user_id || ""
+  };
+}
+
+function publicArcadeToolRequirement(authorization = {}) {
+  if (!authorization || typeof authorization !== "object") return null;
+  return {
+    providerId: authorization.provider_id || authorization.id || "",
+    providerType: authorization.provider_type || "",
+    status: authorization.token_status || authorization.status || "",
+    statusReason: authorization.status_reason || "",
+    scopes: Array.isArray(authorization.oauth2?.scopes) ? authorization.oauth2.scopes : []
+  };
+}
+
+function publicArcadeProviderAuthorization(authorization = {}) {
+  return {
+    id: authorization.id || "",
+    authorizationUrl: authorization.url || "",
+    providerId: authorization.provider_id || "",
+    scopes: Array.isArray(authorization.scopes) ? authorization.scopes : [],
+    status: authorization.status || "not_started"
+  };
+}
+
+function sanitizeProviderUserInfo(value) {
+  if (!value || typeof value !== "object") return null;
+  const source = isPlainObject(value) ? value : {};
+  return {
+    name: cleanText(source.name || source.display_name || source.login || source.username),
+    email: cleanText(source.email),
+    id: cleanText(source.id || source.sub || source.user_id)
+  };
+}
+
+async function withTimeout(promise, ms, timeoutMessage) {
+  try {
+    const value = await Promise.race([
+      promise,
+      wait(ms).then(() => {
+        throw new Error(timeoutMessage);
+      })
+    ]);
+    return { ok: true, value };
+  } catch (error) {
+    return { ok: false, value: null, error: error.message || timeoutMessage };
+  }
 }
 
 function arcadeToolSettings(db) {
@@ -2765,7 +3909,58 @@ function normalizeArcadeThrownError(name, arcadeToolName, error) {
   };
 }
 
-function sanitizeArcadeInput(name, args) {
+function sanitizeArcadeInput(name, args, arcadeToolName = "") {
+  const mappedName = arcadeToolBaseName(arcadeToolName);
+
+  if (mappedName === "NotionToolkit.SearchByTitle") {
+    const requestedLimit = Number(args.page_size || args.limit);
+    const input = {
+      limit: requestedLimit === -1 ? -1 : clampNumber(requestedLimit, 1, 100, notionSearchLimit),
+      order_by: "descending"
+    };
+    const query = cleanText(args.query || args.customer_name || args.title);
+    const select = cleanText(args.select || args.filter);
+    if (query) input.query = query;
+    if (["page", "database"].includes(select)) input.select = select;
+    return input;
+  }
+
+  if (mappedName === "NotionToolkit.GetPageContentById") {
+    const pageIdSource = cleanText(args.page_id || args.page_id_or_url || args.id);
+    return {
+      page_id: extractNotionId(pageIdSource) || pageIdSource
+    };
+  }
+
+  if (mappedName === "NotionToolkit.GetPageContentByTitle") {
+    return {
+      title: cleanText(args.title || args.page_id_or_url || args.query)
+    };
+  }
+
+  if (mappedName === "Github.GetUserOpenItems") {
+    return {
+      per_page: clampNumber(args.per_page, 1, 100, 30)
+    };
+  }
+
+  if (mappedName === "NotionToolkit.CreatePage") {
+    const description = cleanText(args.description);
+    const owner = cleanText(args.owner);
+    const dueDate = cleanText(args.due_date);
+    const actionType = cleanText(args.action_type);
+    return {
+      parent_title: cleanText(args.destination) || "Cooper Follow-ups",
+      title: cleanText(args.title),
+      content: [
+        description,
+        actionType ? `\n\nAction type: ${actionType}` : "",
+        owner ? `\nOwner: ${owner}` : "",
+        dueDate ? `\nDue date: ${dueDate}` : ""
+      ].filter(Boolean).join("")
+    };
+  }
+
   if (name === "search_workspace_context") {
     return {
       query: cleanText(args.query),
@@ -2821,10 +4016,14 @@ function sanitizeArcadeInput(name, args) {
   return safeAuditObject(args);
 }
 
+function arcadeToolBaseName(value) {
+  return cleanText(value).split("@")[0];
+}
+
 async function ensureDataStore() {
   await mkdir(artifactsDir, { recursive: true });
   if (!existsSync(dbPath)) {
-    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], toolCalls: [], gstackRuns: [], arcadeAuthorizations: [], projects: [], projectSources: [], operatorTasks: [] }, null, 2), "utf8");
+    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], toolCalls: [], gstackRuns: [], arcadeAuthorizations: [], projects: [], projectSources: [], contextPackets: [], operatorTasks: [], dailyBriefs: [] }, null, 2), "utf8");
   }
 }
 
@@ -2846,7 +4045,9 @@ async function readDbRaw() {
     arcadeAuthorizations: Array.isArray(parsed.arcadeAuthorizations) ? parsed.arcadeAuthorizations : [],
     projects: Array.isArray(parsed.projects) ? parsed.projects : [],
     projectSources: Array.isArray(parsed.projectSources) ? parsed.projectSources : [],
-    operatorTasks: Array.isArray(parsed.operatorTasks) ? parsed.operatorTasks : []
+    contextPackets: Array.isArray(parsed.contextPackets) ? parsed.contextPackets : [],
+    operatorTasks: Array.isArray(parsed.operatorTasks) ? parsed.operatorTasks : [],
+    dailyBriefs: Array.isArray(parsed.dailyBriefs) ? parsed.dailyBriefs : []
   };
 }
 
@@ -2868,6 +4069,7 @@ function publicState(db) {
     projects: sortByDate(db.projects).map((project) =>
       publicProject(project, db.projectSources.filter((source) => source.projectId === project.id))
     ),
+    contextPackets: sortByDate(db.contextPackets || []).slice(0, 20).map(publicContextPacket),
     artifacts: sortByDate(db.artifacts).map(publicArtifact),
     jobs: sortByDate(db.jobs).map(publicJob),
     toolCalls: sortByDate(db.toolCalls || []).slice(0, 20).map(publicToolCall),
@@ -3021,8 +4223,21 @@ function buildProjectContext(db, projectId, maxChars = projectContextChars) {
   return limitText(lines.join("\n").trim(), maxChars).text;
 }
 
+function buildCallResumePacket(db, call) {
+  return buildSessionResumePacket({
+    call,
+    artifacts: db.artifacts.filter((artifact) => artifact.callId === call.id),
+    jobs: db.jobs.filter((job) => job.callId === call.id),
+    priorPacket: call.resumeSourcePacket || null
+  });
+}
+
 function publicCall(call) {
-  const { projectContextSnapshot: _projectContextSnapshot, ...rest } = call;
+  const {
+    projectContextSnapshot: _projectContextSnapshot,
+    resumeSourcePacket: _resumeSourcePacket,
+    ...rest
+  } = call;
   return {
     ...rest,
     projectId: rest.projectId || "",
@@ -3291,15 +4506,6 @@ function toolLabel(name) {
     generate_aires_template_artifact: "AIRES template generator",
     run_aires_requirements_framework: "AIRES requirements"
   }[name] || name;
-}
-
-function requestOrigin(req) {
-  const origin = cleanText(req.headers.origin);
-  if (origin) return origin;
-  const host = cleanText(req.headers.host);
-  if (!host) return "";
-  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
-  return `${protocol}://${host}`;
 }
 
 function parseMcpAppServers(value) {
@@ -3688,10 +4894,7 @@ function artifactMimeType(artifact) {
 }
 
 function artifactOutputType(artifact) {
-  if (artifact.outputType) return artifact.outputType;
-  if (artifact.extension === "json" || artifact.file?.endsWith(".json") || artifact.kind === "mcp_app") return "mcp_app";
-  if (artifact.extension === "html" || artifact.file?.endsWith(".html") || artifact.kind === "html_prototype") return "html";
-  return "markdown";
+  return artifactOutputTypeFromMetadata(artifact);
 }
 
 function defaultArtifactExtension(outputType) {
@@ -4417,12 +5620,16 @@ await updateDb((db) => {
   db.arcadeAuthorizations = Array.isArray(db.arcadeAuthorizations) ? db.arcadeAuthorizations : [];
   db.projects = Array.isArray(db.projects) ? db.projects : [];
   db.projectSources = Array.isArray(db.projectSources) ? db.projectSources : [];
+  db.contextPackets = Array.isArray(db.contextPackets) ? db.contextPackets : [];
   db.operatorTasks = Array.isArray(db.operatorTasks) ? db.operatorTasks : [];
+  db.dailyBriefs = Array.isArray(db.dailyBriefs) ? db.dailyBriefs : [];
   db.calls.forEach((call) => {
     call.transcript = normalizeTranscript(call.transcript || []);
     call.projectId = cleanText(call.projectId);
     call.projectTitle = cleanText(call.projectTitle);
     call.projectContextSnapshot = cleanText(call.projectContextSnapshot);
+    call.contextPacketId = cleanText(call.contextPacketId);
+    call.contextSourceCount = Number(call.contextSourceCount || 0);
     call.realtimeUsage = normalizeCallUsage(call.realtimeUsage);
     const existingSuggestions = new Map((call.suggestions || []).map((suggestion) => [suggestion.kind, suggestion]));
     call.suggestions = defaultSuggestions(call.transcript.length > 0).map((suggestion) => ({
@@ -4446,6 +5653,12 @@ await updateDb((db) => {
     source.createdAt = source.createdAt || new Date().toISOString();
     source.updatedAt = source.updatedAt || source.createdAt;
   });
+  db.contextPackets = db.contextPackets.map((packet) => buildContextPacket({
+    ...packet,
+    id: cleanText(packet.id) || randomUUID(),
+    createdAt: packet.createdAt || new Date().toISOString(),
+    updatedAt: packet.updatedAt || packet.createdAt || new Date().toISOString()
+  }, { maxChars: contextPacketMaxChars }));
   db.artifacts.forEach((artifact) => {
     artifact.outputType = artifactOutputType(artifact);
     artifact.extension = artifact.extension || defaultArtifactExtension(artifact.outputType);
@@ -4506,4 +5719,8 @@ if (isProduction) {
 const server = createServer(app);
 server.listen(port, () => {
   console.log(`Cooper is ready at http://localhost:${port}`);
+  void refreshDailyBrief({ trigger: "startup", force: true })
+    .then((brief) => console.log(`[Daily Brief] ${brief.date} is ready.`))
+    .catch((error) => console.error("[Daily Brief] Startup refresh failed:", error.message));
+  scheduleDailyBrief();
 });

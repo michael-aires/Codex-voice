@@ -1,0 +1,1810 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cooper Session OS - UX Refactor Prototype</title>
+    <meta
+      name="description"
+      content="Interactive prototype for a clearer, session-centered Cooper workspace."
+    />
+    <style>
+      :root {
+        --ink: #2d2c2d;
+        --ink-soft: #4e4d52;
+        --muted: #74747b;
+        --faint: #a8a8a3;
+        --canvas: #fbfbf8;
+        --surface: #ffffff;
+        --soft: #f3f3ef;
+        --line: #e4e4df;
+        --line-strong: #d6d6d0;
+        --volt: #f0de4a;
+        --volt-strong: #dcc72d;
+        --volt-soft: #fff9cb;
+        --success: #25764a;
+        --danger: #d94747;
+        --radius: 8px;
+        --font-display: Inter, "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --font-body: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family: var(--font-body);
+        font-size: 15px;
+        line-height: 1.5;
+      }
+
+      button,
+      input,
+      textarea,
+      select {
+        color: inherit;
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      select:focus-visible {
+        outline: 3px solid rgba(240, 222, 74, 0.5);
+        outline-offset: 2px;
+      }
+
+      svg {
+        display: block;
+      }
+
+      .app {
+        min-height: 100vh;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        height: 64px;
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        padding: 0 26px;
+        background: rgba(251, 251, 248, 0.96);
+        border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(16px);
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        width: fit-content;
+        border: 0;
+        background: transparent;
+        padding: 0;
+        font-family: var(--font-display);
+        font-size: 18px;
+        font-weight: 800;
+      }
+
+      .brand-mark,
+      .agent-mark {
+        position: relative;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+      }
+
+      .brand-mark {
+        width: 20px;
+        height: 20px;
+        background: var(--ink);
+        transform: rotate(45deg);
+      }
+
+      .brand-mark::after {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border: 2px solid white;
+      }
+
+      .workspace-name {
+        margin-left: 2px;
+        padding-left: 14px;
+        border-left: 1px solid var(--line);
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+      }
+
+      .primary-nav {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .nav-button,
+      .text-button,
+      .icon-button,
+      .action-button,
+      .segmented-button,
+      .row-button {
+        border: 0;
+        background: transparent;
+      }
+
+      .nav-button {
+        min-height: 38px;
+        padding: 0 16px;
+        border-radius: 7px;
+        color: #68686f;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .nav-button:hover {
+        background: var(--soft);
+        color: var(--ink);
+      }
+
+      .nav-button.active {
+        background: var(--ink);
+        color: white;
+      }
+
+      .top-actions {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .action-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-height: 40px;
+        padding: 0 16px;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--ink);
+        font-size: 14px;
+        font-weight: 750;
+      }
+
+      .action-button:hover {
+        border-color: #bdbdb6;
+      }
+
+      .action-button.primary {
+        border-color: var(--volt-strong);
+        background: var(--volt);
+      }
+
+      .action-button.primary:hover {
+        background: #e7d43b;
+      }
+
+      .action-button.dark {
+        border-color: var(--ink);
+        background: var(--ink);
+        color: white;
+      }
+
+      .action-button.small {
+        min-height: 34px;
+        padding: 0 12px;
+        font-size: 13px;
+      }
+
+      .action-button svg,
+      .icon-button svg {
+        width: 17px;
+        height: 17px;
+        stroke-width: 1.8;
+      }
+
+      .avatar {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border: 0;
+        border-radius: 50%;
+        background: var(--ink);
+        color: white;
+        font-size: 11px;
+        font-weight: 800;
+      }
+
+      .view {
+        display: none;
+      }
+
+      .view.active {
+        display: block;
+      }
+
+      .page {
+        width: min(920px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 78px 0 96px;
+      }
+
+      .date-line,
+      .eyebrow,
+      .section-label,
+      .doc-kicker,
+      .connection-meta {
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .page h1 {
+        margin: 10px 0 4px;
+        font-family: var(--font-display);
+        font-size: 38px;
+        line-height: 1.1;
+        letter-spacing: 0;
+      }
+
+      .page-intro {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 16px;
+      }
+
+      .segmented {
+        display: inline-flex;
+        gap: 6px;
+        margin-top: 36px;
+        padding: 4px;
+        border-radius: 8px;
+        background: var(--soft);
+      }
+
+      .segmented-button {
+        min-height: 34px;
+        padding: 0 14px;
+        border-radius: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .segmented-button.active {
+        background: var(--surface);
+        color: var(--ink);
+        box-shadow: 0 1px 2px rgba(20, 20, 18, 0.06);
+      }
+
+      .agenda-section {
+        margin-top: 34px;
+      }
+
+      .agenda-section.hidden {
+        display: none;
+      }
+
+      .section-heading {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .section-heading::after {
+        content: "";
+        height: 1px;
+        flex: 1;
+        background: var(--line);
+      }
+
+      .section-source {
+        color: var(--faint);
+        font-family: var(--font-mono);
+        font-size: 10px;
+      }
+
+      .agenda-list,
+      .library-list,
+      .project-list,
+      .connection-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .agenda-row,
+      .library-row,
+      .project-row,
+      .connection-row {
+        width: 100%;
+        min-height: 76px;
+        display: grid;
+        align-items: center;
+        gap: 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        padding: 14px 18px;
+        text-align: left;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.025);
+      }
+
+      .agenda-row {
+        grid-template-columns: 78px 1fr auto 20px;
+      }
+
+      .agenda-row.task {
+        grid-template-columns: 14px 1fr auto 20px;
+      }
+
+      .agenda-row:hover,
+      .library-row:hover,
+      .project-row:hover {
+        border-color: #c7c7c0;
+        transform: translateY(-1px);
+      }
+
+      .agenda-time strong {
+        display: block;
+        font-family: var(--font-mono);
+        font-size: 16px;
+      }
+
+      .agenda-time span,
+      .row-meta {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .row-title {
+        display: block;
+        font-size: 15px;
+        font-weight: 750;
+      }
+
+      .row-subtitle {
+        display: block;
+        margin-top: 1px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 0 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--soft);
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 9px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .status-pill.accent {
+        border-color: #dfc91c;
+        background: var(--volt-soft);
+        color: #725f00;
+      }
+
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        border: 1px solid #c9c9c2;
+        border-radius: 50%;
+        background: #d9d9d4;
+      }
+
+      .status-dot.active {
+        border-color: #cfbb16;
+        background: var(--volt);
+      }
+
+      .chevron {
+        color: #b7b7b1;
+      }
+
+      .session-view.active {
+        display: grid;
+        grid-template-columns: minmax(310px, 27%) minmax(0, 73%);
+        height: calc(100vh - 64px);
+        min-height: 690px;
+      }
+
+      .collaborator-rail {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-width: 0;
+        overflow: hidden;
+        border-right: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .rail-scroll {
+        min-height: 0;
+        flex: 1;
+        overflow-y: auto;
+        padding-bottom: 20px;
+      }
+
+      .agent-presence {
+        padding: 30px 28px 26px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .presence-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .presence-person {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .agent-mark {
+        width: 46px;
+        height: 46px;
+        border: 1px solid var(--line);
+        border-radius: 50%;
+        background: var(--surface);
+      }
+
+      .agent-mark .brand-mark {
+        width: 16px;
+        height: 16px;
+      }
+
+      .presence-person strong {
+        display: block;
+        font-size: 15px;
+      }
+
+      .presence-status {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .live-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--volt);
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+
+      @keyframes pulse {
+        50% {
+          opacity: 0.35;
+        }
+      }
+
+      .session-elapsed {
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 10px;
+      }
+
+      .conversation-summary {
+        padding: 28px;
+      }
+
+      .conversation-summary h2 {
+        margin: 14px 0 10px;
+        font-size: 19px;
+        line-height: 1.25;
+      }
+
+      .conversation-summary p {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 14px;
+      }
+
+      .approval-list {
+        display: grid;
+        gap: 10px;
+        padding: 0 28px;
+      }
+
+      .approval-card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 14px;
+        background: var(--surface);
+      }
+
+      .approval-card[hidden] {
+        display: none;
+      }
+
+      .approval-title {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .approval-icon {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        flex: 0 0 auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--canvas);
+      }
+
+      .approval-icon svg {
+        width: 17px;
+        height: 17px;
+      }
+
+      .approval-copy strong {
+        display: block;
+        font-size: 14px;
+      }
+
+      .approval-copy span,
+      .approval-copy p {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .approval-copy p {
+        margin: 7px 0 0;
+      }
+
+      .approval-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .composer-wrap {
+        flex: 0 0 auto;
+        padding: 18px 28px 22px;
+        border-top: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .composer {
+        display: grid;
+        grid-template-columns: 1fr 38px;
+        align-items: center;
+        min-height: 48px;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: var(--surface);
+        padding: 4px 5px 4px 13px;
+      }
+
+      .composer input {
+        width: 100%;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        font-size: 14px;
+      }
+
+      .composer input::placeholder {
+        color: #92928d;
+      }
+
+      .icon-button {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 6px;
+      }
+
+      .icon-button:hover {
+        background: var(--soft);
+      }
+
+      .icon-button.send {
+        background: var(--ink);
+        color: white;
+      }
+
+      .rail-footnote {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .rail-footnote span:first-child::before {
+        content: "";
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        margin-right: 6px;
+        border-radius: 50%;
+        background: var(--volt);
+      }
+
+      .workbench {
+        min-width: 0;
+        overflow: auto;
+        background: var(--canvas);
+      }
+
+      .workbench-inner {
+        min-width: 720px;
+        min-height: 100%;
+        padding: 26px 28px 30px;
+      }
+
+      .artifact-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+
+      .artifact-tabs {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+        flex: 1;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .artifact-tabs::-webkit-scrollbar {
+        display: none;
+      }
+
+      .artifact-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 36px;
+        padding: 0 12px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .artifact-tab:hover {
+        background: var(--soft);
+        color: var(--ink);
+      }
+
+      .artifact-tab.active {
+        background: var(--surface);
+        color: var(--ink);
+        box-shadow: inset 0 0 0 1px var(--line);
+      }
+
+      .artifact-tab svg {
+        width: 15px;
+        height: 15px;
+      }
+
+      .document-frame {
+        height: calc(100vh - 390px);
+        min-height: 560px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        overflow: auto;
+      }
+
+      .document {
+        width: min(920px, calc(100% - 72px));
+        margin: 0 auto;
+        padding: 48px 0 72px;
+      }
+
+      .document h1 {
+        margin: 12px 0 8px;
+        font-family: var(--font-display);
+        font-size: 42px;
+        line-height: 1.08;
+      }
+
+      .doc-meta {
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 10px;
+      }
+
+      .document hr {
+        height: 1px;
+        margin: 28px 0 30px;
+        border: 0;
+        background: var(--line);
+      }
+
+      .document h2 {
+        margin: 30px 0 10px;
+        font-size: 22px;
+        line-height: 1.2;
+      }
+
+      .document p {
+        margin: 0 0 14px;
+        color: #3f3e42;
+        font-size: 15px;
+        line-height: 1.65;
+      }
+
+      .document ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .document li {
+        position: relative;
+        margin: 8px 0;
+        padding-left: 22px;
+      }
+
+      .document li::before {
+        content: "";
+        position: absolute;
+        left: 2px;
+        top: 9px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--volt);
+      }
+
+      .scope-table {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        margin-top: 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        overflow: hidden;
+      }
+
+      .scope-column + .scope-column {
+        border-left: 1px solid var(--line);
+      }
+
+      .scope-column strong {
+        display: block;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--canvas);
+        font-size: 12px;
+      }
+
+      .scope-column span {
+        display: block;
+        padding: 9px 14px;
+        border-bottom: 1px solid var(--line);
+        color: var(--ink-soft);
+        font-size: 12px;
+      }
+
+      .scope-column span:last-child {
+        border-bottom: 0;
+      }
+
+      .memory-panel {
+        margin-top: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 14px 18px 16px;
+      }
+
+      .memory-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 12px;
+      }
+
+      .memory-head p {
+        max-width: 390px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .memory-track {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+      }
+
+      .memory-step {
+        position: relative;
+        min-height: 70px;
+        display: grid;
+        grid-template-columns: 24px 1fr;
+        align-items: start;
+        gap: 8px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        background: transparent;
+        padding: 10px;
+        text-align: left;
+      }
+
+      .memory-step:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        top: 31px;
+        left: calc(100% + 1px);
+        width: 10px;
+        border-top: 1px dashed #cfcfc8;
+      }
+
+      .memory-step:hover {
+        background: var(--canvas);
+      }
+
+      .memory-step.active {
+        border-color: var(--volt-strong);
+        background: var(--volt-soft);
+      }
+
+      .memory-number {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        border: 1px solid var(--line-strong);
+        border-radius: 5px;
+        background: var(--surface);
+        font-family: var(--font-mono);
+        font-size: 10px;
+      }
+
+      .memory-name {
+        display: block;
+        font-size: 13px;
+        font-weight: 750;
+      }
+
+      .memory-time {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-family: var(--font-mono);
+        font-size: 9px;
+      }
+
+      .split-page {
+        width: min(1120px, calc(100% - 40px));
+        display: grid;
+        grid-template-columns: minmax(240px, 0.38fr) minmax(0, 0.62fr);
+        gap: 32px;
+        margin: 0 auto;
+        padding: 64px 0 100px;
+      }
+
+      .split-page header {
+        grid-column: 1 / -1;
+      }
+
+      .split-page h1 {
+        margin: 8px 0 4px;
+        font-size: 34px;
+      }
+
+      .project-row,
+      .library-row {
+        grid-template-columns: 1fr auto;
+        min-height: 70px;
+      }
+
+      .project-row.active,
+      .library-row.active {
+        border-color: var(--volt-strong);
+        background: var(--volt-soft);
+      }
+
+      .detail-surface {
+        min-height: 480px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        padding: 30px;
+      }
+
+      .detail-surface h2 {
+        margin: 8px 0 10px;
+        font-size: 26px;
+      }
+
+      .detail-surface p {
+        color: var(--ink-soft);
+      }
+
+      .source-list {
+        margin: 28px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .source-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 13px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .source-row strong {
+        font-size: 13px;
+      }
+
+      .source-row span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .library-preview {
+        min-height: 480px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        padding: 38px;
+      }
+
+      .library-preview h2 {
+        margin: 8px 0 4px;
+        font-size: 30px;
+      }
+
+      .library-preview .preview-block {
+        margin-top: 28px;
+        padding: 28px;
+        border-left: 3px solid var(--volt);
+        background: var(--canvas);
+      }
+
+      .library-preview .preview-block p {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: 17px;
+        line-height: 1.7;
+      }
+
+      .settings-page {
+        width: min(880px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 72px 0 100px;
+      }
+
+      .settings-page h1 {
+        margin: 8px 0 8px;
+        font-size: 36px;
+      }
+
+      .connection-list {
+        margin-top: 34px;
+      }
+
+      .connection-row {
+        grid-template-columns: 42px 1fr auto;
+      }
+
+      .connection-icon {
+        display: grid;
+        place-items: center;
+        width: 38px;
+        height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--canvas);
+      }
+
+      .connection-icon svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      dialog {
+        width: min(520px, calc(100% - 32px));
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--surface);
+        color: var(--ink);
+        padding: 0;
+        box-shadow: 0 24px 70px rgba(24, 24, 22, 0.18);
+      }
+
+      dialog::backdrop {
+        background: rgba(45, 44, 45, 0.22);
+        backdrop-filter: blur(2px);
+      }
+
+      .dialog-head,
+      .dialog-body,
+      .dialog-actions {
+        padding: 20px 22px;
+      }
+
+      .dialog-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .dialog-head h2 {
+        margin: 3px 0 0;
+        font-size: 22px;
+      }
+
+      .dialog-body {
+        display: grid;
+        gap: 16px;
+      }
+
+      .field {
+        display: grid;
+        gap: 7px;
+      }
+
+      .field label {
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .field select,
+      .field textarea {
+        width: 100%;
+        border: 1px solid var(--line-strong);
+        border-radius: 7px;
+        background: var(--surface);
+        padding: 11px 12px;
+        font-size: 14px;
+      }
+
+      .field textarea {
+        min-height: 104px;
+        resize: vertical;
+      }
+
+      .dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        border-top: 1px solid var(--line);
+      }
+
+      .toast {
+        position: fixed;
+        right: 22px;
+        bottom: 22px;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        max-width: 380px;
+        border: 1px solid #242424;
+        border-radius: 8px;
+        background: var(--ink);
+        color: white;
+        padding: 12px 14px;
+        box-shadow: 0 16px 44px rgba(20, 20, 18, 0.18);
+        font-size: 13px;
+        transform: translateY(24px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 160ms ease, transform 160ms ease;
+      }
+
+      .toast.show {
+        transform: translateY(0);
+        opacity: 1;
+      }
+
+      .toast svg {
+        width: 17px;
+        height: 17px;
+        color: var(--volt);
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      @media (max-width: 980px) {
+        .topbar {
+          grid-template-columns: auto 1fr auto;
+          padding: 0 14px;
+        }
+
+        .workspace-name,
+        .new-session-label {
+          display: none;
+        }
+
+        .primary-nav {
+          justify-content: center;
+          overflow-x: auto;
+          scrollbar-width: none;
+        }
+
+        .nav-button {
+          padding: 0 11px;
+        }
+
+        .session-view.active {
+          grid-template-columns: 290px minmax(0, 1fr);
+        }
+
+        .workbench-inner {
+          padding: 18px;
+        }
+
+        .document {
+          width: calc(100% - 48px);
+        }
+      }
+
+      @media (max-width: 760px) {
+        .topbar {
+          position: relative;
+          height: auto;
+          grid-template-columns: 1fr auto;
+          gap: 10px;
+          padding: 11px 12px 8px;
+        }
+
+        .brand {
+          font-size: 16px;
+        }
+
+        .primary-nav {
+          grid-column: 1 / -1;
+          grid-row: 2;
+          justify-content: flex-start;
+          padding-top: 6px;
+        }
+
+        .top-actions {
+          grid-column: 2;
+          grid-row: 1;
+        }
+
+        .nav-button {
+          min-height: 34px;
+          flex: 0 0 auto;
+        }
+
+        .avatar {
+          display: none;
+        }
+
+        .page,
+        .settings-page,
+        .split-page {
+          width: min(100% - 24px, 920px);
+          padding-top: 38px;
+        }
+
+        .page h1,
+        .settings-page h1 {
+          font-size: 31px;
+        }
+
+        .agenda-row,
+        .agenda-row.task {
+          grid-template-columns: 1fr auto;
+          gap: 8px;
+        }
+
+        .agenda-time,
+        .status-dot,
+        .chevron {
+          display: none;
+        }
+
+        .session-view.active {
+          display: block;
+          height: auto;
+          min-height: 0;
+        }
+
+        .collaborator-rail {
+          min-height: 470px;
+          height: auto;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .agent-presence,
+        .conversation-summary,
+        .approval-list,
+        .composer-wrap {
+          padding-left: 18px;
+          padding-right: 18px;
+        }
+
+        .workbench {
+          overflow: visible;
+        }
+
+        .workbench-inner {
+          min-width: 0;
+          padding: 18px 12px 28px;
+        }
+
+        .artifact-toolbar {
+          align-items: flex-start;
+        }
+
+        .artifact-tabs {
+          max-width: calc(100vw - 120px);
+        }
+
+        .document-frame {
+          height: auto;
+          min-height: 620px;
+          overflow: visible;
+        }
+
+        .document {
+          width: calc(100% - 32px);
+          padding-top: 32px;
+        }
+
+        .document h1 {
+          font-size: 31px;
+        }
+
+        .scope-table {
+          grid-template-columns: 1fr;
+        }
+
+        .scope-column + .scope-column {
+          border-top: 1px solid var(--line);
+          border-left: 0;
+        }
+
+        .memory-head {
+          display: block;
+        }
+
+        .memory-head p {
+          margin-top: 8px;
+        }
+
+        .memory-track {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .memory-step:not(:last-child)::after {
+          display: none;
+        }
+
+        .split-page {
+          grid-template-columns: 1fr;
+        }
+
+        .split-page header {
+          grid-column: auto;
+        }
+
+        .detail-surface,
+        .library-preview {
+          min-height: 0;
+        }
+
+        .toast {
+          right: 12px;
+          bottom: 12px;
+          left: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <button class="brand" type="button" data-view="today" aria-label="Go to Today">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>Cooper</span>
+          <span class="workspace-name">AIRES workspace</span>
+        </button>
+
+        <nav class="primary-nav" aria-label="Primary navigation">
+          <button class="nav-button active" type="button" data-view="today">Today</button>
+          <button class="nav-button" type="button" data-view="sessions">Sessions</button>
+          <button class="nav-button" type="button" data-view="projects">Projects</button>
+          <button class="nav-button" type="button" data-view="library">Library</button>
+          <button class="nav-button" type="button" data-view="settings">Settings</button>
+        </nav>
+
+        <div class="top-actions">
+          <button class="action-button primary" id="new-session" type="button">
+            <i data-lucide="plus" aria-hidden="true"></i>
+            <span class="new-session-label">New session</span>
+          </button>
+          <button class="avatar" type="button" aria-label="Open profile">MM</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="view active" id="view-today" aria-labelledby="today-title">
+          <div class="page">
+            <div class="date-line">Thursday, July 9</div>
+            <h1 id="today-title">Good morning, Michael.</h1>
+            <p class="page-intro">Three meetings and five tasks. Open one, or start a fresh session with Cooper.</p>
+
+            <div class="segmented" role="tablist" aria-label="Today filters">
+              <button class="segmented-button active" type="button" data-filter="all">All</button>
+              <button class="segmented-button" type="button" data-filter="meetings">Meetings</button>
+              <button class="segmented-button" type="button" data-filter="tasks">Tasks</button>
+            </div>
+
+            <section class="agenda-section" data-section="meetings" aria-labelledby="meetings-heading">
+              <div class="section-heading">
+                <span class="section-label" id="meetings-heading">Meetings</span>
+                <span class="section-source">Google Calendar</span>
+              </div>
+              <div class="agenda-list">
+                <button class="agenda-row open-session" type="button">
+                  <span class="agenda-time"><strong>09:30</strong><span>45 min</span></span>
+                  <span><span class="row-title">Post-close transaction review</span><span class="row-subtitle">AIRES product + engineering</span></span>
+                  <span class="status-pill accent">Next</span>
+                  <i class="chevron" data-lucide="chevron-right" aria-hidden="true"></i>
+                </button>
+                <button class="agenda-row open-session" type="button">
+                  <span class="agenda-time"><strong>11:00</strong><span>30 min</span></span>
+                  <span><span class="row-title">Sprint planning</span><span class="row-subtitle">Product delivery pod</span></span>
+                  <span></span>
+                  <i class="chevron" data-lucide="chevron-right" aria-hidden="true"></i>
+                </button>
+                <button class="agenda-row open-session" type="button">
+                  <span class="agenda-time"><strong>14:00</strong><span>30 min</span></span>
+                  <span><span class="row-title">Enrichment vendor call</span><span class="row-subtitle">External · Clearbit alternative</span></span>
+                  <span></span>
+                  <i class="chevron" data-lucide="chevron-right" aria-hidden="true"></i>
+                </button>
+              </div>
+            </section>
+
+            <section class="agenda-section" data-section="tasks" aria-labelledby="tasks-heading">
+              <div class="section-heading">
+                <span class="section-label" id="tasks-heading">Tasks</span>
+                <span class="section-source">Notion · Sprint 14</span>
+              </div>
+              <div class="agenda-list">
+                <button class="agenda-row task open-session" type="button">
+                  <span class="status-dot active" aria-hidden="true"></span>
+                  <span><span class="row-title">Scope controlled post-close editing</span><span class="row-subtitle">Rep velocity</span></span>
+                  <span class="status-pill accent">In progress</span>
+                  <i class="chevron" data-lucide="chevron-right" aria-hidden="true"></i>
+                </button>
+                <button class="agenda-row task" type="button" data-view="projects">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <span><span class="row-title">Draft enrichment fallback map</span><span class="row-subtitle">Data</span></span>
+                  <span class="status-pill">To do</span>
+                  <i class="chevron" data-lucide="chevron-right" aria-hidden="true"></i>
+                </button>
+                <button class="agenda-row task" type="button" data-view="projects">
+                  <span class="status-dot" aria-hidden="true"></span>
+                  <span><span class="row-title">Refresh the JTBD canvas</span><span class="row-subtitle">Discovery</span></span>
+                  <span class="status-pill">To do</span>
+                  <i class="chevron" data-lucide="chevron-right" aria-hidden="true"></i>
+                </button>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view session-view" id="view-sessions" aria-label="Active Cooper session">
+          <aside class="collaborator-rail">
+            <div class="agent-presence">
+              <div class="presence-row">
+                <div class="presence-person">
+                  <span class="agent-mark" aria-hidden="true"><span class="brand-mark"></span></span>
+                  <span><strong>Cooper</strong><span class="presence-status"><span class="live-dot"></span><span id="agent-state">Listening</span></span></span>
+                </div>
+                <span class="session-elapsed">23:32</span>
+              </div>
+            </div>
+
+            <div class="rail-scroll">
+              <div class="conversation-summary" aria-live="polite">
+                <span class="eyebrow">Conversation summary</span>
+                <h2 id="summary-title">Decision: controlled post-close editing</h2>
+                <p id="summary-copy">Support a short post-close editing window with audit trails, role-based permissions, and clear disclosures.</p>
+              </div>
+
+              <div class="approval-list" aria-label="Pending approvals">
+                <span class="eyebrow">Needs you</span>
+                <article class="approval-card">
+                  <div class="approval-title">
+                    <span class="approval-icon"><i data-lucide="file-check-2" aria-hidden="true"></i></span>
+                    <span class="approval-copy"><strong>Product requirements</strong><span>Updated 2 min ago</span><p>Incorporates the decision just made.</p></span>
+                  </div>
+                  <div class="approval-actions">
+                    <button class="action-button primary small approve" type="button">Approve</button>
+                    <button class="action-button small request-change" type="button">Revise</button>
+                  </div>
+                </article>
+                <article class="approval-card">
+                  <div class="approval-title">
+                    <span class="approval-icon"><i data-lucide="git-branch" aria-hidden="true"></i></span>
+                    <span class="approval-copy"><strong>Post-close edit policy</strong><span>Updated 5 min ago</span><p>New policy draft is ready for review.</p></span>
+                  </div>
+                  <div class="approval-actions">
+                    <button class="action-button primary small approve" type="button">Approve</button>
+                    <button class="action-button small request-change" type="button">Revise</button>
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <div class="composer-wrap">
+              <form class="composer" id="ask-form">
+                <input id="ask-input" type="text" placeholder="Ask Cooper…" aria-label="Ask Cooper" />
+                <button class="icon-button send" type="submit" aria-label="Send to Cooper"><i data-lucide="send" aria-hidden="true"></i></button>
+              </form>
+              <div class="rail-footnote"><span>Cooper hears the room</span><button class="text-button" type="button" id="end-session">End session</button></div>
+            </div>
+          </aside>
+
+          <section class="workbench" aria-label="Session canvas">
+            <div class="workbench-inner">
+              <div class="artifact-toolbar">
+                <div class="artifact-tabs" role="tablist" aria-label="Session artifacts">
+                  <button class="artifact-tab active" type="button" data-artifact="requirements"><i data-lucide="file-text"></i>Product requirements</button>
+                  <button class="artifact-tab" type="button" data-artifact="decision"><i data-lucide="list-checks"></i>Decision log</button>
+                  <button class="artifact-tab" type="button" data-artifact="policy"><i data-lucide="git-branch"></i>Post-close edit policy</button>
+                </div>
+                <button class="action-button primary small" type="button" data-open-build><i data-lucide="wand-sparkles"></i>Build</button>
+                <button class="icon-button" type="button" aria-label="More canvas actions"><i data-lucide="ellipsis-vertical"></i></button>
+              </div>
+
+              <div class="document-frame">
+                <article class="document" id="document-content"></article>
+              </div>
+
+              <section class="memory-panel" aria-labelledby="memory-title">
+                <div class="memory-head">
+                  <strong id="memory-title">Session memory</strong>
+                  <p>Jump back to any chapter and Cooper restores the transcript, context, decision, and canvas state from that moment.</p>
+                </div>
+                <div class="memory-track">
+                  <button class="memory-step" type="button" data-memory="brief"><span class="memory-number">1</span><span><span class="memory-name">Brief</span><span class="memory-time">09:02 AM</span></span></button>
+                  <button class="memory-step" type="button" data-memory="debate"><span class="memory-number">2</span><span><span class="memory-name">Debate</span><span class="memory-time">09:18 AM</span></span></button>
+                  <button class="memory-step active" type="button" data-memory="decision"><span class="memory-number">3</span><span><span class="memory-name">Decision</span><span class="memory-time">09:31 AM</span></span></button>
+                  <button class="memory-step" type="button" data-memory="build"><span class="memory-number">4</span><span><span class="memory-name">Build</span><span class="memory-time">09:36 AM</span></span></button>
+                </div>
+              </section>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="view-projects" aria-labelledby="projects-title">
+          <div class="split-page">
+            <header>
+              <span class="date-line">Context spaces</span>
+              <h1 id="projects-title">Projects</h1>
+              <p class="page-intro">Durable context Cooper can bring into any session.</p>
+            </header>
+            <div class="project-list" aria-label="Projects">
+              <button class="project-row active" type="button" data-project="rep"><span><span class="row-title">Rep velocity</span><span class="row-subtitle">12 sources · updated today</span></span><i data-lucide="chevron-right"></i></button>
+              <button class="project-row" type="button" data-project="data"><span><span class="row-title">Data enrichment</span><span class="row-subtitle">7 sources · updated yesterday</span></span><i data-lucide="chevron-right"></i></button>
+              <button class="project-row" type="button" data-project="onboarding"><span><span class="row-title">Customer onboarding</span><span class="row-subtitle">9 sources · updated Jul 7</span></span><i data-lucide="chevron-right"></i></button>
+            </div>
+            <article class="detail-surface" id="project-detail"></article>
+          </div>
+        </section>
+
+        <section class="view" id="view-library" aria-labelledby="library-title">
+          <div class="split-page">
+            <header>
+              <span class="date-line">Finished work</span>
+              <h1 id="library-title">Library</h1>
+              <p class="page-intro">Calls, decisions, documents, diagrams, and prototypes in one searchable place.</p>
+            </header>
+            <div class="library-list" aria-label="Artifacts">
+              <button class="library-row active" type="button" data-library="requirements"><span><span class="row-title">Product requirements</span><span class="row-subtitle">Post-close editing · HTML</span></span><span class="row-meta">Today</span></button>
+              <button class="library-row" type="button" data-library="journey"><span><span class="row-title">Post-close editing journey</span><span class="row-subtitle">Workflow · Mermaid</span></span><span class="row-meta">Today</span></button>
+              <button class="library-row" type="button" data-library="prototype"><span><span class="row-title">Closed deal editor</span><span class="row-subtitle">Mobile prototype · HTML</span></span><span class="row-meta">Jul 8</span></button>
+              <button class="library-row" type="button" data-library="session"><span><span class="row-title">Sprint review</span><span class="row-subtitle">Session · 46 min</span></span><span class="row-meta">Jul 8</span></button>
+            </div>
+            <article class="library-preview" id="library-preview"></article>
+          </div>
+        </section>
+
+        <section class="view" id="view-settings" aria-labelledby="settings-title">
+          <div class="settings-page">
+            <span class="date-line">Workspace</span>
+            <h1 id="settings-title">Connections</h1>
+            <p class="page-intro">Connect context once. Cooper can use it in sessions when you explicitly select it.</p>
+            <div class="connection-list">
+              <div class="connection-row"><span class="connection-icon"><i data-lucide="calendar-days"></i></span><span><span class="row-title">Google Calendar</span><span class="row-subtitle">Meetings appear on Today</span></span><span class="status-pill accent">Connected</span></div>
+              <div class="connection-row"><span class="connection-icon"><i data-lucide="notebook-tabs"></i></span><span><span class="row-title">Notion</span><span class="row-subtitle">Sprint tasks and selected pages</span></span><span class="status-pill accent">Connected</span></div>
+              <div class="connection-row"><span class="connection-icon"><i data-lucide="github"></i></span><span><span class="row-title">GitHub</span><span class="row-subtitle">Read-only engineering context</span></span><span class="status-pill">Authorize</span></div>
+              <div class="connection-row"><span class="connection-icon"><i data-lucide="blocks"></i></span><span><span class="row-title">Arcade MCP</span><span class="row-subtitle">Calendar, Notion, Gmail, and tool authorization</span></span><span class="status-pill accent">Ready</span></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="build-dialog" aria-labelledby="build-title">
+      <div class="dialog-head">
+        <div><span class="eyebrow">Build from this session</span><h2 id="build-title">Create an artifact</h2></div>
+        <button class="icon-button" type="button" data-close-dialog aria-label="Close"><i data-lucide="x"></i></button>
+      </div>
+      <form id="build-form">
+        <div class="dialog-body">
+          <div class="field"><label for="artifact-type">What should Cooper create?</label><select id="artifact-type"><option>Product requirements</option><option>Mermaid workflow</option><option>Mobile wireframe</option><option>Interactive HTML prototype</option><option>Executive brief</option></select></div>
+          <div class="field"><label for="context-source">Context</label><select id="context-source"><option>Current session</option><option>Selected conversation chapter</option><option>Rep velocity project</option><option>Current session + Rep velocity project</option></select></div>
+          <div class="field"><label for="build-prompt">Direction</label><textarea id="build-prompt">Use the decision we just made. Preserve open questions and call out assumptions rather than inventing details.</textarea></div>
+        </div>
+        <div class="dialog-actions"><button class="action-button" type="button" data-close-dialog>Cancel</button><button class="action-button primary" type="submit"><i data-lucide="play"></i>Start build</button></div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"><i data-lucide="sparkles"></i><span id="toast-copy"></span></div>
+
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script>
+      const views = [...document.querySelectorAll(".view")];
+      const navButtons = [...document.querySelectorAll(".nav-button")];
+      const toast = document.querySelector("#toast");
+      const toastCopy = document.querySelector("#toast-copy");
+      const buildDialog = document.querySelector("#build-dialog");
+      const agentState = document.querySelector("#agent-state");
+      let toastTimer;
+
+      const documents = {
+        requirements: {
+          kicker: "Document",
+          title: "Product requirements",
+          meta: "Owner: Cooper  ·  Last updated: Today, 10:42 AM  ·  Status: In review",
+          body: `
+            <h2>1. Overview</h2>
+            <p>Enable authorized teams to make limited edits to closed transactions within a defined post-close window, with full auditability and clear disclosure.</p>
+            <h2>2. Goals</h2>
+            <ul><li>Allow safe, reversible edits to defined operational fields.</li><li>Maintain a complete, immutable audit trail for all changes.</li><li>Apply role-based access and approval rules.</li><li>Keep financial and compliance fields protected.</li></ul>
+            <h2>3. Scope</h2>
+            <div class="scope-table"><div class="scope-column"><strong>In scope</strong><span>Controlled edits to approved fields</span><span>Configurable post-close window</span><span>Audit trail and version history</span></div><div class="scope-column"><strong>Out of scope</strong><span>Reopening core financials</span><span>Bulk edits</span><span>Changes outside the allowed window</span></div></div>`
+        },
+        decision: {
+          kicker: "Decision record",
+          title: "Controlled post-close editing",
+          meta: "Decision owner: Michael  ·  Captured: Today, 09:31 AM  ·  Confidence: High",
+          body: `<h2>Decision</h2><p>Closed transactions remain system-of-record objects, but approved operational metadata may be edited for a limited period after close.</p><h2>Why</h2><p>Key dates, signed-contract details, and move-in information often arrive after a deal closes. Blocking those updates creates shadow systems and incomplete customer records.</p><h2>Guardrails</h2><ul><li>Explicit field allow-list.</li><li>Role-based permission plus audit trail.</li><li>Protected financial values remain immutable.</li><li>Exceptions require an approval event.</li></ul>`
+        },
+        policy: {
+          kicker: "Policy draft",
+          title: "Post-close edit policy",
+          meta: "Prepared by: Cooper  ·  Source: Session decision  ·  Status: Draft",
+          body: `<h2>Policy statement</h2><p>Authorized users may update approved operational metadata on closed transactions during the configured post-close window.</p><h2>Required controls</h2><ul><li>Every change records actor, timestamp, previous value, and new value.</li><li>The interface clearly separates editable operational data from locked financial data.</li><li>Expired windows require an approved exception.</li></ul><h2>Open question</h2><p>Should the default edit window be tenant-level, workflow-level, or deal-type specific?</p>`
+        },
+        workflow: {
+          kicker: "Workflow",
+          title: "Post-close editing flow",
+          meta: "Generated by Cooper  ·  Source: Current session  ·  Status: Ready",
+          body: `<h2>Happy path</h2><div class="scope-table"><div class="scope-column"><strong>Human</strong><span>Open closed transaction</span><span>Select an approved field</span><span>Provide change reason</span><span>Confirm update</span></div><div class="scope-column"><strong>System</strong><span>Verify window and permission</span><span>Validate the field allow-list</span><span>Write immutable audit event</span><span>Notify affected stakeholders</span></div></div><h2>Fallback</h2><p>If permission, window, or field policy fails, Cooper prepares an exception request rather than changing the record.</p>`
+        }
+      };
+
+      const memory = {
+        brief: { title: "Brief: why closed deals need updates", copy: "The team needs legitimate late-arriving operational details without weakening the transaction record.", artifact: "decision" },
+        debate: { title: "Debate: editable record or appended facts?", copy: "The room compared reopening transactions with appending controlled operational metadata and an audit event.", artifact: "policy" },
+        decision: { title: "Decision: controlled post-close editing", copy: "Support a short post-close editing window with audit trails, role-based permissions, and clear disclosures.", artifact: "requirements" },
+        build: { title: "Build: requirements and policy", copy: "Cooper converted the decision into scoped requirements, a policy draft, and the workflow now visible on the canvas.", artifact: "workflow" }
+      };
+
+      const projects = {
+        rep: { title: "Rep velocity", copy: "Product context for helping sales and operations teams complete the highest-impact work in the least time.", sources: [["Product thesis", "Notion"], ["JTBD canvas", "HTML"], ["Sprint 14", "Notion database"], ["Customer discovery", "4 transcripts"]] },
+        data: { title: "Data enrichment", copy: "Research, customer requirements, and delivery notes for the enrichment fallback and source-of-truth model.", sources: [["Enrichment thesis", "Notion"], ["Vendor comparison", "Markdown"], ["Fallback map", "Mermaid"], ["API notes", "GitHub"]] },
+        onboarding: { title: "Customer onboarding", copy: "Operating context for onboarding milestones, data imports, integrations, and team adoption.", sources: [["Service blueprint", "HTML"], ["Onboarding playbook", "PDF"], ["Integration inventory", "Notion"], ["Call notes", "3 transcripts"]] }
+      };
+
+      const libraryItems = {
+        requirements: { kicker: "HTML document", title: "Product requirements", meta: "Post-close editing · Updated today", copy: "A controlled editing model for legitimate late-arriving facts, with immutable financial fields, explicit permissioning, and a full audit trail." },
+        journey: { kicker: "Mermaid workflow", title: "Post-close editing journey", meta: "Generated from session · Updated today", copy: "Open closed deal → verify permission and edit window → update approved operational field → record audit event → notify stakeholders." },
+        prototype: { kicker: "Interactive prototype", title: "Closed deal editor", meta: "Mobile-first HTML · Updated Jul 8", copy: "A focused mobile editor that distinguishes locked financial data from editable operational details and shows the audit impact before save." },
+        session: { kicker: "Session", title: "Sprint review", meta: "46 minutes · 7 decisions · 4 artifacts", copy: "The team reviewed rep velocity, agreed on the first-touch logging slice, and queued requirements plus a mobile prototype for delivery." }
+      };
+
+      function showToast(message) {
+        clearTimeout(toastTimer);
+        toastCopy.textContent = message;
+        toast.classList.add("show");
+        toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+      }
+
+      function showView(name) {
+        views.forEach((view) => view.classList.toggle("active", view.id === `view-${name}`));
+        navButtons.forEach((button) => button.classList.toggle("active", button.dataset.view === name));
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        if (name === "sessions") renderDocument(document.querySelector(".artifact-tab.active")?.dataset.artifact || "requirements");
+      }
+
+      function renderDocument(key) {
+        const documentData = documents[key] || documents.requirements;
+        document.querySelector("#document-content").innerHTML = `<span class="doc-kicker">${documentData.kicker}</span><h1>${documentData.title}</h1><span class="doc-meta">${documentData.meta}</span><hr />${documentData.body}`;
+      }
+
+      function renderProject(key) {
+        const project = projects[key];
+        document.querySelector("#project-detail").innerHTML = `<span class="eyebrow">Selected project</span><h2>${project.title}</h2><p>${project.copy}</p><div class="source-list">${project.sources.map(([name, source]) => `<div class="source-row"><strong>${name}</strong><span>${source}</span></div>`).join("")}</div><button class="action-button primary open-session" type="button"><i data-lucide="audio-lines"></i>Start session with this context</button>`;
+        lucide.createIcons();
+      }
+
+      function renderLibrary(key) {
+        const item = libraryItems[key];
+        document.querySelector("#library-preview").innerHTML = `<span class="eyebrow">${item.kicker}</span><h2>${item.title}</h2><span class="doc-meta">${item.meta}</span><div class="preview-block"><p>${item.copy}</p></div><div style="display:flex; gap:8px; margin-top:24px;"><button class="action-button primary small open-session" type="button"><i data-lucide="audio-lines"></i>Discuss with Cooper</button><button class="action-button small" type="button"><i data-lucide="copy"></i>Copy source</button></div>`;
+        lucide.createIcons();
+      }
+
+      document.addEventListener("click", (event) => {
+        const viewTarget = event.target.closest("[data-view]");
+        if (viewTarget) showView(viewTarget.dataset.view);
+
+        if (event.target.closest(".open-session")) showView("sessions");
+
+        const artifact = event.target.closest("[data-artifact]");
+        if (artifact) {
+          document.querySelectorAll(".artifact-tab").forEach((tab) => tab.classList.toggle("active", tab === artifact));
+          renderDocument(artifact.dataset.artifact);
+        }
+
+        const memoryTarget = event.target.closest("[data-memory]");
+        if (memoryTarget) {
+          const state = memory[memoryTarget.dataset.memory];
+          document.querySelectorAll(".memory-step").forEach((step) => step.classList.toggle("active", step === memoryTarget));
+          document.querySelector("#summary-title").textContent = state.title;
+          document.querySelector("#summary-copy").textContent = state.copy;
+          const matchingTab = document.querySelector(`[data-artifact="${state.artifact}"]`);
+          if (matchingTab) {
+            document.querySelectorAll(".artifact-tab").forEach((tab) => tab.classList.toggle("active", tab === matchingTab));
+          }
+          renderDocument(state.artifact);
+          showToast(`Restored the ${memoryTarget.dataset.memory} chapter.`);
+        }
+
+        const projectTarget = event.target.closest("[data-project]");
+        if (projectTarget) {
+          document.querySelectorAll(".project-row").forEach((row) => row.classList.toggle("active", row === projectTarget));
+          renderProject(projectTarget.dataset.project);
+        }
+
+        const libraryTarget = event.target.closest("[data-library]");
+        if (libraryTarget) {
+          document.querySelectorAll(".library-row").forEach((row) => row.classList.toggle("active", row === libraryTarget));
+          renderLibrary(libraryTarget.dataset.library);
+        }
+
+        if (event.target.closest("[data-open-build]")) buildDialog.showModal();
+        if (event.target.closest("[data-close-dialog]")) buildDialog.close();
+
+        const approval = event.target.closest(".approve, .request-change");
+        if (approval) {
+          approval.closest(".approval-card").hidden = true;
+          showToast(approval.classList.contains("approve") ? "Approved. Cooper will publish it to the Library." : "Revision requested. Cooper is updating the draft.");
+        }
+      });
+
+      document.querySelectorAll("[data-filter]").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("[data-filter]").forEach((item) => item.classList.toggle("active", item === button));
+          document.querySelectorAll("[data-section]").forEach((section) => section.classList.toggle("hidden", button.dataset.filter !== "all" && section.dataset.section !== button.dataset.filter));
+        });
+      });
+
+      document.querySelector("#new-session").addEventListener("click", () => {
+        showView("sessions");
+        showToast("Fresh session opened. Join whenever you are ready.");
+      });
+
+      document.querySelector("#ask-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const input = document.querySelector("#ask-input");
+        if (!input.value.trim()) return;
+        agentState.textContent = "Thinking";
+        showToast(`Cooper heard: “${input.value.trim()}”`);
+        input.value = "";
+        setTimeout(() => {
+          agentState.textContent = "Listening";
+          document.querySelector("#summary-copy").textContent = "Cooper added your latest direction to the live session context.";
+        }, 1200);
+      });
+
+      document.querySelector("#build-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const type = document.querySelector("#artifact-type").value;
+        buildDialog.close();
+        agentState.textContent = `Running ${type}`;
+        showToast(`${type} started. Keep talking while Cooper works.`);
+        setTimeout(() => {
+          agentState.textContent = "Listening";
+          showToast(`${type} is ready in the canvas and Library.`);
+          if (type === "Mermaid workflow") {
+            const workflowTab = document.querySelector('[data-artifact="workflow"]') || document.createElement("button");
+            if (!workflowTab.dataset.artifact) {
+              workflowTab.type = "button";
+              workflowTab.className = "artifact-tab";
+              workflowTab.dataset.artifact = "workflow";
+              workflowTab.innerHTML = '<i data-lucide="workflow"></i>Workflow';
+              document.querySelector(".artifact-tabs").appendChild(workflowTab);
+              lucide.createIcons();
+            }
+            workflowTab.click();
+          }
+        }, 1800);
+      });
+
+      document.querySelector("#end-session").addEventListener("click", () => {
+        showView("today");
+        showToast("Session ended. Transcript, decisions, and artifacts were saved.");
+      });
+
+      buildDialog.addEventListener("click", (event) => {
+        if (event.target === buildDialog) buildDialog.close();
+      });
+
+      renderDocument("requirements");
+      renderProject("rep");
+      renderLibrary("requirements");
+      lucide.createIcons();
+    </script>
+  </body>
+</html>

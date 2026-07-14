@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum StatusTone {
@@ -9,6 +10,7 @@ enum StatusTone {
 
 struct ContentView: View {
   @EnvironmentObject private var broker: BrokerProcess
+  @State private var diagnosticsFeedback: String?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -40,6 +42,26 @@ struct ContentView: View {
 
       Spacer()
 
+      if let diagnosticsFeedback {
+        StatusPill(label: diagnosticsFeedback, tone: .ready)
+      }
+
+      Button {
+        copyDiagnostics()
+      } label: {
+        Image(systemName: "doc.on.doc")
+      }
+      .help("Copy host diagnostics")
+      .buttonStyle(.borderless)
+
+      Button {
+        revealDiagnostics()
+      } label: {
+        Image(systemName: "folder")
+      }
+      .help("Reveal diagnostics log")
+      .buttonStyle(.borderless)
+
       Button {
         broker.restart()
       } label: {
@@ -50,6 +72,30 @@ struct ContentView: View {
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 10)
+  }
+
+  private func copyDiagnostics() {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(broker.diagnosticsSummary, forType: .string)
+    broker.noteDiagnosticsCopied()
+    showDiagnosticsFeedback("Diagnostics copied")
+  }
+
+  private func revealDiagnostics() {
+    NSWorkspace.shared.activateFileViewerSelecting([broker.diagnosticsLogURL])
+    broker.noteDiagnosticsRevealed()
+    showDiagnosticsFeedback("Log revealed")
+  }
+
+  private func showDiagnosticsFeedback(_ message: String) {
+    diagnosticsFeedback = message
+    Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 2_000_000_000)
+      if diagnosticsFeedback == message {
+        diagnosticsFeedback = nil
+      }
+    }
   }
 
   @ViewBuilder

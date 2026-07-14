@@ -1,0 +1,1 @@
+Background agents segment and corroborate the evidence, then draft decisions, actions, requests, and bugs. These are proposals, not commitments. Preparation is automated. Authority is not.

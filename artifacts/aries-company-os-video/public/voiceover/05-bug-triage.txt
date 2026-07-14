@@ -1,0 +1,1 @@
+A customer reports an intermittent workflow bug during a product review. Aries drafts an evidence-anchored bug proposal; the manager confirms impact but leaves severity open. Product commits it to the active sprint, engineering links the pull request, and Sentinel records a passing, evidence-backed verdict before Cooper prepares the customer update.

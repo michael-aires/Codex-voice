@@ -1,0 +1,1 @@
+The same review surfaces a reporting gap. Aries drafts the user job, evidence, expected outcome, constraints, and open discovery questions. The manager rejects an inferred commitment and edits the outcome, then Cooper runs the Requirements Framework interview. Scoped requirements and a Notion preview are approved before product sends the request to backlog.

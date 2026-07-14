@@ -1,0 +1,1 @@
+Across each workflow, Cooper presents the evidence visually and by voice. A human can challenge an inference, merge or reject proposals, refine requirements, and explicitly approve each consequential step.

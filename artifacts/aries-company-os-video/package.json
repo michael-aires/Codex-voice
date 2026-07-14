@@ -1,0 +1,40 @@
+{
+  "name": "aries-company-os-video",
+  "version": "1.0.0",
+  "description": "Source-grounded Aries Company OS explainer video",
+  "repository": {},
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@remotion/cli": "4.0.489",
+    "@remotion/google-fonts": "4.0.489",
+    "@remotion/media": "4.0.489",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.489"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.489",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "voiceover": "node --env-file-if-exists=../../.env scripts/openai-tts-voiceover.mjs --root .",
+    "voiceover:demo": "node --env-file-if-exists=../../.env scripts/openai-tts-voiceover.mjs --root . --storyboard src/demo-storyboard.json --out-dir public/voiceover-demo --audio-prefix voiceover-demo --timings src/demo-audio-timings.json --script demo-voiceover-script.md",
+    "voiceover:demo:local": "node scripts/macos-tts-voiceover.mjs",
+    "render": "remotion render AriesCompanyOS out/aries-company-os.mp4",
+    "render:demo": "remotion render AriesCompanyOSDemo out/aries-company-os-demo.mp4",
+    "stills": "remotion still AriesCompanyOS",
+    "stills:demo": "remotion still AriesCompanyOSDemo",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc"
+  },
+  "sideEffects": [
+    "*.css"
+  ]
+}

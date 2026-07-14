@@ -1,0 +1,1 @@
+Here is the Company OS as a concrete product experience. We will start a session, select the exact context it can use, create a document while the conversation is active, and finish by reviewing the synthesis and decisions.

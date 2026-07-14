@@ -1,0 +1,996 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cooper Context Checkpoint</title>
+  <style>
+    :root {
+      --ink: #2d2c2d;
+      --ink-soft: #4e4d52;
+      --muted: #74747b;
+      --faint: #a8a8a3;
+      --canvas: #fbfbf8;
+      --surface: #ffffff;
+      --soft: #f3f3ef;
+      --line: #e4e4df;
+      --line-strong: #d6d6d0;
+      --volt: #f0de4a;
+      --volt-strong: #dcc72d;
+      --volt-soft: #fff9cb;
+      --success: #25764a;
+      --danger: #b63e3e;
+      --radius: 8px;
+      --display: Inter, "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: var(--display);
+      letter-spacing: 0;
+    }
+
+    button, input, textarea, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .app {
+      min-height: 100vh;
+      background: var(--canvas);
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      min-height: 64px;
+      padding: 0 28px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(251, 251, 248, 0.96);
+    }
+
+    .brand, .nav, .top-actions, .icon-button, .step, .source-heading,
+    .meeting-meta, .summary-heading, .footer-actions, .freshness-row,
+    .meeting-row, .source-row, .selection-meta, .launch-state {
+      display: flex;
+      align-items: center;
+    }
+
+    .brand { gap: 10px; font-weight: 820; }
+
+    .brand-mark {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--ink);
+      color: var(--volt);
+      font-weight: 900;
+    }
+
+    .brand small {
+      padding-left: 11px;
+      border-left: 1px solid var(--line-strong);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+    }
+
+    .nav { gap: 8px; justify-content: center; }
+    .nav button, .quiet-button {
+      min-height: 36px;
+      padding: 0 13px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 750;
+    }
+    .nav button.active { background: var(--ink); color: white; }
+    .top-actions { justify-content: flex-end; gap: 10px; }
+
+    .avatar {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--ink);
+      color: white;
+      font-size: 0.68rem;
+      font-weight: 800;
+    }
+
+    .new-session, .primary-button {
+      min-height: 40px;
+      padding: 0 16px;
+      border: 1px solid var(--volt-strong);
+      border-radius: 7px;
+      background: var(--volt);
+      color: var(--ink);
+      font-weight: 820;
+    }
+
+    .page-ghost {
+      width: min(1160px, calc(100% - 48px));
+      margin: 54px auto 0;
+      opacity: 0.34;
+    }
+
+    .ghost-title { width: 240px; height: 25px; background: var(--line); }
+    .ghost-line { width: 420px; height: 10px; margin-top: 14px; background: var(--line); }
+    .ghost-row { height: 72px; margin-top: 26px; border: 1px solid var(--line); border-radius: var(--radius); background: white; }
+
+    .backdrop {
+      position: fixed;
+      inset: 64px 0 0;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      place-items: center;
+      padding: 18px;
+      background: rgba(248, 248, 244, 0.76);
+    }
+
+    .checkpoint {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      width: min(1180px, 100%);
+      height: min(820px, calc(100vh - 100px));
+      min-height: 640px;
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid #bbbcb7;
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 24px 70px rgba(38, 38, 33, 0.14);
+    }
+
+    .checkpoint-head {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      min-height: 84px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .step {
+      position: relative;
+      gap: 12px;
+      padding: 16px 24px;
+      border: 0;
+      background: transparent;
+      text-align: left;
+    }
+
+    .step:not(:last-of-type)::after {
+      position: absolute;
+      top: 50%;
+      right: 0;
+      width: 54px;
+      height: 1px;
+      background: var(--line-strong);
+      content: "";
+      transform: translate(50%, -50%);
+    }
+
+    .step-number {
+      display: grid;
+      width: 31px;
+      height: 31px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      background: white;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    .step.active .step-number, .step.complete .step-number {
+      border-color: var(--volt-strong);
+      background: var(--volt);
+    }
+
+    .step-copy strong, .step-copy span { display: block; }
+    .step-copy strong { font-size: 0.8rem; }
+    .step-copy span { margin-top: 3px; color: var(--muted); font-size: 0.7rem; }
+
+    .close-button {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 2;
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 1.25rem;
+    }
+
+    .checkpoint-body {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr) 260px;
+      min-height: 0;
+    }
+
+    .meeting-picker, .context-workspace, .context-summary { min-height: 0; }
+    .meeting-picker { border-right: 1px solid var(--line); padding: 22px 14px 16px; overflow-y: auto; }
+    .context-workspace { padding: 22px 24px; overflow-y: auto; }
+    .context-summary { display: flex; flex-direction: column; border-left: 1px solid var(--line); padding: 22px 18px 16px; overflow-y: auto; }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.63rem;
+      font-weight: 650;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 7px; font-size: 1.8rem; line-height: 1.1; }
+    h2 { margin-bottom: 6px; font-size: 1.42rem; }
+    h3 { margin-bottom: 5px; font-size: 0.95rem; }
+    p { color: var(--ink-soft); line-height: 1.5; }
+
+    .search {
+      position: relative;
+      margin: 14px 0 16px;
+    }
+
+    .search input {
+      width: 100%;
+      min-height: 38px;
+      padding: 0 10px 0 33px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: white;
+      color: var(--ink);
+      outline: none;
+    }
+
+    .search input:focus { border-color: var(--ink); }
+    .search span { position: absolute; top: 9px; left: 11px; color: var(--faint); }
+
+    .meeting-group-label {
+      margin: 14px 8px 7px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.62rem;
+      text-transform: uppercase;
+    }
+
+    .meeting-list { display: grid; gap: 4px; }
+
+    .meeting-row {
+      align-items: flex-start;
+      width: 100%;
+      min-height: 68px;
+      padding: 10px 10px 10px 13px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      text-align: left;
+    }
+
+    .meeting-row:hover { background: var(--soft); }
+    .meeting-row.active { border-color: var(--volt-strong); background: var(--volt-soft); box-shadow: inset 3px 0 0 var(--volt-strong); }
+    .meeting-row strong, .meeting-row span { display: block; }
+    .meeting-row strong { margin-bottom: 4px; font-size: 0.79rem; }
+    .meeting-row span { color: var(--muted); font-size: 0.69rem; line-height: 1.45; }
+
+    .meeting-meta { flex-wrap: wrap; gap: 7px 14px; color: var(--muted); font-size: 0.72rem; }
+    .meeting-meta span::before { margin-right: 6px; color: var(--faint); content: "•"; }
+
+    .meeting-note {
+      margin: 18px 0 20px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--canvas);
+    }
+
+    .meeting-note textarea {
+      width: 100%;
+      min-height: 52px;
+      margin-top: 8px;
+      padding: 0;
+      resize: vertical;
+      border: 0;
+      background: transparent;
+      color: var(--ink);
+      outline: none;
+      line-height: 1.45;
+    }
+
+    .source-heading { justify-content: space-between; margin-bottom: 10px; }
+    .source-heading p { margin: 0; font-size: 0.76rem; }
+
+    .add-source-wrap { position: relative; }
+    .add-source {
+      min-height: 34px;
+      padding: 0 8px;
+      border: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 0.75rem;
+      font-weight: 760;
+    }
+
+    .source-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 8;
+      display: none;
+      width: 210px;
+      padding: 6px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: white;
+      box-shadow: 0 16px 40px rgba(30, 30, 27, 0.14);
+    }
+
+    .source-menu.open { display: grid; }
+    .source-menu button { display: grid; gap: 2px; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 5px; background: transparent; text-align: left; }
+    .source-menu button strong { font-size: 0.75rem; }
+    .source-menu button span { color: var(--muted); font-size: 0.65rem; }
+    .source-menu button:hover { background: var(--soft); }
+
+    .sources { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+    .source-block + .source-block { border-top: 1px solid var(--line); }
+    .source-heading-row { display: flex; align-items: center; justify-content: space-between; min-height: 43px; padding: 0 12px; background: var(--canvas); }
+    .source-heading { gap: 8px; margin: 0; }
+    .source-heading strong { font-size: 0.8rem; }
+    .source-count { color: var(--muted); font-family: var(--mono); font-size: 0.65rem; }
+
+    .source-row {
+      gap: 9px;
+      min-height: 42px;
+      padding: 8px 12px 8px 18px;
+      border-top: 1px solid var(--line);
+      font-size: 0.74rem;
+    }
+
+    .source-row-copy { display: grid; min-width: 0; flex: 1; gap: 2px; }
+    .source-row strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .source-row small { color: var(--muted); overflow: hidden; font-size: 0.63rem; text-overflow: ellipsis; white-space: nowrap; }
+    .source-row time { color: var(--muted); font-size: 0.66rem; white-space: nowrap; }
+    .remove-source { width: 25px; height: 25px; border: 0; background: transparent; color: var(--faint); }
+    .remove-source:hover { color: var(--danger); }
+
+    .scope-note { margin: 13px 0 0; color: var(--muted); font-size: 0.67rem; }
+
+    .source-picker-backdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 40;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(45, 44, 45, 0.34);
+    }
+
+    .source-picker-backdrop[hidden] { display: none; }
+
+    .source-picker-dialog {
+      display: grid;
+      grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+      width: min(720px, 100%);
+      max-height: min(680px, calc(100vh - 136px));
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: 0 24px 70px rgba(30, 30, 27, 0.22);
+    }
+
+    .picker-header, .picker-toolbar, .picker-footer, .picker-result, .picker-provider {
+      display: flex;
+      align-items: center;
+    }
+
+    .picker-header { gap: 12px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+    .picker-provider { min-width: 0; flex: 1; gap: 11px; }
+    .provider-mark { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: 7px; background: var(--ink); color: white; font-weight: 850; }
+    .provider-mark.notion { background: white; border: 1px solid var(--ink); color: var(--ink); }
+    .picker-header .eyebrow { margin-bottom: 3px; }
+    .picker-header h2 { margin: 0; font-size: 1.05rem; }
+    .picker-close { width: 34px; height: 34px; border: 0; background: transparent; color: var(--muted); font-size: 1.25rem; }
+
+    .picker-toolbar { gap: 8px; padding: 14px 20px 10px; }
+    .picker-search { display: flex; min-width: 0; flex: 1; align-items: center; gap: 8px; min-height: 42px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; }
+    .picker-search:focus-within { border-color: var(--ink); }
+    .picker-search input { min-width: 0; flex: 1; border: 0; outline: 0; }
+    .picker-repository { min-height: 42px; max-width: 220px; padding: 0 34px 0 11px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; color: var(--ink); }
+    .picker-repository[hidden] { display: none; }
+
+    .picker-filters { display: flex; gap: 6px; padding: 0 20px 12px; overflow-x: auto; }
+    .picker-filter { min-height: 30px; padding: 0 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 0.7rem; font-weight: 760; white-space: nowrap; }
+    .picker-filter.active { border-color: var(--line-strong); background: var(--soft); color: var(--ink); }
+
+    .picker-results { min-height: 210px; overflow-y: auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .picker-result { width: 100%; gap: 11px; min-height: 61px; padding: 9px 20px; border: 0; border-bottom: 1px solid var(--line); background: white; cursor: pointer; text-align: left; }
+    .picker-result:last-child { border-bottom: 0; }
+    .picker-result:hover { background: var(--canvas); }
+    .picker-result.selected { background: var(--volt-soft); }
+    .picker-result input { width: 16px; height: 16px; flex: 0 0 auto; accent-color: var(--volt-strong); }
+    .picker-result-copy { display: grid; min-width: 0; flex: 1; gap: 4px; }
+    .picker-result-copy strong { overflow: hidden; font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
+    .picker-result-copy span { overflow: hidden; color: var(--muted); font-size: 0.66rem; text-overflow: ellipsis; white-space: nowrap; }
+    .picker-kind { color: var(--muted); font-family: var(--mono); font-size: 0.61rem; text-transform: uppercase; white-space: nowrap; }
+    .picker-empty { display: grid; min-height: 210px; place-items: center; padding: 30px; color: var(--muted); font-size: 0.75rem; text-align: center; }
+
+    .picker-compose { display: grid; gap: 9px; padding: 18px 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .picker-compose[hidden] { display: none; }
+    .picker-compose label { font-size: 0.73rem; font-weight: 760; }
+    .picker-compose textarea { min-height: 150px; resize: vertical; padding: 12px; border: 1px solid var(--line-strong); border-radius: 7px; outline: 0; line-height: 1.45; }
+    .picker-compose textarea:focus { border-color: var(--ink); }
+
+    .picker-footer { justify-content: space-between; gap: 12px; padding: 14px 20px; }
+    .picker-selection-count { color: var(--muted); font-family: var(--mono); font-size: 0.65rem; }
+    .picker-actions { display: flex; align-items: center; gap: 8px; }
+    .picker-actions button { min-height: 37px; padding: 0 13px; border-radius: 7px; font-size: 0.74rem; font-weight: 780; }
+    .picker-cancel { border: 1px solid var(--line-strong); background: white; color: var(--ink); }
+    .picker-add { border: 1px solid var(--volt-strong); background: var(--volt); color: var(--ink); }
+    .picker-add:disabled { border-color: var(--line); background: var(--soft); color: var(--faint); cursor: default; }
+
+    .summary-heading { justify-content: space-between; gap: 10px; }
+    .summary-heading h3 { margin: 0; }
+    .context-count { color: var(--success); font-family: var(--mono); font-size: 0.65rem; }
+
+    .summary-intro { margin: 8px 0 12px; font-size: 0.72rem; }
+    .summary-section { padding: 13px 0; border-top: 1px solid var(--line); }
+    .summary-section:first-of-type { border-top: 0; }
+    .summary-section strong { display: block; margin-bottom: 6px; font-size: 0.75rem; }
+    .summary-section ul { margin: 0; padding-left: 18px; color: var(--ink-soft); font-size: 0.68rem; line-height: 1.55; }
+
+    .freshness { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--line); }
+    .freshness-row { justify-content: space-between; margin-top: 8px; color: var(--muted); font-size: 0.68rem; }
+    .freshness-row strong { color: var(--success); }
+    .freshness-row.stale strong { color: #a46618; }
+    .primary-button { width: 100%; margin-top: 14px; }
+
+    .review-panel { display: none; }
+    .checkpoint[data-step="review"] .sources-panel { display: none; }
+    .checkpoint[data-step="review"] .review-panel { display: block; }
+
+    .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+    .review-item { padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); }
+    .review-item span { display: block; color: var(--muted); font-family: var(--mono); font-size: 0.62rem; text-transform: uppercase; }
+    .review-item strong { display: block; margin-top: 7px; font-size: 0.84rem; }
+    .review-item p { margin: 6px 0 0; font-size: 0.72rem; }
+
+    .launch-state {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      background: var(--surface);
+      text-align: center;
+    }
+
+    .checkpoint.launching .launch-state { display: flex; }
+    .launch-glyph { display: grid; width: 54px; height: 54px; place-items: center; margin-bottom: 18px; border-radius: 50%; background: var(--volt); font-size: 1.45rem; font-weight: 900; }
+    .launch-state p { max-width: 420px; margin: 0 auto 22px; }
+    .launch-state .quiet-button { border: 1px solid var(--line); }
+
+    @media (max-width: 980px) {
+      .checkpoint { height: calc(100vh - 84px); min-height: 0; }
+      .checkpoint-body { grid-template-columns: 220px minmax(0, 1fr); }
+      .context-summary { display: none; }
+      .step-copy span { display: none; }
+    }
+
+    @media (max-width: 700px) {
+      .topbar { grid-template-columns: 1fr auto; padding: 0 14px; }
+      .nav { display: none; }
+      .brand small { display: none; }
+      .top-actions .avatar { display: none; }
+      .new-session { min-height: 38px; padding: 0 10px; font-size: 0.74rem; }
+      .backdrop { inset: 64px 0 0; padding: 0; }
+      .page-ghost { display: none; }
+      .checkpoint { width: 100%; max-width: 100vw; height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+      .checkpoint-head { grid-template-columns: repeat(3, 1fr); min-height: 68px; }
+      .step { justify-content: center; padding: 10px 4px; }
+      .step-copy { display: none; }
+      .step:not(:last-of-type)::after { width: 22px; }
+      .checkpoint-body { display: block; overflow-y: auto; }
+      .meeting-picker { max-height: 270px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .context-workspace { overflow: visible; padding: 20px 16px 110px; }
+      .context-summary { display: none; }
+      .review-grid { grid-template-columns: 1fr; }
+      h1 { font-size: 1.5rem; }
+      .source-row time { display: none; }
+      .source-heading { align-items: flex-start; gap: 6px; }
+      .source-heading > div:first-child { min-width: 0; }
+      .source-picker-backdrop { position: fixed; inset: 64px 0 0; padding: 0; place-items: stretch; }
+      .source-picker-dialog { width: 100%; max-height: none; height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+      .picker-header { padding: 14px 16px; }
+      .picker-toolbar { display: grid; padding: 12px 16px 9px; }
+      .picker-repository { width: 100%; max-width: none; }
+      .picker-filters { padding: 0 16px 10px; }
+      .picker-result { padding: 10px 16px; }
+      .picker-kind { display: none; }
+      .picker-footer { padding: 12px 16px; }
+      .picker-selection-count { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mobile-start {
+        position: fixed;
+        right: 14px;
+        bottom: 14px;
+        left: 14px;
+        z-index: 30;
+        display: block !important;
+        width: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">C</span><strong>Cooper</strong><small>AIRES workspace</small></div>
+      <nav class="nav" aria-label="Primary navigation">
+        <button>Today</button><button class="active">Sessions</button><button>Projects</button><button>Library</button>
+      </nav>
+      <div class="top-actions"><button class="new-session">+ New session</button><span class="avatar">MM</span></div>
+    </header>
+
+    <main class="page-ghost" aria-hidden="true">
+      <div class="ghost-title"></div><div class="ghost-line"></div>
+      <div class="ghost-row"></div><div class="ghost-row"></div><div class="ghost-row"></div>
+    </main>
+
+    <div class="backdrop">
+      <section class="checkpoint" id="checkpoint" data-step="sources" aria-label="Prepare a Cooper session">
+        <div class="checkpoint-head">
+          <button class="step complete" data-step-target="meeting"><span class="step-number">1</span><span class="step-copy"><strong>Meeting</strong><span>Start with the meeting</span></span></button>
+          <button class="step active" data-step-target="sources"><span class="step-number">2</span><span class="step-copy"><strong>Sources</strong><span>Bring the room into context</span></span></button>
+          <button class="step" data-step-target="review"><span class="step-number">3</span><span class="step-copy"><strong>Review</strong><span>Confirm and start</span></span></button>
+          <button class="close-button" aria-label="Close">×</button>
+        </div>
+
+        <div class="checkpoint-body">
+          <aside class="meeting-picker">
+            <p class="eyebrow">Start with the meeting</p>
+            <h3>Choose the room</h3>
+            <div class="search"><span>⌕</span><input id="meeting-search" type="search" placeholder="Search meetings" /></div>
+            <div class="meeting-group-label">Today</div>
+            <div class="meeting-list" id="meeting-list"></div>
+          </aside>
+
+          <main class="context-workspace">
+            <section class="sources-panel">
+              <p class="eyebrow">Selected meeting</p>
+              <h1 id="meeting-title">Rep velocity sprint review</h1>
+              <div class="meeting-meta"><span id="meeting-time">Today · 9:30 AM</span><span id="meeting-duration">45 minutes</span><span id="meeting-location">Zoom</span></div>
+
+              <div class="meeting-note">
+                <strong>Meeting intent</strong>
+                <textarea id="meeting-note" aria-label="Meeting intent">Review the first-touch logging scope, resolve the enrichment fallback path, and leave with build-ready requirements.</textarea>
+              </div>
+
+              <div class="source-heading">
+                <div><h3>Bring the room into context</h3><p>Add only the evidence Cooper should use in this session.</p></div>
+                <div class="add-source-wrap">
+                  <button class="add-source" id="add-source" type="button">+ Add source</button>
+                  <div class="source-menu" id="source-menu">
+                    <button data-source-provider="Notion"><strong>Notion</strong><span>Pages, tickets, and databases</span></button>
+                    <button data-source-provider="GitHub"><strong>GitHub</strong><span>Pull requests, branches, and issues</span></button>
+                    <button data-source-provider="Meeting notes"><strong>Meeting notes</strong><span>Past calls and transcripts</span></button>
+                    <button data-source-provider="Files"><strong>Upload files</strong><span>PDF, Markdown, or text</span></button>
+                    <button data-source-provider="Pasted text"><strong>Paste text</strong><span>Add direct working context</span></button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sources" id="sources"></div>
+              <p class="scope-note">Cooper only accesses the sources explicitly attached to this session.</p>
+            </section>
+
+            <section class="review-panel">
+              <p class="eyebrow">Review the context checkpoint</p>
+              <h1>Ready to enter the room</h1>
+              <p>The session will start with a bounded context packet Cooper can cite, discuss, and turn into decisions or artifacts.</p>
+              <div class="review-grid" id="review-grid"></div>
+            </section>
+          </main>
+
+          <aside class="context-summary">
+            <div class="summary-heading"><h3>What Cooper will know</h3><span class="context-count" id="context-count">8 sources</span></div>
+            <p class="summary-intro">A bounded briefing assembled around the selected meeting.</p>
+            <div id="summary-sections"></div>
+            <div class="freshness">
+              <p class="eyebrow">Context freshness</p>
+              <div class="freshness-row"><span>Updated in last 7 days</span><strong id="fresh-count">7 of 8</strong></div>
+              <div class="freshness-row stale"><span>Needs review</span><strong id="stale-count">1 of 8</strong></div>
+              <button class="primary-button" id="start-session" type="button">Start session →</button>
+            </div>
+          </aside>
+        </div>
+
+        <button class="primary-button mobile-start" id="mobile-start" type="button" style="display:none">Start session →</button>
+
+        <div class="source-picker-backdrop" id="source-picker-backdrop" hidden>
+          <section class="source-picker-dialog" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+            <header class="picker-header">
+              <div class="picker-provider">
+                <span class="provider-mark" id="picker-provider-mark">N</span>
+                <div><p class="eyebrow">Add source</p><h2 id="picker-title">Choose Notion context</h2></div>
+              </div>
+              <button class="picker-close" id="picker-close" type="button" aria-label="Close source picker">×</button>
+            </header>
+            <div class="picker-toolbar" id="picker-toolbar">
+              <label class="picker-search"><span aria-hidden="true">⌕</span><input id="picker-search" type="search" placeholder="Search" autocomplete="off" /></label>
+              <select class="picker-repository" id="picker-repository" aria-label="Filter by repository" hidden></select>
+            </div>
+            <nav class="picker-filters" id="picker-filters" aria-label="Source type filters"></nav>
+            <div class="picker-results" id="picker-results"></div>
+            <div class="picker-compose" id="picker-compose" hidden>
+              <label for="picker-paste">Context to attach</label>
+              <textarea id="picker-paste" placeholder="Paste the decision, customer context, requirement, or technical note Cooper should use."></textarea>
+            </div>
+            <footer class="picker-footer">
+              <span class="picker-selection-count" id="picker-selection-count">0 selected</span>
+              <div class="picker-actions">
+                <button class="picker-cancel" id="picker-cancel" type="button">Cancel</button>
+                <button class="picker-add" id="picker-add" type="button">Add selected</button>
+              </div>
+            </footer>
+          </section>
+        </div>
+
+        <input id="source-file-input" type="file" accept=".pdf,.md,.markdown,.txt,text/plain,application/pdf,text/markdown" multiple hidden />
+
+        <div class="launch-state">
+          <div class="launch-glyph">C</div>
+          <h2>Context packet assembled</h2>
+          <p>Cooper is opening the live canvas with the meeting, selected sources, freshness notes, and unresolved questions already in working memory.</p>
+          <button class="quiet-button" id="return-button" type="button">Return to checkpoint</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const meetings = [
+      { id: "rep", title: "Rep velocity sprint review", time: "Today · 9:30 AM", duration: "45 minutes", location: "Zoom" },
+      { id: "pipeline", title: "Super-prime pipeline sync", time: "Today · 11:00 AM", duration: "30 minutes", location: "Board room" },
+      { id: "vendor", title: "Enrichment vendor call", time: "Today · 2:00 PM", duration: "30 minutes", location: "Google Meet" },
+      { id: "planning", title: "Sprint 15 planning", time: "Tomorrow · 10:00 AM", duration: "60 minutes", location: "Zoom" }
+    ];
+
+    const sourceCatalog = {
+      Notion: [
+        { id: "notion-rep-214", title: "REP-214 · First-touch logging", type: "ticket", meta: "Product · Sprint 14", updated: "Updated today", freshness: "current" },
+        { id: "notion-sprint-14", title: "Sprint 14 · Rep velocity", type: "database", meta: "Product roadmap · 18 records", updated: "Updated 2d ago", freshness: "current" },
+        { id: "notion-thesis", title: "Rep velocity product thesis", type: "page", meta: "Product strategy", updated: "Updated yesterday", freshness: "current" },
+        { id: "notion-jtbd", title: "Sales rep JTBD canvas", type: "page", meta: "Research · Jobs to be done", updated: "Updated 3d ago", freshness: "current" },
+        { id: "notion-blueprint", title: "Service blueprint · Enrichment fallback", type: "page", meta: "Operations · Service design", updated: "Updated 5d ago", freshness: "current" },
+        { id: "notion-retro", title: "Sprint 13 retrospective", type: "page", meta: "Engineering", updated: "Updated 8d ago", freshness: "review" },
+        { id: "notion-feedback", title: "Customer feedback · First-touch workflows", type: "database", meta: "Discovery · 32 records", updated: "Updated 4d ago", freshness: "current" }
+      ],
+      GitHub: [
+        { id: "gh-pr-842", title: "PR #842 · First-touch event model", type: "pull_request", meta: "Open · 14 files · +642 −118", repo: "aires/aires-crm", updated: "Updated today", freshness: "current" },
+        { id: "gh-pr-836", title: "PR #836 · Enrichment provider adapter", type: "pull_request", meta: "Open · 8 files · +284 −47", repo: "aires/aires-crm", updated: "Updated yesterday", freshness: "current" },
+        { id: "gh-branch-first-touch", title: "feature/first-touch-logging", type: "branch", meta: "6 commits ahead of main", repo: "aires/aires-crm", updated: "Updated today", freshness: "current" },
+        { id: "gh-branch-fallback", title: "feature/enrichment-fallback", type: "branch", meta: "3 commits ahead of main", repo: "aires/aires-crm", updated: "Updated 2d ago", freshness: "current" },
+        { id: "gh-issue-811", title: "Issue #811 · Passive manager visibility", type: "issue", meta: "In progress · product", repo: "aires/aires-crm", updated: "Updated 3d ago", freshness: "current" },
+        { id: "gh-pr-129", title: "PR #129 · Resumable context packets", type: "pull_request", meta: "Draft · 19 files · +918 −204", repo: "aires/cooper-session-os", updated: "Updated today", freshness: "current" },
+        { id: "gh-branch-present", title: "feature/live-presentation-mode", type: "branch", meta: "11 commits ahead of main", repo: "aires/cooper-session-os", updated: "Updated 6d ago", freshness: "current" },
+        { id: "gh-issue-94", title: "Issue #94 · Context freshness gate", type: "issue", meta: "Backlog · agent-memory", repo: "aires/cooper-session-os", updated: "Updated 9d ago", freshness: "review" }
+      ],
+      "Meeting notes": [
+        { id: "meeting-discovery-jul-10", title: "Customer discovery synthesis · July 10", type: "meeting_summary", meta: "6 participants · 43 minutes", updated: "Updated 3d ago", freshness: "current" },
+        { id: "meeting-eng-jul-9", title: "Engineering architecture review · July 9", type: "transcript", meta: "Full transcript · 58 minutes", updated: "Updated 4d ago", freshness: "current" },
+        { id: "meeting-roadmap-jul-2", title: "Q3 roadmap planning · July 2", type: "meeting_summary", meta: "Decisions and action items", updated: "Updated 11d ago", freshness: "review" }
+      ]
+    };
+
+    const sourceState = {
+      GitHub: sourceCatalog.GitHub.filter((item) => ["gh-pr-842", "gh-branch-first-touch"].includes(item.id)),
+      Notion: sourceCatalog.Notion.filter((item) => ["notion-rep-214", "notion-sprint-14"].includes(item.id)),
+      "Meeting notes": sourceCatalog["Meeting notes"].filter((item) => item.id === "meeting-discovery-jul-10"),
+      Files: [{ id: "file-service-blueprint", title: "service-blueprint-v2.pdf", type: "file", meta: "PDF · 2.4 MB", updated: "Added today", freshness: "current" }],
+      "Pasted text": [{ id: "paste-leadership", title: "Leadership context · scope boundaries", type: "note", meta: "Direct context · 684 characters", updated: "Added today", freshness: "current" }]
+    };
+
+    const providerConfig = {
+      Notion: {
+        mark: "N",
+        title: "Choose Notion context",
+        placeholder: "Search pages, tickets, and databases",
+        filters: [["all", "All"], ["ticket", "Tickets"], ["page", "Pages"], ["database", "Databases"]]
+      },
+      GitHub: {
+        mark: "GH",
+        title: "Choose GitHub context",
+        placeholder: "Search pull requests, branches, and issues",
+        filters: [["all", "All"], ["pull_request", "Pull requests"], ["branch", "Branches"], ["issue", "Issues"]]
+      },
+      "Meeting notes": {
+        mark: "M",
+        title: "Choose meeting context",
+        placeholder: "Search past meetings and transcripts",
+        filters: [["all", "All"], ["meeting_summary", "Summaries"], ["transcript", "Transcripts"]]
+      },
+      "Pasted text": {
+        mark: "T",
+        title: "Paste direct context",
+        placeholder: "",
+        filters: []
+      }
+    };
+
+    let selectedMeeting = meetings[0];
+    let pickerProvider = "";
+    let pickerType = "all";
+    let pickerRepo = "all";
+    let pickerSelections = new Set();
+
+    const checkpoint = document.querySelector("#checkpoint");
+    const meetingList = document.querySelector("#meeting-list");
+    const sources = document.querySelector("#sources");
+    const summarySections = document.querySelector("#summary-sections");
+    const sourceMenu = document.querySelector("#source-menu");
+    const pickerBackdrop = document.querySelector("#source-picker-backdrop");
+    const pickerSearch = document.querySelector("#picker-search");
+    const pickerRepository = document.querySelector("#picker-repository");
+    const pickerFilters = document.querySelector("#picker-filters");
+    const pickerResults = document.querySelector("#picker-results");
+    const pickerCompose = document.querySelector("#picker-compose");
+    const pickerPaste = document.querySelector("#picker-paste");
+    const pickerAdd = document.querySelector("#picker-add");
+    const fileInput = document.querySelector("#source-file-input");
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" }[character]));
+    }
+
+    function typeLabel(type) {
+      return ({ pull_request: "Pull request", meeting_summary: "Summary" }[type] || type).replaceAll("_", " ");
+    }
+
+    function totalSources() {
+      return Object.values(sourceState).reduce((total, items) => total + items.length, 0);
+    }
+
+    function renderMeetings(query = "") {
+      const normalized = query.trim().toLowerCase();
+      meetingList.innerHTML = meetings
+        .filter((meeting) => meeting.title.toLowerCase().includes(normalized))
+        .map((meeting) => `
+          <button class="meeting-row ${meeting.id === selectedMeeting.id ? "active" : ""}" data-meeting="${meeting.id}" type="button">
+            <span><strong>${escapeHtml(meeting.title)}</strong><span>${escapeHtml(meeting.time)}</span><span>${escapeHtml(meeting.location)}</span></span>
+          </button>`).join("");
+
+      meetingList.querySelectorAll("[data-meeting]").forEach((button) => {
+        button.addEventListener("click", () => {
+          selectedMeeting = meetings.find((meeting) => meeting.id === button.dataset.meeting);
+          document.querySelector("#meeting-title").textContent = selectedMeeting.title;
+          document.querySelector("#meeting-time").textContent = selectedMeeting.time;
+          document.querySelector("#meeting-duration").textContent = selectedMeeting.duration;
+          document.querySelector("#meeting-location").textContent = selectedMeeting.location;
+          renderMeetings(document.querySelector("#meeting-search").value);
+          renderSummary();
+        });
+      });
+    }
+
+    function renderSources() {
+      sources.innerHTML = Object.entries(sourceState)
+        .filter(([, items]) => items.length)
+        .map(([name, items]) => `
+          <section class="source-block">
+            <div class="source-heading-row"><div class="source-heading"><strong>${escapeHtml(name)}</strong></div><span class="source-count">${items.length} item${items.length === 1 ? "" : "s"}</span></div>
+            ${items.map((item) => `<div class="source-row"><span class="source-row-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.meta)}</small></span><time>${escapeHtml(item.updated)}</time><button class="remove-source" data-source="${escapeHtml(name)}" data-source-id="${escapeHtml(item.id)}" aria-label="Remove ${escapeHtml(item.title)}">×</button></div>`).join("")}
+          </section>`).join("");
+
+      sources.querySelectorAll(".remove-source").forEach((button) => {
+        button.addEventListener("click", () => {
+          sourceState[button.dataset.source] = sourceState[button.dataset.source].filter((item) => item.id !== button.dataset.sourceId);
+          renderSources();
+          renderSummary();
+        });
+      });
+    }
+
+    function renderSummary() {
+      const count = totalSources();
+      const currentCount = Object.values(sourceState).flat().filter((item) => item.freshness !== "review").length;
+      const reviewCount = count - currentCount;
+      document.querySelector("#context-count").textContent = `${count} source${count === 1 ? "" : "s"}`;
+      document.querySelector("#fresh-count").textContent = `${currentCount} of ${count}`;
+      document.querySelector("#stale-count").textContent = `${reviewCount} of ${count}`;
+      summarySections.innerHTML = `
+        <section class="summary-section"><strong>Meeting</strong><ul><li>${escapeHtml(selectedMeeting.title)}</li><li>${escapeHtml(selectedMeeting.time)}</li></ul></section>
+        ${Object.entries(sourceState).filter(([, items]) => items.length).map(([name, items]) => `<section class="summary-section"><strong>${escapeHtml(name)}</strong><ul>${items.slice(0, 2).map((item) => `<li>${escapeHtml(item.title)}</li>`).join("")}</ul></section>`).join("")}`;
+      document.querySelector("#review-grid").innerHTML = `
+        <article class="review-item"><span>Meeting spine</span><strong>${escapeHtml(selectedMeeting.title)}</strong><p>${escapeHtml(selectedMeeting.time)} · ${escapeHtml(selectedMeeting.location)}</p></article>
+        <article class="review-item"><span>Evidence packet</span><strong>${count} attached sources</strong><p>GitHub, Notion, notes, files, and direct context are bounded to this session.</p></article>
+        <article class="review-item"><span>Agent posture</span><strong>Discuss, challenge, and build</strong><p>Cooper can cite context, surface conflicts, recommend artifacts, and run background work.</p></article>
+        <article class="review-item"><span>Freshness gate</span><strong>${currentCount} current · ${reviewCount} review</strong><p>Older evidence remains visible rather than silently treated as current truth.</p></article>`;
+    }
+
+    function renderPickerFilters() {
+      const config = providerConfig[pickerProvider];
+      pickerFilters.innerHTML = config.filters.map(([value, label]) => `<button class="picker-filter ${value === pickerType ? "active" : ""}" data-picker-type="${value}" type="button">${label}</button>`).join("");
+      pickerFilters.querySelectorAll("[data-picker-type]").forEach((button) => {
+        button.addEventListener("click", () => {
+          pickerType = button.dataset.pickerType;
+          renderPickerFilters();
+          renderPickerResults();
+        });
+      });
+    }
+
+    function renderPickerSelection() {
+      const isPaste = pickerProvider === "Pasted text";
+      const count = isPaste ? (pickerPaste.value.trim() ? 1 : 0) : pickerSelections.size;
+      document.querySelector("#picker-selection-count").textContent = isPaste ? (count ? "Ready to attach" : "Paste context to continue") : `${count} selected`;
+      pickerAdd.textContent = isPaste ? "Add context" : "Add selected";
+      pickerAdd.disabled = count === 0;
+    }
+
+    function renderPickerResults() {
+      if (pickerProvider === "Pasted text") {
+        renderPickerSelection();
+        return;
+      }
+
+      const query = pickerSearch.value.trim().toLowerCase();
+      const records = (sourceCatalog[pickerProvider] || []).filter((item) => {
+        const matchesQuery = !query || [item.title, item.meta, item.repo].filter(Boolean).join(" ").toLowerCase().includes(query);
+        const matchesType = pickerType === "all" || item.type === pickerType;
+        const matchesRepo = pickerRepo === "all" || item.repo === pickerRepo;
+        return matchesQuery && matchesType && matchesRepo;
+      });
+
+      pickerResults.innerHTML = records.length ? records.map((item) => `
+        <label class="picker-result ${pickerSelections.has(item.id) ? "selected" : ""}">
+          <input data-picker-id="${escapeHtml(item.id)}" type="checkbox" ${pickerSelections.has(item.id) ? "checked" : ""} />
+          <span class="picker-result-copy"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml([item.repo, item.meta, item.updated].filter(Boolean).join(" · "))}</span></span>
+          <span class="picker-kind">${escapeHtml(typeLabel(item.type))}</span>
+        </label>`).join("") : `<div class="picker-empty">No matching ${escapeHtml(pickerProvider)} sources.<br />Try another search or filter.</div>`;
+
+      pickerResults.querySelectorAll("[data-picker-id]").forEach((button) => {
+        button.addEventListener("change", () => {
+          const id = button.dataset.pickerId;
+          button.checked ? pickerSelections.add(id) : pickerSelections.delete(id);
+          renderPickerResults();
+        });
+      });
+      renderPickerSelection();
+    }
+
+    function openSourcePicker(provider) {
+      sourceMenu.classList.remove("open");
+      if (provider === "Files") {
+        fileInput.click();
+        return;
+      }
+
+      pickerProvider = provider;
+      pickerType = "all";
+      pickerRepo = "all";
+      pickerSelections = new Set((sourceState[provider] || []).map((item) => item.id));
+      const config = providerConfig[provider];
+      document.querySelector("#picker-title").textContent = config.title;
+      const providerMark = document.querySelector("#picker-provider-mark");
+      providerMark.textContent = config.mark;
+      providerMark.classList.toggle("notion", provider === "Notion");
+      pickerSearch.value = "";
+      pickerSearch.placeholder = config.placeholder;
+      pickerPaste.value = "";
+
+      const isPaste = provider === "Pasted text";
+      document.querySelector("#picker-toolbar").hidden = isPaste;
+      pickerFilters.hidden = isPaste;
+      pickerResults.hidden = isPaste;
+      pickerCompose.hidden = !isPaste;
+      pickerRepository.hidden = provider !== "GitHub";
+
+      if (provider === "GitHub") {
+        const repositories = [...new Set(sourceCatalog.GitHub.map((item) => item.repo))];
+        pickerRepository.innerHTML = `<option value="all">All repositories</option>${repositories.map((repo) => `<option value="${escapeHtml(repo)}">${escapeHtml(repo)}</option>`).join("")}`;
+        pickerRepository.value = "all";
+      }
+
+      renderPickerFilters();
+      renderPickerResults();
+      pickerBackdrop.hidden = false;
+      window.setTimeout(() => (isPaste ? pickerPaste : pickerSearch).focus(), 0);
+    }
+
+    function closeSourcePicker() {
+      pickerBackdrop.hidden = true;
+      pickerProvider = "";
+    }
+
+    function attachPickerSelection() {
+      if (pickerProvider === "Pasted text") {
+        const text = pickerPaste.value.trim();
+        if (!text) return;
+        sourceState["Pasted text"].push({
+          id: `paste-${Date.now()}`,
+          title: text.length > 58 ? `${text.slice(0, 58)}…` : text,
+          type: "note",
+          meta: `Direct context · ${text.length} characters`,
+          updated: "Added now",
+          freshness: "current"
+        });
+      } else {
+        sourceState[pickerProvider] = sourceCatalog[pickerProvider].filter((item) => pickerSelections.has(item.id));
+      }
+      closeSourcePicker();
+      renderSources();
+      renderSummary();
+    }
+
+    function changeStep(step) {
+      checkpoint.dataset.step = step;
+      document.querySelectorAll(".step").forEach((button) => {
+        const target = button.dataset.stepTarget;
+        button.classList.toggle("active", target === step);
+        button.classList.toggle("complete", (step === "sources" && target === "meeting") || (step === "review" && target !== "review"));
+      });
+    }
+
+    document.querySelector("#meeting-search").addEventListener("input", (event) => renderMeetings(event.target.value));
+    document.querySelectorAll("[data-step-target]").forEach((button) => button.addEventListener("click", () => changeStep(button.dataset.stepTarget)));
+    document.querySelector("#add-source").addEventListener("click", () => sourceMenu.classList.toggle("open"));
+    sourceMenu.querySelectorAll("[data-source-provider]").forEach((button) => button.addEventListener("click", () => openSourcePicker(button.dataset.sourceProvider)));
+    pickerSearch.addEventListener("input", renderPickerResults);
+    pickerRepository.addEventListener("change", () => { pickerRepo = pickerRepository.value; renderPickerResults(); });
+    pickerPaste.addEventListener("input", renderPickerSelection);
+    pickerAdd.addEventListener("click", attachPickerSelection);
+    document.querySelector("#picker-close").addEventListener("click", closeSourcePicker);
+    document.querySelector("#picker-cancel").addEventListener("click", closeSourcePicker);
+    pickerBackdrop.addEventListener("click", (event) => { if (event.target === pickerBackdrop) closeSourcePicker(); });
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !pickerBackdrop.hidden) closeSourcePicker(); });
+    document.addEventListener("click", (event) => { if (!event.target.closest(".add-source-wrap")) sourceMenu.classList.remove("open"); });
+    fileInput.addEventListener("change", () => {
+      [...fileInput.files].forEach((file) => sourceState.Files.push({
+        id: `file-${file.name}-${file.lastModified}`,
+        title: file.name,
+        type: "file",
+        meta: `${file.type || "File"} · ${Math.max(1, Math.round(file.size / 1024))} KB`,
+        updated: "Added now",
+        freshness: "current"
+      }));
+      fileInput.value = "";
+      renderSources();
+      renderSummary();
+    });
+
+    function launch() {
+      checkpoint.classList.add("launching");
+    }
+
+    document.querySelector("#start-session").addEventListener("click", launch);
+    document.querySelector("#mobile-start").addEventListener("click", launch);
+    document.querySelector("#return-button").addEventListener("click", () => checkpoint.classList.remove("launching"));
+
+    renderMeetings();
+    renderSources();
+    renderSummary();
+  </script>
+</body>
+</html>

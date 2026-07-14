@@ -1,0 +1,104 @@
+{
+  "artifactId": "aries-company-os-product-demo-v1",
+  "generatedAt": "2026-07-13T20:37:53Z",
+  "classification": "internal",
+  "status": "validated-local-master",
+  "source": {
+    "title": "Aries Company OS — Turning organizational conversation into governed, verifiable work",
+    "version": "1.0",
+    "date": "2026-07-13",
+    "path": "/Users/michaelmoll/.codex/attachments/89552595-dfe4-427d-9b5d-a08ab99152fd/pasted-text.txt",
+    "sha256": "1aa2dc9572ecc78d5b69bbbe1c55fd03522470cf8be300c8a206f027e389ba9a"
+  },
+  "brandAssets": [
+    {
+      "variant": "grey",
+      "path": "public/brand/Aires_lockup_GREY_[RGB].png",
+      "sha256": "ec523f1ae891e597ba93b63cd8972d0c42d71e2165963be496982a3be4744909"
+    },
+    {
+      "variant": "softblack",
+      "path": "public/brand/Aires_lockup_SOFTBLACK_[RGB].png",
+      "sha256": "9dc2d5f4ae268e898348ebc075e633f2fd6f624bb07044e3e50fd00cf97bdd20"
+    },
+    {
+      "variant": "volt",
+      "path": "public/brand/Aires_lockup_VOLT_[RGB].png",
+      "sha256": "19ab4d2ecc42fa6b8b7aef4c3f4d618f234254ffe26036a73daed98431be4174"
+    }
+  ],
+  "video": {
+    "path": "out/aries-company-os-demo.mp4",
+    "absolutePath": "/Users/michaelmoll/Documents/aires-code-repos/Codex-voice/artifacts/aries-company-os-video/out/aries-company-os-demo.mp4",
+    "sha256": "f119ada0f81f0eb727de3833c0468e81a194130772d09c68825d1c7e5b1a1d40",
+    "sizeBytes": 11152508,
+    "durationSeconds": 156.5,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "audioSampleRate": 48000,
+    "audioChannels": 2
+  },
+  "composition": {
+    "id": "AriesCompanyOSDemoComposition",
+    "sceneCount": 10,
+    "storyboardSha256": "94db85ff119dacc315b8ee54864451fa024a5cb1214b10a31772eb099d9f6782",
+    "componentSha256": "cb765364c8fe3e49d40b81854f47cff8d1cf0c9084badf85b9588b2f7ab2fdc0",
+    "timingsSha256": "0e3dfb4d02028a65f0cfa6615e379b9af3b345a2269d1bb785bc554cf0aa6c09"
+  },
+  "demonstratedFlows": [
+    "Start a governed session from Today",
+    "Define session purpose, customer account, and project",
+    "Select least-privilege context from Notion, GitHub, Zoom, and uploads",
+    "Make a requirements brief from in-session Actions",
+    "Review evidence and destination before writing to Notion",
+    "End the session and request synthesis",
+    "Confirm explicit decisions and reject unsupported inferences",
+    "Review actions, open questions, artifacts, and recorded source versions"
+  ],
+  "voiceover": {
+    "provider": "OpenAI",
+    "model": "gpt-4o-mini-tts",
+    "voice": "nova",
+    "instructions": "Polished customer-success strategist; clear, calm, credible, human, and focused.",
+    "sceneFiles": 10,
+    "credentialHandling": "Loaded from the repository environment at generation time; not copied into the artifact.",
+    "regenerationCommand": "npm run voiceover:demo"
+  },
+  "validation": {
+    "lintAndTypecheck": "passed",
+    "storyboardDesktopOverflow": "passed at 1440x1000",
+    "storyboardNarrowOverflow": "passed at 390x844",
+    "encodedFrameInspection": "passed at five representative timestamps",
+    "audioSilenceCheck": "passed; adaptive threshold -27.02 dB found no silence interval at or above 2 seconds",
+    "integratedLoudnessLUFS": -16.64,
+    "truePeakDbTP": -1.68,
+    "pixelIntegrity": "passed; representative encoded frames contain under 0.002% near-black pixels despite an image-preview display artifact",
+    "publishing": "not run; artifact remains local and internal"
+  },
+  "supportingFiles": {
+    "sourceLedger": {
+      "path": "demo-source-ledger.md",
+      "sha256": "0cb5dfa9594d43a553c4356fadc941eb455ac22eca6484d2cd933345f3ca08c0"
+    },
+    "scopeLock": {
+      "path": "demo-scope-lock.md",
+      "sha256": "dfbde91f6f85fb1ecc414c82d00d1b544504fd196d7c777630a715c1635af4db"
+    },
+    "voiceoverScript": {
+      "path": "demo-voiceover-script.md",
+      "sha256": "3816d17ed5af39501fde0e1df839d986a23b06859e062cb2cdec33d2582f441d"
+    },
+    "htmlStoryboard": {
+      "path": "demo-storyboard.html",
+      "sha256": "35df9fcd870b53d5b29bf1d51fd7b3922f9ada8735a881a8875c9799b789e6cc"
+    }
+  },
+  "notionRecord": {
+    "pageId": "39c5efcc-eccd-81c8-8230-d969974039e9",
+    "url": "https://app.notion.com/p/39c5efcceccd81c88230d969974039e9",
+    "updateStatus": "verified by fetch readback"
+  }
+}

@@ -48,9 +48,11 @@ That is `control+option+space`. Change `keyCode` and `modifiers` to choose anoth
 ```bash
 COOPER_PTT_KEY_CODE=49
 COOPER_PTT_MODIFIERS=control+option
-COOPER_PTT_SERVER_URL=http://127.0.0.1:5000
+COOPER_PTT_SERVER_URL=http://127.0.0.1:3417
 COOPER_PTT_TOKEN=...
 ```
+
+Use `http://127.0.0.1:3417` for the native macOS app broker. Use `http://127.0.0.1:5000` only when targeting the older web dev server.
 
 ## Run
 
@@ -66,11 +68,13 @@ Then start the helper:
 npm run ptt:run
 ```
 
-Hold the hotkey, speak, release. Cooper will transcribe the utterance and either:
+Hold the hotkey, speak, release. In the native macOS app, Cooper will transcribe the utterance, discard the uploaded audio, and either:
 
-- queue a visible Computer Use task for commands like `open Spotify`, `open Claude Code`, or `download https://...`;
-- stop active Computer Use work for commands like `stop computer`;
-- return a one-shot Cooper response for normal questions.
+- queue a visible approval-gated Computer Use task for commands like `open Spotify`, `open Claude Code`, or `download https://...`;
+- queue a visible approval-gated push-to-talk Operator task for normal utterances;
+- stop active Computer Use or push-to-talk work for commands like `stop computer`.
+
+Desktop automation still stays blocked after approval until the native Computer Use connector is wired.
 
 ## Notes
 

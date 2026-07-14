@@ -1,0 +1,101 @@
+[
+  {
+    "id": "context-gap",
+    "kicker": "01 / The operating problem",
+    "title": "Work begins before the ticket.",
+    "support": "Conversation carries evidence, disagreement, and nuance that systems of record often lose.",
+    "voiceover": "The most important software work often begins in conversation. But as it moves into tickets, requirements, code, and QA, the original evidence and nuance can disappear.",
+    "visual": "fragments",
+    "sourceAnchors": ["lines 13–18", "lines 48–64"]
+  },
+  {
+    "id": "durable-session",
+    "kicker": "02 / The thesis",
+    "title": "Session = durable context",
+    "support": "A bounded, source-grounded workspace linking decisions, approvals, work, and proof.",
+    "voiceover": "Aries Company OS proposes a durable session: a source-grounded workspace connecting context, participants, decisions, approvals, and downstream work. Larger than a call, smaller than a project.",
+    "visual": "session",
+    "sourceAnchors": ["lines 20–27", "lines 104–150"]
+  },
+  {
+    "id": "zoom-first",
+    "kicker": "03 / First signal",
+    "title": "Signal → Evidence → Session",
+    "support": "Zoom is the first proposed adapter; the domain model stays source-neutral.",
+    "voiceover": "In the first proposed workflow, a completed Zoom meeting triggers authorized retrieval of its summary or transcript, creation of a source ledger, and a review-ready session.",
+    "visual": "signal",
+    "sourceAnchors": ["lines 29–35", "lines 329–361"]
+  },
+  {
+    "id": "distill",
+    "kicker": "04 / Distillation",
+    "title": "Preparation is automated. Authority is not.",
+    "support": "Agents preserve, segment, corroborate, and draft. The output remains a proposal.",
+    "voiceover": "Background agents segment and corroborate the evidence, then draft decisions, actions, requests, and bugs. These are proposals, not commitments. Preparation is automated. Authority is not.",
+    "visual": "distill",
+    "sourceAnchors": ["lines 469–570"]
+  },
+  {
+    "id": "bug-triage",
+    "kicker": "05 / Concrete workflow",
+    "title": "Bug triage: evidence before severity.",
+    "support": "Impact can be confirmed while severity remains open; delivery still ends in evidence-backed verification.",
+    "voiceover": "A customer reports an intermittent workflow bug during a product review. Aries drafts an evidence-anchored bug proposal; the manager confirms impact but leaves severity open. Product commits it to the active sprint, engineering links the pull request, and Sentinel records a passing, evidence-backed verdict before Cooper prepares the customer update.",
+    "visual": "bug",
+    "sourceAnchors": ["lines 549–552", "lines 1134–1157"]
+  },
+  {
+    "id": "feature-request",
+    "kicker": "06 / Concrete workflow",
+    "title": "Feature request: shape the outcome. Then scope.",
+    "support": "Meeting language becomes a proposal—not approved scope—until a human corrects the interpretation.",
+    "voiceover": "The same review surfaces a reporting gap. Aries drafts the user job, evidence, expected outcome, constraints, and open discovery questions. The manager rejects an inferred commitment and edits the outcome, then Cooper runs the Requirements Framework interview. Scoped requirements and a Notion preview are approved before product sends the request to backlog.",
+    "visual": "feature",
+    "sourceAnchors": ["lines 544–564", "lines 1134–1152"]
+  },
+  {
+    "id": "customer-onboarding",
+    "kicker": "07 / Proposed workflow",
+    "title": "Customer onboarding: every milestone remembers.",
+    "support": "Kickoff evidence becomes confirmed goals, owners, milestones, dependencies, risks, and account memory.",
+    "voiceover": "For customer onboarding, a proposed session starts from the kickoff call, implementation plan, and Notion page. Aries assembles goals, owners, milestones, integration dependencies, risks, and blockers into a review brief. The customer-success lead confirms commitments and next actions; approved updates return to source-backed account memory for the next milestone review.",
+    "visual": "onboarding",
+    "sourceAnchors": ["lines 249–278", "lines 1104–1113"]
+  },
+  {
+    "id": "human-gates",
+    "kicker": "08 / Governance",
+    "title": "Human judgment at every gate",
+    "support": "Challenge, revise, merge, reject, scope, and approve before consequential action.",
+    "voiceover": "Across each workflow, Cooper presents the evidence visually and by voice. A human can challenge an inference, merge or reject proposals, refine requirements, and explicitly approve each consequential step.",
+    "visual": "gates",
+    "sourceAnchors": ["lines 208–217", "lines 574–636"]
+  },
+  {
+    "id": "delivery-proof",
+    "kicker": "09 / Delivery loop",
+    "title": "Approved → Delivered → Verified",
+    "support": "Canonical work, implementation context, and QA evidence remain connected to source.",
+    "voiceover": "Approved work can be previewed and written to Notion, linked to GitHub delivery, and verified by evidence-backed QA against its acceptance criteria.",
+    "visual": "delivery",
+    "sourceAnchors": ["lines 608–628", "lines 640–729"]
+  },
+  {
+    "id": "learning-loop",
+    "kicker": "10 / Organizational memory",
+    "title": "Every outcome returns to context.",
+    "support": "The next conversation begins from verified history, not reconstructed memory.",
+    "voiceover": "Delivery evidence returns to the session and customer memory, so the next meeting begins from verified history instead of reconstructed memory.",
+    "visual": "loop",
+    "sourceAnchors": ["lines 219–223", "lines 630–636", "lines 1153–1157"]
+  },
+  {
+    "id": "company-os",
+    "kicker": "11 / The promise",
+    "title": "Company OS",
+    "support": "Conversation → governed work → verified outcome",
+    "voiceover": "Aries does not replace Zoom, Notion, GitHub, or QA. It compiles context between them: turning organizational conversation into governed, traceable, and verifiably completed work.",
+    "visual": "closing",
+    "sourceAnchors": ["lines 1166–1197", "lines 1203–1220"]
+  }
+]

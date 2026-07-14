@@ -1,0 +1,1 @@
+During the session, open Actions and choose Make a document. Select a requirements brief, decision memo, bug brief, or customer follow-up. Here, we create a requirements brief from the selected context and the discussion so far.

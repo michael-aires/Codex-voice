@@ -7,66 +7,300 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main class="app-shell">
-      <aside class="call-panel">
-        <div class="brand">
-          <div class="mark" aria-hidden="true"></div>
-          <div>
-            <h1>Realtime Desktop Agent</h1>
-            <p id="modelLabel">gpt-realtime-2</p>
-          </div>
-        </div>
+    <main class="app-root">
+      <section id="lockView" class="today-view lock-view" aria-label="Local lock" hidden></section>
 
-        <div class="status-stack">
-          <div class="metric">
-            <span>Connection</span>
-            <strong id="connectionState">Broker starting</strong>
+      <section id="homeView" class="today-view today-home" aria-label="Today">
+        <header class="topbar">
+          <div class="brand-lockup">
+            <span class="cooper-mark" aria-hidden="true"></span>
+            <strong>Cooper</strong>
+            <span>AIRES workspace</span>
           </div>
-          <div class="metric">
-            <span>Microphone</span>
-            <strong id="micState">Idle</strong>
+          <nav class="session-nav" aria-label="Primary">
+            <button class="is-active" type="button" data-nav-view="home">Today</button>
+            <button type="button" data-nav-view="sessions">Sessions</button>
+            <button type="button" data-nav-view="projects">Projects</button>
+            <button type="button" data-nav-view="library">Library</button>
+            <button type="button" data-nav-view="operator">Operator</button>
+            <button type="button" data-nav-view="settings">Settings</button>
+          </nav>
+          <div class="topbar-right">
+            <span id="topDateLabel">Monday, July 6</span>
+            <span class="avatar" aria-label="Michael K">MK</span>
           </div>
-          <div class="metric">
-            <span>Workspace</span>
-            <strong id="workspaceState">Loading</strong>
-          </div>
-        </div>
-
-        <div class="controls">
-          <button id="startCall" class="primary">Start Call</button>
-          <button id="endCall" disabled>End Call</button>
-          <button id="muteCall" disabled>Mute</button>
-          <button id="interruptCall" disabled>Interrupt</button>
-        </div>
-
-        <div id="errorBanner" class="error-banner" hidden></div>
-
-        <section class="event-log" aria-label="Tool activity">
-          <h2>Activity</h2>
-          <div id="eventLog" class="event-list"></div>
-        </section>
-      </aside>
-
-      <section class="canvas-region">
-        <header class="section-header">
-          <div>
-            <p>Canvas</p>
-            <h2>Working Memory</h2>
-          </div>
-          <span id="cardCount">0 cards</span>
         </header>
-        <div id="canvasGrid" class="canvas-grid"></div>
+
+        <div class="today-scroll">
+          <div class="today-container">
+            <div class="today-hero">
+              <div class="today-hero-copy">
+                <p class="mono-label" id="homeDateLabel">Monday, July 6</p>
+                <h1>Good morning, Michael.</h1>
+                <p id="homeSummary">3 meetings and 5 tasks today. Tap any card to open it, or start a session with Cooper.</p>
+              </div>
+              <div class="start-call-stack">
+                <div class="call-mode-picker" aria-label="Call mode">
+                  <button class="is-active" type="button" data-call-mode="free">Free flow</button>
+                  <button type="button" data-call-mode="manual">Ask Cooper</button>
+                  <button type="button" data-call-mode="wake">Wake phrase</button>
+                </div>
+                <button id="homeStartCall" class="button-primary start-call-button" type="button">
+                  <span class="cooper-mark small" aria-hidden="true"></span>
+                  Start call
+                </button>
+              </div>
+            </div>
+
+            <nav class="today-tabs" aria-label="Today filters">
+              <button class="today-tab is-active" type="button" data-home-filter="all">All</button>
+              <button class="today-tab" type="button" data-home-filter="meetings">Meetings</button>
+              <button class="today-tab" type="button" data-home-filter="tasks">Tasks</button>
+            </nav>
+
+            <section id="homeMeetingsSection" class="today-section" aria-labelledby="meetingsHeading">
+              <div class="section-rule">
+                <h2 id="meetingsHeading">meetings</h2>
+                <span></span>
+                <p>calendar</p>
+              </div>
+              <div id="homeMeetings" class="today-list"></div>
+            </section>
+
+            <section id="homeTasksSection" class="today-section" aria-labelledby="tasksHeading">
+              <div class="section-rule">
+                <h2 id="tasksHeading">tasks</h2>
+                <span></span>
+                <p>notion &middot; sprint 14</p>
+              </div>
+              <div id="homeTasks" class="today-list"></div>
+            </section>
+          </div>
+        </div>
       </section>
 
-      <section class="transcript-region">
-        <header class="section-header compact">
-          <div>
-            <p>Transcript</p>
-            <h2>Live Call</h2>
-          </div>
-          <span id="callTimer">00:00</span>
+      <section id="detailView" class="today-view detail-view" aria-label="Card detail" hidden>
+        <header class="detail-topbar">
+          <button id="detailBack" class="back-button" type="button" aria-label="Back to Today">
+            <span class="icon-arrow-left" aria-hidden="true"></span>
+            Today
+          </button>
+          <span id="detailSource" class="mono-label">from notion</span>
         </header>
-        <div id="transcriptList" class="transcript-list"></div>
+
+        <div class="detail-scroll">
+          <article class="detail-container">
+            <p id="detailEyebrow" class="mono-label">Rep velocity &middot; sprint 14</p>
+            <h1 id="detailTitle">Scope requirements for first-touch logging</h1>
+
+            <div id="detailMeta" class="detail-meta"></div>
+            <p id="detailDescription" class="detail-description"></p>
+
+            <section class="detail-card" aria-labelledby="detailContextLabel">
+              <h2 id="detailContextLabel" class="mono-label">what cooper will do</h2>
+              <div id="detailPoints" class="detail-points"></div>
+              <div id="detailDocs" class="detail-docs"></div>
+            </section>
+
+            <div class="detail-actions">
+              <button id="detailStartCall" class="button-primary" type="button">
+                <span class="cooper-mark small" aria-hidden="true"></span>
+                <span id="detailActionLabel">Get to work</span>
+              </button>
+              <button id="detailSecondary" class="button-secondary" type="button">Open in Notion</button>
+            </div>
+
+            <div class="detail-mode-row call-mode-picker" aria-label="Call mode">
+              <button class="is-active" type="button" data-call-mode="free">Free flow</button>
+              <button type="button" data-call-mode="manual">Ask Cooper</button>
+              <button type="button" data-call-mode="wake">Wake phrase</button>
+            </div>
+
+            <p class="detail-note">
+              <span aria-hidden="true"></span>
+              <span id="detailActionNote">Cooper will draft the scoped requirements with you, and pause before anything is saved.</span>
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="shellView" class="today-view shell-view" aria-label="Session OS" hidden>
+        <header class="topbar">
+          <div class="brand-lockup">
+            <span class="cooper-mark" aria-hidden="true"></span>
+            <strong>Cooper</strong>
+            <span>AIRES workspace</span>
+          </div>
+          <nav class="session-nav" aria-label="Primary">
+            <button type="button" data-nav-view="home">Today</button>
+            <button type="button" data-nav-view="sessions">Sessions</button>
+            <button type="button" data-nav-view="projects">Projects</button>
+            <button type="button" data-nav-view="library">Library</button>
+            <button type="button" data-nav-view="operator">Operator</button>
+            <button type="button" data-nav-view="settings">Settings</button>
+          </nav>
+          <div class="topbar-right">
+            <button id="shellStartCall" class="button-primary compact" type="button">
+              <span class="cooper-mark small" aria-hidden="true"></span>
+              Start call
+            </button>
+            <span class="avatar" aria-label="Michael K">MK</span>
+          </div>
+        </header>
+
+        <div class="session-os-layout">
+          <aside class="session-sidebar" aria-label="Session OS menu">
+            <div class="session-sidebar-header">
+              <span class="mono-label">Session OS</span>
+              <strong>Native workspace</strong>
+            </div>
+            <nav class="session-rail-nav" aria-label="Workspace sections">
+              <button type="button" data-nav-view="home">Today</button>
+              <button type="button" data-nav-view="sessions">Sessions</button>
+              <button type="button" data-nav-view="projects">Projects</button>
+              <button type="button" data-nav-view="library">Library</button>
+              <button type="button" data-nav-view="operator">Operator</button>
+              <button type="button" data-nav-view="settings">Settings</button>
+            </nav>
+            <div class="session-sidebar-status">
+              <span>local broker</span>
+              <strong>approval gated</strong>
+              <p>Calls, projects, artifacts, tools, and diagnostics stay in one native shell.</p>
+            </div>
+          </aside>
+
+          <div class="shell-scroll">
+            <section class="shell-container">
+              <p id="shellEyebrow" class="mono-label">Session OS</p>
+              <div class="shell-hero">
+                <div>
+                  <h1 id="shellTitle">Sessions</h1>
+                  <p id="shellDescription">Saved calls and working memory will appear here.</p>
+                </div>
+                <button id="shellPrimaryAction" class="button-primary" type="button">Start free-flow call</button>
+              </div>
+              <div id="shellMetrics" class="shell-metrics"></div>
+              <div id="shellBody" class="shell-board"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section id="callView" class="today-view call-view" aria-label="Live session" hidden>
+        <header class="workspace-topbar">
+          <div class="brand-lockup">
+            <span class="cooper-mark" aria-hidden="true"></span>
+            <strong>Cooper</strong>
+            <span>AIRES workspace</span>
+          </div>
+          <div class="workspace-tabs" aria-label="Workspace mode">
+            <button class="is-active" type="button">Call</button>
+            <button type="button">Operator</button>
+          </div>
+          <div class="topbar-right">
+            <span>$0.62 &middot; realtime</span>
+            <span class="avatar" aria-label="Michael K">MK</span>
+          </div>
+        </header>
+
+        <div class="app-shell">
+          <aside class="call-panel">
+            <div class="session-hero">
+              <span class="cooper-mark large" aria-hidden="true"></span>
+              <div class="session-state">
+                <span id="connectionState">Broker starting</span>
+                <span id="callTimer">00:00</span>
+              </div>
+              <p>"Cooper, join the rep velocity session."</p>
+              <h1>With you. I have the thesis and the JTBD canvas loaded.</h1>
+              <p id="modelLabel" class="model-label">gpt-realtime-2</p>
+            </div>
+
+            <div class="status-stack">
+              <div class="metric">
+                <span>Microphone</span>
+                <strong id="micState">Idle</strong>
+              </div>
+              <div class="metric">
+                <span>Mode</span>
+                <strong id="callModeState">Free flow</strong>
+              </div>
+              <div class="metric">
+                <span>Workspace</span>
+                <strong id="workspaceState">Loading</strong>
+              </div>
+              <div class="metric">
+                <span>Cost</span>
+                <strong id="callCostState">$0.00 est</strong>
+              </div>
+            </div>
+
+            <div class="controls">
+              <button id="startCall" class="primary" type="button">Start Call</button>
+              <button id="endCall" type="button" disabled>End Call</button>
+              <button id="muteCall" type="button" disabled>Mute</button>
+              <button id="interruptCall" type="button" disabled>Interrupt</button>
+              <button id="askCooper" type="button" disabled>Ask Cooper</button>
+            </div>
+
+            <section id="postCallPanel" class="post-call-panel" aria-label="Post-call actions" hidden>
+              <h2>post-call</h2>
+              <p id="postCallSummary">Session saved.</p>
+              <div class="post-call-actions">
+                <button id="postCallGenerateMarkdown" class="button-primary" type="button">Markdown</button>
+                <button id="postCallGenerateHtml" class="button-secondary" type="button">HTML</button>
+                <button id="postCallOpenLibrary" class="button-secondary" type="button">Library</button>
+              </div>
+            </section>
+
+            <div id="errorBanner" class="error-banner" hidden></div>
+
+            <section class="event-log" aria-label="Tool activity">
+              <h2>running quietly</h2>
+              <div id="eventLog" class="event-list"></div>
+            </section>
+          </aside>
+
+          <section class="canvas-region">
+            <header class="section-header">
+              <div>
+                <p>Thesis</p>
+                <h2>Working Memory</h2>
+              </div>
+              <div class="canvas-toolbar" aria-label="Canvas controls">
+                <select id="canvasLayout" aria-label="Canvas layout">
+                  <option value="auto">Auto</option>
+                  <option value="one">1 column</option>
+                  <option value="three">3 columns</option>
+                </select>
+                <select id="canvasGroup" aria-label="Group cards">
+                  <option value="none">Ungrouped</option>
+                  <option value="type">Type</option>
+                  <option value="tag">Tag</option>
+                </select>
+                <input id="canvasFilter" type="search" placeholder="Filter" aria-label="Filter cards">
+                <span id="cardCount">0 cards</span>
+              </div>
+            </header>
+            <div id="canvasGrid" class="canvas-grid"></div>
+          </section>
+
+          <section class="transcript-region">
+            <header class="section-header compact">
+              <div>
+                <p>Transcript</p>
+                <h2>Live Call</h2>
+              </div>
+            </header>
+            <div id="transcriptList" class="transcript-list"></div>
+          </section>
+        </div>
+
+        <button id="callBackHome" class="return-pill" type="button">
+          <span class="icon-arrow-left" aria-hidden="true"></span>
+          Today
+          <span id="callContextLabel">Free flow</span>
+        </button>
       </section>
     </main>
 

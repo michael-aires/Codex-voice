@@ -1,0 +1,96 @@
+{
+  "artifactId": "aries-company-os-concept-film-v2",
+  "generatedAt": "2026-07-13T12:15:10-07:00",
+  "classification": "AIRES internal",
+  "source": {
+    "title": "Aries Company OS — Turning organizational conversation into governed, verifiable work",
+    "version": "1.0",
+    "date": "2026-07-13",
+    "localPath": "/Users/michaelmoll/.codex/attachments/89552595-dfe4-427d-9b5d-a08ab99152fd/pasted-text.txt",
+    "sha256": "1aa2dc9572ecc78d5b69bbbe1c55fd03522470cf8be300c8a206f027e389ba9a"
+  },
+  "brandAssets": {
+    "sourceDirectory": "/Users/michaelmoll/Downloads/Aires-logos",
+    "greySha256": "ec523f1ae891e597ba93b63cd8972d0c42d71e2165963be496982a3be4744909",
+    "softBlackSha256": "9dc2d5f4ae268e898348ebc075e633f2fd6f624bb07044e3e50fd00cf97bdd20",
+    "voltSha256": "19ab4d2ecc42fa6b8b7aef4c3f4d618f234254ffe26036a73daed98431be4174",
+    "placeholderMarksRemainingInVideo": false
+  },
+  "notion": {
+    "pageId": "39c5efcc-eccd-81c8-8230-d969974039e9",
+    "url": "https://app.notion.com/p/39c5efcceccd81c88230d969974039e9",
+    "readBackVerified": true
+  },
+  "localArtifacts": {
+    "projectRoot": "/Users/michaelmoll/Documents/aires-code-repos/Codex-voice/artifacts/aries-company-os-video",
+    "storyboardHtml": "/Users/michaelmoll/Documents/aires-code-repos/Codex-voice/artifacts/aries-company-os-video/storyboard.html",
+    "sourceLedger": "/Users/michaelmoll/Documents/aires-code-repos/Codex-voice/artifacts/aries-company-os-video/source-ledger.md",
+    "voiceoverScript": "/Users/michaelmoll/Documents/aires-code-repos/Codex-voice/artifacts/aries-company-os-video/voiceover-script.md",
+    "video": "/Users/michaelmoll/Documents/aires-code-repos/Codex-voice/artifacts/aries-company-os-video/out/aries-company-os.mp4",
+    "qaStills": "/Users/michaelmoll/Documents/aires-code-repos/Codex-voice/artifacts/aries-company-os-video/qa-stills-v2",
+    "encodedQaStills": "/Users/michaelmoll/Documents/aires-code-repos/Codex-voice/artifacts/aries-company-os-video/qa-encoded"
+  },
+  "video": {
+    "durationSeconds": 163.4,
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "videoCodec": "H.264",
+    "audioCodec": "AAC",
+    "audioSampleRate": 48000,
+    "audioChannels": 2,
+    "sizeBytes": 12955553,
+    "sha256": "4c6d1d109c21151d8243d6cb7c53884747e7cce24f394c2ca53f780970dbb0b4",
+    "voiceoverModel": "gpt-4o-mini-tts",
+    "voice": "nova",
+    "sceneCount": 11
+  },
+  "workflowChapters": [
+    {
+      "id": "bug-triage",
+      "label": "Illustrative · proposed first complete flow",
+      "sourceAnchors": ["lines 549–552", "lines 1134–1157"]
+    },
+    {
+      "id": "feature-request",
+      "label": "Illustrative · proposed first complete flow",
+      "sourceAnchors": ["lines 544–564", "lines 1134–1152"]
+    },
+    {
+      "id": "customer-onboarding",
+      "label": "Proposed workflow · customer-success phase 4",
+      "sourceAnchors": ["lines 249–278", "lines 1104–1113"]
+    }
+  ],
+  "skillBrandStandardization": {
+    "skills": [
+      "/Users/michaelmoll/.codex/skills/notion-aries-artifacts",
+      "/Users/michaelmoll/.codex/skills/aires-requirements-framework",
+      "/Users/michaelmoll/.codex/skills/aires-sentinel-qa"
+    ],
+    "quickValidation": "PASS",
+    "forwardTest": "PASS"
+  },
+  "validation": {
+    "sourceLedger": "PASS",
+    "desktopStoryboard": "PASS",
+    "narrowStoryboard": "PASS",
+    "lintAndTypecheck": "PASS",
+    "representativeStills": "PASS",
+    "encodedFrameCheck": "PASS",
+    "sequentialRenderCheck": "PASS (byte-identical to canonical)",
+    "audioLongSilenceCheck": "PASS (no silence >= 2 seconds at -50 dB)",
+    "finalMediaMetadata": "PASS",
+    "independentArtifactQa": "PASS",
+    "notionReadBack": "PASS"
+  },
+  "publishing": {
+    "vercel": "NOT_REQUESTED",
+    "publicMediaUrl": null,
+    "slackShare": "NOT_REQUESTED"
+  },
+  "blockedLanes": [],
+  "nextActions": [
+    "Publish only through an authenticated private target if external review is requested."
+  ]
+}

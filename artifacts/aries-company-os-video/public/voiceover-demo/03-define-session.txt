@@ -1,0 +1,1 @@
+Name the session and its intended outcome, then associate the customer, project, and participants. This creates a bounded workspace for evidence, decisions, artifacts, approvals, and downstream work.

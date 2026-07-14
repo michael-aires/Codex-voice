@@ -1,0 +1,1 @@
+Approved work can be previewed and written to Notion, linked to GitHub delivery, and verified by evidence-backed QA against its acceptance criteria.

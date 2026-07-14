@@ -1,0 +1,84 @@
+{
+  "schema": "aires.native-design-tokens.v1",
+  "source": "AIRES Design System reference and native macOS parity implementation",
+  "color": {
+    "brand": {
+      "softBlack": { "value": "#2d2c2d", "cssVariable": "--aires-black" },
+      "volt": { "value": "#f0de4a", "cssVariable": "--aires-volt" },
+      "voltBorder": { "value": "#c9b92e", "cssVariable": "--aires-volt-border" },
+      "orange": { "value": "#ee7437", "cssVariable": "--aires-orange" },
+      "sky": { "value": "#b1cdd6", "cssVariable": "--aires-sky" },
+      "navy": { "value": "#172554", "cssVariable": "--aires-navy" },
+      "mediumGrey": { "value": "#9c9c9c", "cssVariable": "--aires-grey" }
+    },
+    "surface": {
+      "app": { "value": "#fbfbf8", "cssVariable": "--surface-app" },
+      "card": { "value": "#ffffff", "cssVariable": "--surface-card" },
+      "muted": { "value": "#f4f4ef", "cssVariable": "--surface-muted" },
+      "soft": { "value": "#f0f2eb", "cssVariable": "--surface-soft" }
+    },
+    "text": {
+      "primary": { "value": "#2d2c2d", "cssVariable": "--text-primary" },
+      "secondary": { "value": "#52525b", "cssVariable": "--text-secondary" },
+      "muted": { "value": "#71717a", "cssVariable": "--text-muted" },
+      "faint": { "value": "#b4b4ac", "cssVariable": "--text-faint" }
+    },
+    "border": {
+      "subtle": { "value": "#eeeeea", "cssVariable": "--border-subtle" },
+      "default": { "value": "#deded8", "cssVariable": "--border-default" },
+      "strong": { "value": "#c6c6be", "cssVariable": "--border-strong" }
+    },
+    "status": {
+      "success": { "value": "#047857", "cssVariable": "--status-success" },
+      "error": { "value": "#b91c1c", "cssVariable": "--status-error" },
+      "info": { "value": "#2563eb", "cssVariable": "--status-info" },
+      "warning": { "value": "#854d0e", "cssVariable": "--status-warning" },
+      "warningBackground": { "value": "#fbf7cf", "cssVariable": "--status-warning-bg" },
+      "warningBorder": { "value": "#c9b92e", "cssVariable": "--status-warning-border" }
+    }
+  },
+  "typography": {
+    "body": { "cssVariable": "--font-body" },
+    "display": { "cssVariable": "--font-display" },
+    "mono": { "cssVariable": "--font-mono" },
+    "letterSpacing": "0"
+  },
+  "radius": {
+    "sm": { "value": "4px", "cssVariable": "--radius-sm" },
+    "md": { "value": "6px", "cssVariable": "--radius-md" },
+    "lg": { "value": "8px", "cssVariable": "--radius-lg" },
+    "xl": { "value": "10px", "cssVariable": "--radius-xl" },
+    "panel": { "value": "12px", "cssVariable": "--radius-panel" }
+  },
+  "elevation": {
+    "xs": { "cssVariable": "--shadow-xs" },
+    "md": { "cssVariable": "--shadow-md" },
+    "lg": { "cssVariable": "--shadow-lg" }
+  },
+  "motion": {
+    "ease": { "value": "160ms ease", "cssVariable": "--ease" }
+  },
+  "focus": {
+    "ring": { "value": "rgba(37, 99, 235, 0.16)", "cssVariable": "--focus-ring" }
+  },
+  "components": [
+    "AppShell",
+    "Topbar",
+    "SessionSidebar",
+    "SegmentedFilter",
+    "TodayRow",
+    "TaskRow",
+    "MeetingRow",
+    "DetailHeader",
+    "CallControls",
+    "TranscriptTurn",
+    "CanvasCard",
+    "RenderModeMenu",
+    "ArtifactPreview",
+    "SettingsRow",
+    "ApprovalRow",
+    "OperatorTask",
+    "ConnectorRow",
+    "NotificationPanel"
+  ]
+}

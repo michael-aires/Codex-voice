@@ -1,0 +1,1 @@
+The most important software work often begins in conversation. But as it moves into tickets, requirements, code, and QA, the original evidence and nuance can disappear.

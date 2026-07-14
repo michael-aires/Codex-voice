@@ -80,3 +80,18 @@ test("Realtime Cooper tool can queue every AIRES template from voice", () => {
   assert.deepEqual(tool.parameters.properties.template_ids.items.enum, expectedIds);
   assert.match(tool.description, /live call transcript/i);
 });
+
+test("Realtime requirements workshop tool supports the complete hands-free orchestration loop", () => {
+  const tool = cooperToolDefinitions.find((definition) => definition.name === "run_aires_requirements_framework");
+  const modes = tool.parameters.properties.mode.enum;
+
+  assert.ok(tool);
+  assert.ok(modes.includes("recommend_artifacts"));
+  assert.ok(modes.includes("draft_outline"));
+  assert.ok(modes.includes("queue_artifact"));
+  assert.ok(modes.includes("queue_suite"));
+  assert.ok(modes.includes("status"));
+  assert.deepEqual(tool.parameters.properties.template_id.enum, airesTemplateToolIds);
+  assert.deepEqual(tool.parameters.properties.template_ids.items.enum, airesTemplateToolIds);
+  assert.match(tool.description, /while the call continues/i);
+});

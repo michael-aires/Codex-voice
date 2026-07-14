@@ -1,0 +1,1 @@
+From Today, choose Start session. A session can begin from a live conversation, a customer milestone, a Notion page, a pull request, an imported meeting, or simply a blank inquiry.

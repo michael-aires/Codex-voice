@@ -1,0 +1,52 @@
+[
+  {
+    "id": "demo-open",
+    "audio": "voiceover-demo/01-demo-open.mp3",
+    "durationSeconds": 15.4
+  },
+  {
+    "id": "start-session",
+    "audio": "voiceover-demo/02-start-session.mp3",
+    "durationSeconds": 14.6
+  },
+  {
+    "id": "define-session",
+    "audio": "voiceover-demo/03-define-session.mp3",
+    "durationSeconds": 13.7
+  },
+  {
+    "id": "select-context",
+    "audio": "voiceover-demo/04-select-context.mp3",
+    "durationSeconds": 16.9
+  },
+  {
+    "id": "session-ready",
+    "audio": "voiceover-demo/05-session-ready.mp3",
+    "durationSeconds": 14.3
+  },
+  {
+    "id": "make-doc",
+    "audio": "voiceover-demo/06-make-doc.mp3",
+    "durationSeconds": 15.2
+  },
+  {
+    "id": "review-doc",
+    "audio": "voiceover-demo/07-review-doc.mp3",
+    "durationSeconds": 17.3
+  },
+  {
+    "id": "end-session",
+    "audio": "voiceover-demo/08-end-session.mp3",
+    "durationSeconds": 14.3
+  },
+  {
+    "id": "post-session",
+    "audio": "voiceover-demo/09-post-session.mp3",
+    "durationSeconds": 18.8
+  },
+  {
+    "id": "demo-close",
+    "audio": "voiceover-demo/10-demo-close.mp3",
+    "durationSeconds": 16
+  }
+]
