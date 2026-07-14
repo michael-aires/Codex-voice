@@ -26,6 +26,8 @@ test("Today exposes a refreshable briefing deck and hands it to Cooper after Rea
   assert.match(mainSource, /pendingSessionOpeningPromptRef/);
   assert.match(mainSource, /event\.type === "session\.updated"/);
   assert.match(mainSource, /requestCooper\(openingPrompt, "session_presentation"\)/);
+  assert.match(mainSource, /dailyBriefSlideIndexFromTranscript/);
+  assert.doesNotMatch(mainSource, /}, 9000\)/);
   assert.match(mainSource, /sessionFocus\?\.type === "daily_brief"/);
   assert.match(mainSource, /React\.useState\("presentation"\)/);
 });

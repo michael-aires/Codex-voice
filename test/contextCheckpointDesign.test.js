@@ -57,8 +57,9 @@ test("context search and packet endpoints are server-backed and persisted", () =
 });
 
 test("the initial Realtime call receives the persisted context packet", () => {
-  assert.match(serverSource, /db\.contextPackets\.find\(\(item\) => item\.id === call\.contextPacketId\)/);
-  assert.match(serverSource, /composeRealtimeSessionContext\(projectContext, resumeContext, contextPacket\?\.context \|\| ""\)/);
+  assert.match(serverSource, /contextPacketsForCall\(db, call\)/);
+  assert.match(serverSource, /boundedContextPacketContext\(/);
+  assert.match(serverSource, /composeRealtimeSessionContext\([\s\S]*projectContext,[\s\S]*resumeContext,[\s\S]*contextPacketContext/);
   assert.match(componentSource, /unresolvedSources/);
 });
 

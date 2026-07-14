@@ -22,6 +22,30 @@ export const canvasBuildTypes = [
     label: "Requirements",
     shortLabel: "Requirements",
     description: "AIRES scoped requirements, product thesis, JTBD, blueprints, and related product docs."
+  },
+  {
+    id: "pdf_brief",
+    label: "PDF brief",
+    shortLabel: "PDF",
+    description: "A polished portrait brief saved as a real PDF for preview, export, and sharing."
+  },
+  {
+    id: "word_brief",
+    label: "Word brief",
+    shortLabel: "Word",
+    description: "An editable Word brief saved as a real DOCX for download, native preview, and sharing."
+  },
+  {
+    id: "powerpoint_deck",
+    label: "PowerPoint deck",
+    shortLabel: "PowerPoint",
+    description: "A concise decision deck saved as a real PPTX for download, native preview, and sharing."
+  },
+  {
+    id: "excel_action_register",
+    label: "Excel action register",
+    shortLabel: "Excel",
+    description: "An editable action register with formulas, validation, and session-backed source rows."
   }
 ];
 

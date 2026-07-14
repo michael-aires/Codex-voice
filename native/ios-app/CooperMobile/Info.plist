@@ -20,6 +20,21 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CooperAssociatedDomainsConfigured</key>
+	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>ai.aires.cooper.mobile</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cooper</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -27,8 +42,14 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Cooper connects to your selected Cooper host to load sessions and connected workspace context.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Cooper uses the microphone only while you are in a live voice session.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

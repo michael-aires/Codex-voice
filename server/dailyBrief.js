@@ -26,7 +26,7 @@ export function buildDailyBrief({
   const slides = [
     overviewSlide({ dateLabel, meetings, tasks: selectedTasks, sprint, summary }),
     calendarSlide(meetings),
-    sprintSlide(selectedTasks, sprint, assignment),
+    sprintSlide(selectedTasks, sprint, assignment, urgentTasks),
     focusSlide({ meetings, tasks: selectedTasks, nextMeeting, activeTasks, urgentTasks })
   ];
 
@@ -54,11 +54,11 @@ export function buildDailyBrief({
     },
     sources,
     voicePrompt: [
-      "Cooper, present my Daily Catch Up now.",
-      "Talk through the prepared slides in order: overview, calendar, sprint priorities, and focus plan.",
-      "Be concise, call out conflicts or overdue work, and end by asking what I want to tackle first.",
-      `Brief summary: ${summary}`
-    ].join(" ")
+      "Present my Daily Catch Up as a crisp, upbeat spoken update.",
+      "Say these four lines in order, using the wording as written and only a brief natural breath between lines.",
+      "Do not add an introduction, headings, filler, or a recap. The opening and transition cues keep the presentation slides synchronized.",
+      ...slides.map((slide, index) => `${index + 1}. ${slide.narration}`)
+    ].join("\n")
   };
 }
 
@@ -105,6 +105,8 @@ function overviewSlide({ dateLabel, meetings, tasks, sprint, summary }) {
     eyebrow: dateLabel,
     title: "Your day, in one view",
     narrative: summary,
+    voiceCue: "Good morning. Here's your daily update.",
+    narration: `Good morning. Here's your daily update. ${summary}`,
     metrics: [
       { label: "Meetings", value: String(meetings.length) },
       { label: "Open tickets", value: String(tasks.length) },
@@ -115,6 +117,7 @@ function overviewSlide({ dateLabel, meetings, tasks, sprint, summary }) {
 }
 
 function calendarSlide(meetings) {
+  const nextMeeting = meetings.find((meeting) => meeting.status === "next") || meetings[0] || null;
   return {
     id: "calendar",
     eyebrow: "Calendar",
@@ -122,6 +125,10 @@ function calendarSlide(meetings) {
     narrative: meetings.length
       ? "Cooper has the schedule and can open any meeting as a context-rich working session."
       : "There are no calendar events in today’s connected view.",
+    voiceCue: "On your calendar",
+    narration: meetings.length
+      ? `On your calendar: ${meetings.length} meeting${meetings.length === 1 ? "" : "s"}. Next up is ${nextMeeting?.time || "today"}, ${nextMeeting?.title || "your next meeting"}.`
+      : "On your calendar: it's clear today.",
     metrics: [],
     items: meetings.map((meeting) => ({
       lead: meeting.time || "Today",
@@ -132,7 +139,7 @@ function calendarSlide(meetings) {
   };
 }
 
-function sprintSlide(tasks, sprint, assignment) {
+function sprintSlide(tasks, sprint, assignment, urgentTasks = []) {
   return {
     id: "sprint",
     eyebrow: sprint?.title || "Current sprint",
@@ -140,6 +147,10 @@ function sprintSlide(tasks, sprint, assignment) {
       ? assignment.mode === "matched" ? "Work assigned to Michael" : "Open work in the current sprint"
       : "No assigned sprint work found",
     narrative: assignment.message,
+    voiceCue: "In the sprint",
+    narration: tasks.length
+      ? `In the sprint: ${tasks.length} open ticket${tasks.length === 1 ? "" : "s"}${assignment.mode === "matched" ? " assigned to you" : ""}. ${urgentTasks.length ? `${urgentTasks.length} need${urgentTasks.length === 1 ? "s" : ""} date attention.` : "Nothing is overdue."}`
+      : "In the sprint: no assigned open tickets need your attention.",
     metrics: [],
     items: tasks.map((task) => ({
       lead: task.metadata?.taskId || task.status || "Task",
@@ -163,6 +174,8 @@ function focusSlide({ meetings, tasks, nextMeeting, activeTasks, urgentTasks }) 
     eyebrow: "Recommended focus",
     title: "A practical order for the day",
     narrative: "This is a suggested sequence, not an automatic commitment. Ask Cooper to reprioritize it with you.",
+    voiceCue: "Your focus for today",
+    narration: `Your focus for today: ${items.slice(0, 2).map((item) => item.title).join(", then ") || "protect a focus block"}. What do you want to tackle first?`,
     metrics: [],
     items
   };

@@ -683,6 +683,18 @@ body {
   border-top: 3px solid var(--so-volt);
   background: var(--so-surface);
   box-shadow: 0 12px 38px rgba(22, 22, 18, 0.1);
+  animation: daily-brief-card-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes daily-brief-card-in {
+  from {
+    opacity: 0;
+    transform: translate3d(18px, 0, 0) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
 }
 
 .daily-brief-slide-kicker {
@@ -835,6 +847,12 @@ body {
 
 .daily-brief-pagination > div button.active {
   background: var(--so-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .daily-brief-slide {
+    animation: none;
+  }
 }
 
 .daily-brief-actions button {
@@ -3103,4 +3121,124 @@ body {
   .context-result-row em {
     display: none;
   }
+}
+.pdf-artifact-document {
+  display: grid;
+  grid-template-rows: auto minmax(560px, 1fr);
+  min-height: 100%;
+  background: var(--so-soft, #f6f6f1);
+}
+
+.pdf-artifact-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--so-line, #dadcd4);
+  background: #fff;
+}
+
+.pdf-artifact-toolbar div {
+  display: grid;
+  gap: 2px;
+}
+
+.pdf-artifact-toolbar small {
+  color: var(--so-muted, #6f716b);
+}
+
+.pdf-artifact-document iframe {
+  width: 100%;
+  min-height: 70vh;
+  border: 0;
+  background: #ecece7;
+}
+.office-artifact-document {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: clamp(28px, 6vw, 72px);
+  background: var(--so-soft, #f6f6f1);
+}
+
+.office-artifact-card {
+  width: min(620px, 100%);
+  display: grid;
+  gap: 22px;
+  padding: clamp(26px, 5vw, 48px);
+  border: 1px solid var(--so-line, #dadcd4);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 20px 54px rgb(45 44 45 / 9%);
+}
+
+.office-artifact-mark {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #185abd;
+  color: #fff;
+  font: 700 30px/1 Arial, sans-serif;
+}
+
+.office-artifact-document.pptx .office-artifact-mark {
+  background: #c43e1c;
+}
+
+.office-artifact-document.xlsx .office-artifact-mark {
+  background: #217346;
+}
+
+.office-artifact-card div {
+  display: grid;
+  gap: 10px;
+}
+
+.office-artifact-card small {
+  color: var(--so-muted, #6f716b);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.office-artifact-card h2,
+.office-artifact-card p {
+  margin: 0;
+}
+
+.office-artifact-card p {
+  max-width: 56ch;
+  color: var(--so-muted, #6f716b);
+  line-height: 1.55;
+}
+
+.office-artifact-card .primary-action {
+  justify-self: start;
+}
+.call-chat-error {
+  margin: 0;
+  padding: 0 0.75rem 0.55rem;
+  color: #a23b32;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.call-quiet-row.chat-activity.running span {
+  animation: cooper-chat-pulse 1s ease-in-out infinite alternate;
+}
+
+.call-quiet-row.chat-activity.approval_required span {
+  background: #d89e2f;
+}
+
+.call-bottom button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@keyframes cooper-chat-pulse {
+  from { opacity: 0.35; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1.12); }
 }

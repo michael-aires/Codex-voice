@@ -74,7 +74,9 @@ export function normalizeSelectedContextSource(value = {}) {
     meta: clean(value.meta || value.description),
     updatedAt: clean(value.updatedAt || value.updated_at || value.lastEditedAt || value.last_edited_time),
     freshness: clean(value.freshness) === "review" ? "review" : freshnessFor(value.updatedAt || value.updated_at || value.lastEditedAt || value.last_edited_time),
-    content
+    content,
+    primary: Boolean(value.primary),
+    locked: Boolean(value.locked)
   };
 }
 
@@ -360,6 +362,7 @@ function normalizeType(provider, value, item = {}) {
   }
   if (provider === "meeting") return "meeting_summary";
   if (provider === "file") return "file";
+  if (provider === "paste" && ["plan", "daily_brief", "note"].includes(type)) return type;
   return "note";
 }
 

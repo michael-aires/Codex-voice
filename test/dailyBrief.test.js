@@ -39,9 +39,16 @@ test("Daily Catch Up filters the active sprint to Michael and produces four pres
   assert.deepEqual(brief.tasks.map((item) => item.title), ["Fix permissions"]);
   assert.equal(brief.slides.length, 4);
   assert.deepEqual(brief.slides.map((slide) => slide.id), ["overview", "calendar", "sprint", "focus"]);
+  assert.deepEqual(brief.slides.map((slide) => slide.voiceCue), [
+    "Good morning. Here's your daily update.",
+    "On your calendar",
+    "In the sprint",
+    "Your focus for today"
+  ]);
   assert.match(brief.summary, /1 meeting/);
   assert.match(brief.summary, /1 open ticket/);
-  assert.match(brief.voicePrompt, /present my Daily Catch Up/i);
+  assert.match(brief.voicePrompt, /Good morning\. Here's your daily update\./);
+  assert.match(brief.voicePrompt, /only a brief natural breath between lines/i);
   assert.equal(brief.trigger, "scheduled");
 });
 

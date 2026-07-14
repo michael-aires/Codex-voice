@@ -36,3 +36,26 @@ test("explicit artifact output metadata wins over inferred presentation", () => 
   assert.equal(artifactInitialMode({ outputType: "mcp_app" }), "app");
   assert.equal(artifactPreviewSurface({ outputType: "mcp_app" }), "mcp_app_iframe");
 });
+
+test("PDF artifacts use the binary iframe preview instead of markdown decoding", () => {
+  const artifact = { extension: "pdf", file: "data/artifacts/brief.pdf" };
+  assert.equal(artifactOutputTypeFromMetadata(artifact), "pdf");
+  assert.equal(artifactInitialMode(artifact), "preview");
+  assert.equal(artifactPreviewSurface(artifact), "pdf_iframe");
+});
+
+test("Word artifacts use a binary download surface instead of text decoding", () => {
+  const artifact = { extension: "docx", file: "data/artifacts/brief.docx" };
+  assert.equal(artifactOutputTypeFromMetadata(artifact), "docx");
+  assert.equal(artifactInitialMode(artifact), "download");
+  assert.equal(artifactPreviewSurface(artifact), "office_download");
+});
+
+test("PowerPoint and Excel artifacts use the shared binary Office download surface", () => {
+  for (const extension of ["pptx", "xlsx"]) {
+    const artifact = { extension, file: `data/artifacts/delivery.${extension}` };
+    assert.equal(artifactOutputTypeFromMetadata(artifact), extension);
+    assert.equal(artifactInitialMode(artifact), "download");
+    assert.equal(artifactPreviewSurface(artifact), "office_download");
+  }
+});

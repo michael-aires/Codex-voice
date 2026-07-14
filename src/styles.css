@@ -8594,7 +8594,7 @@ body,
 
 .call-canvas-tools {
   gap: 4px;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 160ms ease;
 }
 

@@ -17,6 +17,20 @@
 		B00000000000000000000008 /* ConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000018 /* ConnectionsView.swift */; };
 		B00000000000000000000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000019 /* SettingsView.swift */; };
 		B0000000000000000000000A /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001A /* Components.swift */; };
+		B0000000000000000000000B /* VoiceSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001C /* VoiceSession.swift */; };
+		B0000000000000000000000C /* ContextCheckpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001D /* ContextCheckpoint.swift */; };
+		B0000000000000000000000D /* ProjectsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001E /* ProjectsView.swift */; };
+		B0000000000000000000000E /* ArtifactLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001F /* ArtifactLibraryView.swift */; };
+		B0000000000000000000000F /* SessionCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000021 /* SessionCanvasView.swift */; };
+		B00000000000000000000022 /* OperatorWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000024 /* OperatorWorkspaceView.swift */; };
+		B00000000000000000000023 /* MoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000025 /* MoreView.swift */; };
+		B00000000000000000000026 /* DailyBriefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000027 /* DailyBriefView.swift */; };
+		B00000000000000000000028 /* CooperNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000029 /* CooperNotifications.swift */; };
+		B0000000000000000000002C /* SessionChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000002B /* SessionChatView.swift */; };
+		B0000000000000000000002D /* DeviceReadinessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000002E /* DeviceReadinessView.swift */; };
+		B0000000000000000000002F /* Cooper-Word-Brief.docx in Resources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000003F /* Cooper-Word-Brief.docx */; };
+		B00000000000000000000084 /* Cooper-PowerPoint-Decision-Deck.pptx in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000086 /* Cooper-PowerPoint-Decision-Deck.pptx */; };
+		B00000000000000000000085 /* Cooper-Excel-Action-Register.xlsx in Resources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000087 /* Cooper-Excel-Action-Register.xlsx */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +46,21 @@
 		B00000000000000000000019 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B0000000000000000000001A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		B0000000000000000000001B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B0000000000000000000001C /* VoiceSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSession.swift; sourceTree = "<group>"; };
+		B0000000000000000000001D /* ContextCheckpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextCheckpoint.swift; sourceTree = "<group>"; };
+		B0000000000000000000001E /* ProjectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsView.swift; sourceTree = "<group>"; };
+		B0000000000000000000001F /* ArtifactLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtifactLibraryView.swift; sourceTree = "<group>"; };
+		B00000000000000000000021 /* SessionCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCanvasView.swift; sourceTree = "<group>"; };
+		B00000000000000000000024 /* OperatorWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OperatorWorkspaceView.swift; sourceTree = "<group>"; };
+		B00000000000000000000025 /* MoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreView.swift; sourceTree = "<group>"; };
+		B00000000000000000000027 /* DailyBriefView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DailyBriefView.swift; sourceTree = "<group>"; };
+		B00000000000000000000029 /* CooperNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CooperNotifications.swift; sourceTree = "<group>"; };
+		B0000000000000000000002A /* CooperMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CooperMobile.entitlements; sourceTree = "<group>"; };
+		B0000000000000000000002B /* SessionChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionChatView.swift; sourceTree = "<group>"; };
+		B0000000000000000000002E /* DeviceReadinessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceReadinessView.swift; sourceTree = "<group>"; };
+		B0000000000000000000003F /* Cooper-Word-Brief.docx */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PreviewAssets/Cooper-Word-Brief.docx"; sourceTree = "<group>"; };
+		B00000000000000000000086 /* Cooper-PowerPoint-Decision-Deck.pptx */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PreviewAssets/Cooper-PowerPoint-Decision-Deck.pptx"; sourceTree = "<group>"; };
+		B00000000000000000000087 /* Cooper-Excel-Action-Register.xlsx */ = {isa = PBXFileReference; lastKnownFileType = file; path = "PreviewAssets/Cooper-Excel-Action-Register.xlsx"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -66,6 +95,21 @@
 				B00000000000000000000018 /* ConnectionsView.swift */,
 				B00000000000000000000019 /* SettingsView.swift */,
 				B0000000000000000000001A /* Components.swift */,
+				B0000000000000000000001C /* VoiceSession.swift */,
+				B0000000000000000000002B /* SessionChatView.swift */,
+				B0000000000000000000001D /* ContextCheckpoint.swift */,
+				B0000000000000000000001E /* ProjectsView.swift */,
+				B0000000000000000000001F /* ArtifactLibraryView.swift */,
+				B00000000000000000000021 /* SessionCanvasView.swift */,
+				B00000000000000000000024 /* OperatorWorkspaceView.swift */,
+				B00000000000000000000025 /* MoreView.swift */,
+				B00000000000000000000027 /* DailyBriefView.swift */,
+				B00000000000000000000029 /* CooperNotifications.swift */,
+				B0000000000000000000002E /* DeviceReadinessView.swift */,
+				B0000000000000000000003F /* Cooper-Word-Brief.docx */,
+				B00000000000000000000086 /* Cooper-PowerPoint-Decision-Deck.pptx */,
+				B00000000000000000000087 /* Cooper-Excel-Action-Register.xlsx */,
+				B0000000000000000000002A /* CooperMobile.entitlements */,
 				B0000000000000000000001B /* Info.plist */,
 			);
 			path = CooperMobile;
@@ -137,6 +181,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B0000000000000000000002F /* Cooper-Word-Brief.docx in Resources */,
+				B00000000000000000000084 /* Cooper-PowerPoint-Decision-Deck.pptx in Resources */,
+				B00000000000000000000085 /* Cooper-Excel-Action-Register.xlsx in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -157,6 +204,17 @@
 				B00000000000000000000008 /* ConnectionsView.swift in Sources */,
 				B00000000000000000000009 /* SettingsView.swift in Sources */,
 				B0000000000000000000000A /* Components.swift in Sources */,
+				B0000000000000000000000B /* VoiceSession.swift in Sources */,
+				B0000000000000000000002C /* SessionChatView.swift in Sources */,
+				B0000000000000000000000C /* ContextCheckpoint.swift in Sources */,
+				B0000000000000000000000D /* ProjectsView.swift in Sources */,
+				B0000000000000000000000E /* ArtifactLibraryView.swift in Sources */,
+				B0000000000000000000000F /* SessionCanvasView.swift in Sources */,
+				B00000000000000000000022 /* OperatorWorkspaceView.swift in Sources */,
+				B00000000000000000000023 /* MoreView.swift in Sources */,
+				B00000000000000000000026 /* DailyBriefView.swift in Sources */,
+				B00000000000000000000028 /* CooperNotifications.swift in Sources */,
+				B0000000000000000000002D /* DeviceReadinessView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -207,7 +265,9 @@
 		B00000000000000000000082 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = CooperMobile/CooperMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				COOPER_APNS_ENVIRONMENT = development;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_PREVIEWS = YES;
@@ -233,7 +293,9 @@
 		B00000000000000000000083 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = CooperMobile/CooperMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
+				COOPER_APNS_ENVIRONMENT = production;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;

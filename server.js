@@ -7,9 +7,12 @@ import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import Arcade from "@arcadeai/arcadejs";
 import { PDFParse } from "pdf-parse";
+import { renderArtifactDocx } from "./server/docxArtifact.js";
+import { renderArtifactPptx, renderArtifactXlsx } from "./server/officeArtifact.js";
+import { renderArtifactPdf } from "./server/pdfArtifact.js";
 import { cooperInstructions } from "./cooperPrompt.js";
 import { cooperToolDefinitions, cooperToolNames } from "./cooperTools.js";
 import {
@@ -45,6 +48,16 @@ import {
   pushToTalkConfigFromEnv
 } from "./server/pushToTalk.js";
 import {
+  cooperRouteFromOpenPath,
+  enqueueMobilePushEvents,
+  mobilePushConfigFromEnv,
+  mobilePushEvents,
+  mobilePushSnapshot,
+  registerMobilePushDevice,
+  sendMobilePush,
+  unregisterMobilePushDevice
+} from "./server/mobilePush.js";
+import {
   executeLocalComputerTool,
   logLocalComputerTool,
   localComputerToolNames
@@ -60,6 +73,15 @@ import {
 } from "./server/sessionResume.js";
 import { addResponsesApiUsage, normalizeResponsesApiUsage } from "./src/callCost.js";
 import { artifactOutputTypeFromMetadata } from "./src/artifactPresentation.js";
+import {
+  boundedSessionChatInput,
+  jsonSseEvents,
+  normalizeSessionChatPrompt,
+  parseFunctionArguments,
+  responseFunctionCalls,
+  responseOutputText,
+  responsesChatTools
+} from "./src/sessionChatProtocol.js";
 import {
   buildContextPacket,
   composeRealtimeSessionContext,
@@ -87,11 +109,23 @@ import {
   buildDailyBrief,
   millisecondsUntilLocalHour
 } from "./server/dailyBrief.js";
+import {
+  isLoopbackAddress,
+  normalizePlanIngest
+} from "./server/planIngest.js";
+import {
+  boundedContextPacketContext,
+  contextPacketIdsForCall,
+  contextPacketsForCall,
+  contextSourceCountForCall
+} from "./server/sessionContextLineage.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 5000);
-const dataDir = join(__dirname, "data");
+const dataDir = process.env.COOPER_DATA_DIR
+  ? resolve(process.env.COOPER_DATA_DIR)
+  : join(__dirname, "data");
 const artifactsDir = join(dataDir, "artifacts");
 const dbPath = join(dataDir, "cooper.json");
 const workModel = process.env.COOPER_WORK_MODEL || "gpt-5.4";
@@ -99,6 +133,9 @@ const fallbackWorkModel = process.env.COOPER_FALLBACK_WORK_MODEL || "";
 const jobDelayMs = Number(process.env.COOPER_JOB_DELAY_MS || 15000);
 const jobMaxAttempts = Number(process.env.COOPER_JOB_MAX_ATTEMPTS || 3);
 const jobMaxOutputTokens = Number(process.env.COOPER_JOB_MAX_OUTPUT_TOKENS || 9000);
+const chatModel = process.env.COOPER_CHAT_MODEL || workModel;
+const chatMaxOutputTokens = Number(process.env.COOPER_CHAT_MAX_OUTPUT_TOKENS || 1800);
+const chatMaxToolRounds = Math.max(1, Number(process.env.COOPER_CHAT_MAX_TOOL_ROUNDS || 8));
 const projectContextChars = Number(process.env.COOPER_PROJECT_CONTEXT_CHARS || 18000);
 const projectSourceMaxChars = Number(process.env.COOPER_PROJECT_SOURCE_MAX_CHARS || 250000);
 const projectUploadMaxBytes = Number(process.env.COOPER_PROJECT_UPLOAD_MAX_MB || 20) * 1024 * 1024;
@@ -113,6 +150,10 @@ const appPassword = process.env.COOPER_APP_PASSWORD || "";
 const sessionSecret = process.env.COOPER_SESSION_SECRET || appPassword;
 const cookieName = "cooper_session";
 const sessionTtlMs = Number(process.env.COOPER_SESSION_TTL_HOURS || 168) * 60 * 60 * 1000;
+const ingestToken = process.env.COOPER_INGEST_TOKEN || "";
+const planIngestMaxChars = Number(process.env.COOPER_PLAN_INGEST_MAX_CHARS || 120000);
+const mobilePushConfig = mobilePushConfigFromEnv(process.env);
+const iosAssociatedAppId = cleanText(process.env.COOPER_IOS_ASSOCIATED_APP_ID || "");
 const arcadeUserId = process.env.ARCADE_USER_ID || "michael";
 const arcadeMcpGatewayUrl = process.env.ARCADE_MCP_GATEWAY_URL || "";
 const arcadeToolMappings = {
@@ -180,6 +221,7 @@ const pushToTalkUpload = multer({
 });
 const eventClients = new Set();
 const operatorTimers = new Map();
+const activeSessionChats = new Set();
 let writeQueue = Promise.resolve();
 let workerActive = false;
 let lastGenerationAt = 0;
@@ -189,9 +231,15 @@ let todayRemoteCache = null;
 let todayRemoteRefresh = null;
 let dailyBriefRefresh = null;
 let dailyBriefTimer = null;
+let mobilePushTimer = null;
+let mobilePushWorkerActive = false;
 
 app.use(express.text({ type: ["application/sdp", "text/plain"], limit: "2mb" }));
 app.use(express.json({ limit: "24mb" }));
+
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true, name: "cooper" });
+});
 
 app.get("/api/auth/session", (req, res) => {
   res.json({ authenticated: isAuthenticated(req) });
@@ -232,7 +280,7 @@ app.post("/api/auth/logout", (_req, res) => {
 });
 
 app.use((req, res, next) => {
-  if (req.path.startsWith("/api/auth/")) {
+  if (req.path.startsWith("/api/auth/") || req.path === "/api/ingest/plan") {
     next();
     return;
   }
@@ -261,8 +309,33 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get("/.well-known/apple-app-site-association", (_req, res) => {
+  if (!iosAssociatedAppId) {
+    res.status(404).json({ error: "Set COOPER_IOS_ASSOCIATED_APP_ID before enabling universal links." });
+    return;
+  }
+  res.type("application/json").send({
+    applinks: {
+      apps: [],
+      details: [{
+        appIDs: [iosAssociatedAppId],
+        components: [{ "/": "/open/*", comment: "Open Cooper iOS workspace destinations." }]
+      }]
+    }
+  });
+});
+
+app.get("/open/*", (req, res) => {
+  const route = cooperRouteFromOpenPath(req.path, req.query?.approval);
+  res.type("html").send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Cooper</title><style>body{margin:0;background:#f7f7f2;color:#181916;font:17px -apple-system,BlinkMacSystemFont,sans-serif;display:grid;min-height:100vh;place-items:center}.card{max-width:32rem;padding:2rem}h1{font-size:2rem}a{display:inline-block;background:#f9df27;color:#181916;text-decoration:none;font-weight:700;padding:.9rem 1.2rem;border-radius:.7rem}</style></head><body><main class="card"><p>COOPER · AIRES SESSION OS</p><h1>Continue in Cooper</h1><p>This link opens the exact workspace destination in the iOS app. If universal links are not configured for this host yet, use the button below.</p><a href="${escapeHtml(route)}">Open Cooper</a></main></body></html>`);
+});
+
 app.get("/prototypes/session-context-overview", (_req, res) => {
   res.sendFile(join(__dirname, "docs", "cooper-session-context-overview-prototype.html"));
+});
+
+app.get("/prototypes/chat-micro-ui", (_req, res) => {
+  res.sendFile(join(__dirname, "docs", "cooper-chat-micro-ui-prototype.html"));
 });
 
 const baseSession = {
@@ -355,6 +428,38 @@ const artifactRecipes = {
       "Add a prototype brief section that Cooper can use to produce a mobile-first HTML prototype, including screens, states, content hierarchy, and interaction notes."
     ]
   },
+  pdf_brief: {
+    title: "PDF brief",
+    outputType: "pdf",
+    steps: [
+      "Distill the selected session evidence into a concise executive brief. Preserve decisions, evidence, constraints, risks, open questions, owners, and next actions without inventing facts.",
+      "Return polished Markdown for a portrait PDF. Use a short executive summary, clear section headings, concise paragraphs, and bounded bullet lists. Avoid wide tables, HTML, external assets, emoji, and markdown fences."
+    ]
+  },
+  word_brief: {
+    title: "Word brief",
+    outputType: "docx",
+    steps: [
+      "Distill the selected session evidence into a concise executive brief. Preserve decisions, evidence, constraints, risks, open questions, owners, and next actions without inventing facts.",
+      "Return polished Markdown for an editable Word brief. Use a short executive summary, clear section headings, concise paragraphs, real numbered or bulleted lists, and bounded checklists. Avoid wide tables, HTML, external assets, emoji, and markdown fences."
+    ]
+  },
+  powerpoint_deck: {
+    title: "PowerPoint decision deck",
+    outputType: "pptx",
+    steps: [
+      "Distill the selected session evidence into a short audience-facing narrative. Preserve the outcome, decisions, evidence, constraints, readiness signals, and next action without inventing facts.",
+      "Return polished Markdown for a four-slide PowerPoint decision deck. Use a concise executive summary, three to five clearly named evidence sections, bounded checklist items, and one decisive next move. Avoid tables, HTML, external assets, emoji, speaker notes, and markdown fences."
+    ]
+  },
+  excel_action_register: {
+    title: "Excel action register",
+    outputType: "xlsx",
+    steps: [
+      "Extract concrete decisions, commitments, owners, priorities, due dates, open questions, and readiness checks from the selected session evidence. Never invent an owner or date.",
+      "Return structured Markdown for an editable Excel action register. Use clear section headings and one concise list item per decision, action, risk, or open question. Add owner, priority, or YYYY-MM-DD due dates inline only when the source supplied them. Avoid HTML, wide tables, external assets, emoji, and markdown fences."
+    ]
+  },
   html_prototype: {
     title: "HTML prototype",
     outputType: "html",
@@ -441,12 +546,9 @@ app.post("/session", async (req, res) => {
   const db = projectId || callId ? await readDb() : null;
   const call = db && callId ? db.calls.find((item) => item.id === callId) : null;
   const resolvedProjectId = projectId || call?.projectId || "";
-  const projectContext = call?.projectContextSnapshot || (db && resolvedProjectId ? buildProjectContext(db, resolvedProjectId) : "");
-  const resumeContext = call?.resumePacket ? formatSessionResumeContext(call.resumePacket) : "";
-  const contextPacket = db && call?.contextPacketId
-    ? db.contextPackets.find((item) => item.id === call.contextPacketId)
-    : null;
-  const sessionContext = composeRealtimeSessionContext(projectContext, resumeContext, contextPacket?.context || "");
+  const sessionContext = call
+    ? buildLiveCallContext(db, call).sessionContext
+    : composeRealtimeSessionContext(db && resolvedProjectId ? buildProjectContext(db, resolvedProjectId) : "");
 
   const fd = new FormData();
   fd.set("sdp", sdp);
@@ -604,6 +706,41 @@ app.post("/api/zoom/signature", (req, res) => {
 app.get("/api/operator/state", async (_req, res) => {
   const db = await readDb();
   res.json(publicOperatorState(db));
+});
+
+app.get("/api/mobile-push/status", async (_req, res) => {
+  const db = await readDb();
+  res.json({ mobilePush: publicMobilePushStatus(db) });
+});
+
+app.get("/api/mobile-readiness", async (_req, res) => {
+  const db = await readDb();
+  res.json({ readiness: publicMobileReadiness(db) });
+});
+
+app.post("/api/mobile-push/devices", async (req, res) => {
+  const result = await updateDb((db) => {
+    const registration = registerMobilePushDevice(db.mobilePushDevices, req.body || {});
+    if (registration.error) return registration;
+    db.mobilePushDevices = registration.devices;
+    return registration;
+  });
+  if (result.error) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  scheduleMobilePushWorker(100);
+  const db = await readDb();
+  res.status(201).json({ device: publicMobilePushDevice(result.device), mobilePush: publicMobilePushStatus(db) });
+});
+
+app.post("/api/mobile-push/devices/unregister", async (req, res) => {
+  const result = await updateDb((db) => {
+    const removal = unregisterMobilePushDevice(db.mobilePushDevices, req.body || {});
+    db.mobilePushDevices = removal.devices;
+    return removal;
+  });
+  res.json({ removed: result.removed, mobilePush: publicMobilePushStatus(await readDb()) });
 });
 
 app.post("/api/operator/tasks", async (req, res) => {
@@ -1135,51 +1272,8 @@ app.post("/api/tools/execute", async (req, res) => {
     return;
   }
 
-  const recordId = randomUUID();
-  const startedAt = Date.now();
-  await updateDb((db) => {
-    db.toolCalls.push({
-      id: recordId,
-      callId,
-      userId: arcadeUserId,
-      toolName: name,
-      arcadeToolName: arcadeToolMappings[name] || null,
-      arguments: safeToolArguments(name, args),
-      riskLevel: toolRiskLevel(name),
-      status: "pending",
-      resultSummary: "",
-      error: null,
-      durationMs: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-  });
-
-  try {
-    const output = await executeCooperTool(name, args, { callId });
-    const durationMs = Date.now() - startedAt;
-    await updateToolCall(recordId, {
-      status: output.status === "error" ? "failed" : output.status === "approval_required" ? "pending_approval" : "executed",
-      resultSummary: summarizeToolResult(output),
-      durationMs,
-      error: output.status === "error" ? output.message || "Tool failed." : null
-    });
-    res.json({ output, recordId });
-  } catch (error) {
-    const output = {
-      status: "error",
-      tool: name,
-      message: error.message || "Cooper tool execution failed.",
-      retryable: false
-    };
-    await updateToolCall(recordId, {
-      status: "failed",
-      resultSummary: summarizeToolResult(output),
-      durationMs: Date.now() - startedAt,
-      error: output.message
-    });
-    res.status(500).json({ output, recordId });
-  }
+  const result = await executeRecordedCooperTool(name, args, { callId });
+  res.status(result.statusCode).json({ output: result.output, recordId: result.recordId });
 });
 
 app.get("/api/events", (req, res) => {
@@ -1223,61 +1317,31 @@ app.get("/api/calls/:id/resume", async (req, res) => {
   res.json({ call: publicCall(call), resumePacket: buildCallResumePacket(db, call) });
 });
 
-app.post("/api/calls", async (req, res) => {
-  const now = new Date().toISOString();
-  const requestedProjectId = cleanText(req.body?.projectId);
-  const resumedFromCallId = cleanText(req.body?.resumedFromCallId);
-  const contextPacketId = cleanText(req.body?.contextPacketId);
+app.get("/api/calls/:id/live-context", async (req, res) => {
+  const db = await readDb();
+  const call = db.calls.find((item) => item.id === req.params.id);
+  if (!call) {
+    res.status(404).json({ error: "Call not found." });
+    return;
+  }
 
-  const result = await updateDb((db) => {
-    const sourceCall = resumedFromCallId
-      ? db.calls.find((item) => item.id === resumedFromCallId)
-      : null;
-    if (resumedFromCallId && !sourceCall) return { error: "Session to resume was not found." };
-    const contextPacket = contextPacketId
-      ? db.contextPackets.find((item) => item.id === contextPacketId)
-      : null;
-    if (contextPacketId && !contextPacket) return { error: "Selected context packet was not found." };
-
-    const projectId = requestedProjectId || sourceCall?.projectId || "";
-    const project = projectId
-      ? db.projects.find((item) => item.id === projectId)
-      : null;
-    const resumePacket = sourceCall ? buildCallResumePacket(db, sourceCall) : null;
-    if (sourceCall) sourceCall.resumePacket = resumePacket;
-    const callId = randomUUID();
-    const nextCall = {
-      id: callId,
-      title: cleanText(req.body?.title) || (sourceCall ? `Continue: ${sourceCall.title}` : `Cooper call ${new Date().toLocaleString()}`),
-      status: "active",
-      startedAt: req.body?.startedAt || now,
-      endedAt: null,
-      durationSeconds: 0,
-      projectId: project?.id || "",
-      projectTitle: project?.title || "",
-      projectContextSnapshot: [
-        project ? buildProjectContext(db, project.id) : sourceCall?.projectContextSnapshot || "",
-        contextPacket?.context || ""
-      ].filter(Boolean).join("\n\n"),
-      contextPacketId: contextPacket?.id || "",
-      contextSourceCount: Number(contextPacket?.sourceCount || 0),
-      resumedFromCallId: sourceCall?.id || "",
-      threadId: sourceCall?.threadId || sourceCall?.id || callId,
-      continuationIndex: sourceCall ? Number(sourceCall.continuationIndex || 0) + 1 : 0,
-      resumePacket,
-      resumeSourcePacket: resumePacket,
-      transcript: [],
-      suggestions: defaultSuggestions(),
-      createdAt: now,
-      updatedAt: now
-    };
-    if (project) {
-      project.lastUsedAt = now;
-      project.updatedAt = now;
-    }
-    db.calls.push(nextCall);
-    return { call: nextCall };
+  const liveContext = buildLiveCallContext(db, call);
+  res.json({
+    call: publicCall(call),
+    project: liveContext.project
+      ? publicProject(
+          liveContext.project,
+          db.projectSources.filter((source) => source.projectId === liveContext.project.id)
+        )
+      : null,
+    projectContext: liveContext.projectContext,
+    sessionContext: liveContext.sessionContext,
+    realtimeSession: realtimeSession(liveContext.sessionContext)
   });
+});
+
+app.post("/api/calls", async (req, res) => {
+  const result = await updateDb((db) => createCallInDb(db, req.body));
 
   if (result.error) {
     res.status(404).json({ error: result.error });
@@ -1287,8 +1351,149 @@ app.post("/api/calls", async (req, res) => {
   res.status(201).json({ call: publicCall(result.call) });
 });
 
+app.post("/api/ingest/plan", async (req, res) => {
+  if (!ingestToken) {
+    res.status(503).json({ error: "Plan ingest is disabled. Set COOPER_INGEST_TOKEN on the Cooper host." });
+    return;
+  }
+
+  const remoteAddress = req.ip || req.socket?.remoteAddress || "";
+  if (!isLoopbackAddress(remoteAddress)) {
+    res.status(403).json({ error: "Plan ingest is only available from the Cooper host." });
+    return;
+  }
+
+  const bearer = /^Bearer\s+(.+)$/i.exec(cleanText(req.headers.authorization));
+  if (!safeCompare(bearer?.[1] || "", ingestToken)) {
+    res.status(401).json({ error: "Invalid plan-ingest token." });
+    return;
+  }
+
+  const input = normalizePlanIngest(req.body, { maxChars: planIngestMaxChars });
+  if (input.error) {
+    res.status(400).json({ error: input.error });
+    return;
+  }
+
+  const result = await updateDb((db) => {
+    const now = new Date().toISOString();
+    const packet = buildContextPacket({
+      id: randomUUID(),
+      intent: `Review and discuss the imported plan${input.repo ? ` for ${input.repo}` : ""}.`,
+      sources: [{
+        id: randomUUID(),
+        provider: "paste",
+        type: "plan",
+        title: input.repo ? `Plan · ${input.repo}` : "Imported plan",
+        meta: [input.source, input.truncated ? `Stored ${input.storedChars} of ${input.originalChars} characters` : ""].filter(Boolean).join(" · "),
+        content: input.plan,
+        resolutionStatus: "completed",
+        primary: true,
+        locked: true,
+        updatedAt: now
+      }],
+      createdAt: now,
+      updatedAt: now
+    }, { maxChars: contextPacketMaxChars });
+    db.contextPackets.push(packet);
+
+    return createCallInDb(db, {
+      title: input.title,
+      contextPacketId: packet.id,
+      source: "plan_ingest",
+      sourceLabel: input.repo ? `Imported plan · ${input.repo}` : "Imported plan",
+      sourceDetail: input.source,
+      startedAt: now
+    }, now);
+  });
+
+  if (result.error) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+
+  const callId = result.call.id;
+  res.status(201).json({
+    callId,
+    contextPacketId: result.call.contextPacketId,
+    url: `/?call=${encodeURIComponent(callId)}`,
+    webUrl: `/?call=${encodeURIComponent(callId)}`,
+    universalUrl: `/open/sessions/${encodeURIComponent(callId)}`,
+    appUrl: `cooper://sessions/${encodeURIComponent(callId)}`,
+    truncated: input.truncated
+  });
+});
+
+function createCallInDb(db, input = {}, now = new Date().toISOString()) {
+  const requestedProjectId = cleanText(input.projectId);
+  const resumedFromCallId = cleanText(input.resumedFromCallId);
+  const requestedContextPacketId = cleanText(input.contextPacketId);
+  const sourceCall = resumedFromCallId
+    ? db.calls.find((item) => item.id === resumedFromCallId)
+    : null;
+  if (resumedFromCallId && !sourceCall) return { error: "Session to resume was not found." };
+
+  const inheritedContextPacketIds = sourceCall ? contextPacketIdsForCall(sourceCall) : [];
+  const contextPacketIds = [...new Set([...inheritedContextPacketIds, requestedContextPacketId].filter(Boolean))].slice(-6);
+  const requestedContextPacket = requestedContextPacketId
+    ? db.contextPackets.find((item) => item.id === requestedContextPacketId)
+    : null;
+  if (requestedContextPacketId && !requestedContextPacket) {
+    return { error: "Selected context packet was not found." };
+  }
+  const availableContextPackets = contextPacketIds
+    .map((id) => db.contextPackets.find((item) => item.id === id))
+    .filter(Boolean);
+
+  const projectId = requestedProjectId || sourceCall?.projectId || "";
+  const project = projectId ? db.projects.find((item) => item.id === projectId) : null;
+  if (projectId && !project) return { error: "Selected project was not found." };
+
+  const resumePacket = sourceCall ? buildCallResumePacket(db, sourceCall) : null;
+  if (sourceCall) sourceCall.resumePacket = resumePacket;
+  const callId = randomUUID();
+  const contextPacketId = requestedContextPacket?.id
+    || sourceCall?.contextPacketId
+    || contextPacketIds.at(-1)
+    || "";
+  const nextCall = {
+    id: callId,
+    title: cleanText(input.title) || (sourceCall ? `Continue: ${sourceCall.title}` : `Cooper call ${new Date().toLocaleString()}`),
+    status: "active",
+    source: cleanText(input.source) || (sourceCall?.source ? "continuation" : "session"),
+    sourceLabel: cleanText(input.sourceLabel) || cleanText(sourceCall?.sourceLabel),
+    sourceDetail: cleanText(input.sourceDetail) || cleanText(sourceCall?.sourceDetail),
+    startedAt: input.startedAt || now,
+    endedAt: null,
+    durationSeconds: 0,
+    projectId: project?.id || "",
+    projectTitle: project?.title || "",
+    projectContextSnapshot: project
+      ? buildProjectContext(db, project.id)
+      : sourceCall?.projectContextSnapshot || "",
+    contextPacketId,
+    contextPacketIds,
+    contextSourceCount: availableContextPackets.reduce((total, packet) => total + Number(packet.sourceCount || 0), 0),
+    resumedFromCallId: sourceCall?.id || "",
+    threadId: sourceCall?.threadId || sourceCall?.id || callId,
+    continuationIndex: sourceCall ? Number(sourceCall.continuationIndex || 0) + 1 : 0,
+    resumePacket,
+    resumeSourcePacket: resumePacket,
+    transcript: [],
+    suggestions: defaultSuggestions(),
+    createdAt: now,
+    updatedAt: now
+  };
+  if (project) {
+    project.lastUsedAt = now;
+    project.updatedAt = now;
+  }
+  db.calls.push(nextCall);
+  return { call: nextCall };
+}
+
 app.patch("/api/calls/:id", async (req, res) => {
-  const result = await updateDb(async (db) => {
+  const result = await updateDb((db) => {
     const call = db.calls.find((item) => item.id === req.params.id);
     if (!call) return null;
 
@@ -1298,12 +1503,29 @@ app.patch("/api/calls/:id", async (req, res) => {
     if (Array.isArray(req.body?.transcript)) call.transcript = normalizeTranscript(req.body.transcript);
     if (req.body?.realtimeUsage) call.realtimeUsage = normalizeCallUsage(req.body.realtimeUsage);
     if (req.body?.endedAt) call.endedAt = req.body.endedAt;
+    if (typeof req.body?.projectId === "string") {
+      const projectId = cleanText(req.body.projectId);
+      const project = projectId
+        ? db.projects.find((item) => item.id === projectId)
+        : null;
+      if (projectId && !project) return { error: "Selected project was not found." };
+      call.projectId = project?.id || "";
+      syncCallProjectContext(db, call, new Date().toISOString());
+      if (project) {
+        project.lastUsedAt = new Date().toISOString();
+        project.updatedAt = project.lastUsedAt;
+      }
+    }
     call.updatedAt = new Date().toISOString();
     return call;
   });
 
   if (!result) {
     res.status(404).json({ error: "Call not found." });
+    return;
+  }
+  if (result.error) {
+    res.status(404).json({ error: result.error });
     return;
   }
   res.json({ call: publicCall(result) });
@@ -1335,6 +1557,195 @@ app.post("/api/calls/:id/transcript", async (req, res) => {
     return;
   }
   res.status(201).json({ entry, call: publicCall(result) });
+});
+
+app.post("/api/calls/:id/chat", async (req, res) => {
+  if (!process.env.OPENAI_API_KEY) {
+    res.status(500).json({ error: "Missing OPENAI_API_KEY on the server." });
+    return;
+  }
+
+  const normalized = normalizeSessionChatPrompt(req.body?.message);
+  if (normalized.error) {
+    res.status(400).json({ error: normalized.error });
+    return;
+  }
+
+  const callId = cleanText(req.params.id);
+  const messageId = cleanText(req.body?.messageId) || randomUUID();
+  const initialDb = await readDb();
+  const initialCall = initialDb.calls.find((item) => item.id === callId);
+  if (!initialCall) {
+    res.status(404).json({ error: "Call not found." });
+    return;
+  }
+  if (initialCall.status !== "active") {
+    res.status(409).json({ error: "Resume this ended session before sending another message." });
+    return;
+  }
+  if (activeSessionChats.has(callId)) {
+    res.status(409).json({ error: "Cooper is already responding in this session." });
+    return;
+  }
+
+  activeSessionChats.add(callId);
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+
+  try {
+    const userEntry = normalizeTranscript([{
+      id: messageId,
+      at: new Date().toISOString(),
+      speaker: "Michael",
+      text: normalized.prompt,
+      source: "typed_chat"
+    }])[0];
+    const accepted = await appendTranscriptToCall(callId, userEntry);
+    if (!accepted) throw new Error("The session disappeared before the message could be saved.");
+    writeSessionChatEvent(res, { type: "message.accepted", entry: userEntry, call: publicCall(accepted) });
+
+    const db = await readDb();
+    const call = db.calls.find((item) => item.id === callId);
+    const sessionContext = call ? buildLiveCallContext(db, call, { includeActiveTranscript: false }).sessionContext : "";
+    const instructions = [
+      cooperInstructions,
+      sessionContext,
+      "# Typed session channel",
+      "This is a first-class typed turn inside the same durable Cooper session used by voice. Reply with concise public-facing text only. Never expose hidden reasoning. Use the supplied Cooper tools whenever the request needs workspace data, calendar or Notion access, background artifacts, approvals, or other session actions. Preserve all write-confirmation gates."
+    ].filter(Boolean).join("\n\n");
+    let input = boundedSessionChatInput(accepted.transcript);
+    let previousResponseId = "";
+    let latestResponseId = "";
+    const assistantParts = [];
+
+    for (let round = 0; round < chatMaxToolRounds; round += 1) {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+          "OpenAI-Safety-Identifier": "cooper-session-chat"
+        },
+        body: JSON.stringify({
+          model: chatModel,
+          instructions,
+          input,
+          ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+          tools: responsesChatTools(cooperToolDefinitions),
+          tool_choice: "auto",
+          parallel_tool_calls: true,
+          reasoning: { effort: "low" },
+          max_output_tokens: chatMaxOutputTokens,
+          text: { format: { type: "text" } },
+          stream: true,
+          store: true
+        })
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error?.message || `OpenAI Responses API failed with ${response.status}.`);
+      }
+
+      let completedResponse = null;
+      for await (const event of jsonSseEvents(response.body)) {
+        if (event.type === "response.output_text.delta" && event.delta) {
+          writeSessionChatEvent(res, {
+            type: "message.delta",
+            messageId,
+            responseId: event.response_id || latestResponseId,
+            delta: event.delta
+          });
+        } else if (event.type === "response.completed") {
+          completedResponse = event.response;
+        } else if (event.type === "response.failed") {
+          throw new Error(event.response?.error?.message || "Cooper could not complete this response.");
+        } else if (event.type === "error") {
+          throw new Error(event.message || event.error?.message || "The chat stream failed.");
+        }
+      }
+
+      if (!completedResponse) throw new Error("The chat stream ended before Cooper completed the response.");
+      latestResponseId = cleanText(completedResponse.id) || latestResponseId;
+      previousResponseId = latestResponseId;
+      const responseText = responseOutputText(completedResponse);
+      if (responseText) assistantParts.push(responseText);
+      await recordSessionChatUsage(callId, completedResponse);
+
+      const functionCalls = responseFunctionCalls(completedResponse);
+      if (!functionCalls.length) break;
+      if (round === chatMaxToolRounds - 1) {
+        throw new Error("Cooper reached the tool-call limit for this turn. Narrow the request and retry.");
+      }
+
+      const outputs = [];
+      for (const functionCall of functionCalls) {
+        writeSessionChatEvent(res, {
+          type: "activity.started",
+          activity: {
+            id: functionCall.call_id,
+            name: functionCall.name,
+            status: "running",
+            label: toolLabel(functionCall.name)
+          }
+        });
+        const result = await executeRecordedCooperTool(
+          functionCall.name,
+          parseFunctionArguments(functionCall.arguments),
+          { callId }
+        );
+        writeSessionChatEvent(res, {
+          type: "activity.completed",
+          activity: {
+            id: functionCall.call_id,
+            name: functionCall.name,
+            status: result.output?.status || (result.statusCode >= 400 ? "error" : "completed"),
+            label: toolLabel(functionCall.name),
+            message: cleanText(result.output?.message || result.output?.value || result.output?.status),
+            recordId: result.recordId
+          }
+        });
+        outputs.push({
+          type: "function_call_output",
+          call_id: functionCall.call_id,
+          output: JSON.stringify(result.output)
+        });
+      }
+      input = outputs;
+    }
+
+    const assistantText = assistantParts.join("\n\n").trim();
+    if (!assistantText) throw new Error("Cooper completed the turn without a public response.");
+    const assistantEntry = normalizeTranscript([{
+      id: randomUUID(),
+      at: new Date().toISOString(),
+      speaker: "Cooper",
+      text: assistantText,
+      source: "typed_chat",
+      responseId: latestResponseId
+    }])[0];
+    const completedCall = await appendTranscriptToCall(callId, assistantEntry);
+    writeSessionChatEvent(res, { type: "message.completed", entry: assistantEntry, call: publicCall(completedCall) });
+
+    const finalDb = await readDb();
+    writeSessionChatEvent(res, {
+      type: "session.snapshot",
+      call: publicCall(finalDb.calls.find((item) => item.id === callId)),
+      jobs: finalDb.jobs.filter((item) => item.callId === callId).map(publicJob),
+      artifacts: finalDb.artifacts.filter((item) => item.callId === callId).map(publicArtifact)
+    });
+    writeSessionChatEvent(res, { type: "done" });
+    res.end();
+  } catch (error) {
+    writeSessionChatEvent(res, { type: "error", error: error.message || "Cooper chat failed.", retryable: true });
+    res.end();
+  } finally {
+    activeSessionChats.delete(callId);
+  }
 });
 
 app.post("/api/calls/:id/end", async (req, res) => {
@@ -1384,7 +1795,7 @@ app.get("/api/artifacts/:id/content", async (req, res) => {
   }
 
   try {
-    const content = await readFile(join(artifactsDir, artifactFileName(artifact)), "utf8");
+    const content = await readFile(join(artifactsDir, artifactFileName(artifact)));
     res.type(artifactMimeType(artifact)).send(content);
   } catch {
     res.status(404).type("text/plain").send("Artifact file not found.");
@@ -1580,7 +1991,7 @@ async function runJob(jobId) {
         nextJob.updatedAt = new Date().toISOString();
       });
 
-      const stepPrompt = buildWorkPrompt(call, job, recipe.steps[job.stepIndex]);
+      const stepPrompt = buildWorkPrompt(db, call, job, recipe.steps[job.stepIndex]);
       const requestStartedAt = new Date().toISOString();
       const model = modelForAttempt(attempt);
       const maxOutputTokens = outputTokenBudget(recipe);
@@ -1640,7 +2051,7 @@ async function runJob(jobId) {
           nextJob,
           "step_complete",
           nextJob.stepIndex >= nextJob.stepCount
-            ? "All model steps completed. Cooper is writing the Markdown file."
+            ? `All model steps completed. Cooper is writing the ${artifactOutputLabel(recipe.outputType || "markdown")}.`
             : `Step complete. Waiting ${formatRetryDelay(jobDelayMs)} before the next model call.`
         );
         nextJob.updatedAt = new Date().toISOString();
@@ -1686,13 +2097,26 @@ async function completeArtifact(job, call) {
   const recipe = artifactRecipes[job.kind] || {};
   const safeTitle = cleanText(job.title) || recipe.title || "Cooper artifact";
   const outputType = recipe.outputType || "markdown";
-  const extension = outputType === "html" ? "html" : "md";
-  const mimeType = outputType === "html" ? "text/html" : "text/markdown";
-  const content = outputType === "html"
+  const extension = defaultArtifactExtension(outputType);
+  const mimeType = defaultArtifactMimeType(outputType);
+  const sourceContent = outputType === "html"
     ? normalizeHtml(extractHtmlDocument(job.draft) || prototypeFallbackHtml(safeTitle, job.draft))
     : normalizeMarkdown(`# ${safeTitle}\n\n${job.draft}`);
+  const content = outputType === "pdf"
+    ? await renderArtifactPdf({ title: safeTitle, content: sourceContent, createdAt: now })
+    : outputType === "docx"
+      ? await renderArtifactDocx({ title: safeTitle, content: sourceContent, createdAt: now })
+      : outputType === "pptx"
+        ? await renderArtifactPptx({ title: safeTitle, content: sourceContent, createdAt: now })
+        : outputType === "xlsx"
+          ? await renderArtifactXlsx({ title: safeTitle, content: sourceContent, createdAt: now })
+          : sourceContent;
 
-  await writeFile(join(artifactsDir, `${artifactId}.${extension}`), content, "utf8");
+  await writeFile(
+    join(artifactsDir, `${artifactId}.${extension}`),
+    content,
+    ["pdf", "docx", "pptx", "xlsx"].includes(outputType) ? undefined : "utf8"
+  );
 
   await updateDb((db) => {
     const nextJob = db.jobs.find((item) => item.id === job.id);
@@ -1723,7 +2147,7 @@ async function completeArtifact(job, call) {
       nextJob.progress = "Artifact ready.";
       nextJob.activeStepSummary = "";
       nextJob.draftCharCount = nextJob.draft?.length || 0;
-      appendJobLog(nextJob, "completed", `${outputType === "html" ? "HTML artifact" : "Markdown artifact"} saved: ${safeTitle}.`);
+      appendJobLog(nextJob, "completed", `${artifactOutputLabel(outputType)} saved: ${safeTitle}.`);
       nextJob.updatedAt = now;
     }
     if (nextCall) {
@@ -1970,11 +2394,12 @@ function outputTokenBudget(recipe = {}) {
   return Math.max(jobMaxOutputTokens, Number(recipe.maxOutputTokens || 0) || 0);
 }
 
-function buildWorkPrompt(call, job, step) {
+function buildWorkPrompt(db, call, job, step) {
   const transcript = call.transcript
     .map((entry) => `- [${entry.at}] ${entry.speaker || "speaker"}: ${entry.text}`)
     .join("\n");
   const recipe = artifactRecipes[job.kind] || {};
+  const sessionEvidence = buildLiveCallContext(db, call).sessionContext;
   const finalInstruction = job.kind === "aires_requirements"
     ? "Return only the content requested for this step. If this step asks for the final artifact, return a complete standalone AIRES-branded HTML document starting with <!doctype html>, with inline CSS and a simple window.print() Export PDF button, no external scripts, no stock imagery, no gradients, no emoji, and no markdown fences."
     : recipe.outputType === "html"
@@ -1997,7 +2422,7 @@ Output type: ${recipe.outputType || "markdown"}
 
 Source priority:
 - If Michael provided an additional instruction or pasted source context, treat it as the primary source of truth for this artifact.
-- Use the transcript and any attached project context only as supporting context.
+- Use the transcript and attached session evidence only as supporting context.
 - If the sources conflict, follow Michael's additional instruction or pasted source context.
 
 Primary instruction/source context from Michael:
@@ -2009,8 +2434,8 @@ ${job.draft || "(none yet)"}
 Current step:
 ${step}
 
-Attached project context (supporting only):
-${call.projectContextSnapshot || "(none attached)"}
+Attached session evidence (supporting only):
+${sessionEvidence || "(none attached)"}
 
 Transcript:
 ${transcript}
@@ -2098,6 +2523,55 @@ async function executeCooperTool(name, args, context = {}) {
   }
 
   return executeArcadeMappedTool(name, args);
+}
+
+async function executeRecordedCooperTool(name, args, { callId = "" } = {}) {
+  const recordId = randomUUID();
+  const startedAt = Date.now();
+  await updateDb((db) => {
+    db.toolCalls.push({
+      id: recordId,
+      callId,
+      userId: arcadeUserId,
+      toolName: name,
+      arcadeToolName: arcadeToolMappings[name] || null,
+      arguments: safeToolArguments(name, args),
+      riskLevel: toolRiskLevel(name),
+      status: "pending",
+      resultSummary: "",
+      error: null,
+      durationMs: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+  });
+
+  try {
+    const output = cooperToolNames.has(name)
+      ? await executeCooperTool(name, args, { callId })
+      : { status: "error", tool: name, message: `Unknown Cooper tool: ${name || "(missing)"}`, retryable: false };
+    await updateToolCall(recordId, {
+      status: output.status === "error" ? "failed" : output.status === "approval_required" ? "pending_approval" : "executed",
+      resultSummary: summarizeToolResult(output),
+      durationMs: Date.now() - startedAt,
+      error: output.status === "error" ? output.message || "Tool failed." : null
+    });
+    return { output, recordId, statusCode: output.status === "error" ? 500 : 200 };
+  } catch (error) {
+    const output = {
+      status: "error",
+      tool: name,
+      message: error.message || "Cooper tool execution failed.",
+      retryable: false
+    };
+    await updateToolCall(recordId, {
+      status: "failed",
+      resultSummary: summarizeToolResult(output),
+      durationMs: Date.now() - startedAt,
+      error: output.message
+    });
+    return { output, recordId, statusCode: 500 };
+  }
 }
 
 async function executeCanvasArtifactTool(args, context = {}) {
@@ -4023,7 +4497,7 @@ function arcadeToolBaseName(value) {
 async function ensureDataStore() {
   await mkdir(artifactsDir, { recursive: true });
   if (!existsSync(dbPath)) {
-    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], toolCalls: [], gstackRuns: [], arcadeAuthorizations: [], projects: [], projectSources: [], contextPackets: [], operatorTasks: [], dailyBriefs: [] }, null, 2), "utf8");
+    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], toolCalls: [], gstackRuns: [], arcadeAuthorizations: [], projects: [], projectSources: [], contextPackets: [], operatorTasks: [], dailyBriefs: [], mobilePushDevices: [], mobilePushEvents: [] }, null, 2), "utf8");
   }
 }
 
@@ -4047,16 +4521,24 @@ async function readDbRaw() {
     projectSources: Array.isArray(parsed.projectSources) ? parsed.projectSources : [],
     contextPackets: Array.isArray(parsed.contextPackets) ? parsed.contextPackets : [],
     operatorTasks: Array.isArray(parsed.operatorTasks) ? parsed.operatorTasks : [],
-    dailyBriefs: Array.isArray(parsed.dailyBriefs) ? parsed.dailyBriefs : []
+    dailyBriefs: Array.isArray(parsed.dailyBriefs) ? parsed.dailyBriefs : [],
+    mobilePushDevices: Array.isArray(parsed.mobilePushDevices) ? parsed.mobilePushDevices : [],
+    mobilePushEvents: Array.isArray(parsed.mobilePushEvents) ? parsed.mobilePushEvents : []
   };
 }
 
 async function updateDb(mutator) {
   const operation = writeQueue.then(async () => {
     const db = await readDbRaw();
+    const mobilePushBefore = mobilePushSnapshot(db);
     const result = await mutator(db);
+    db.mobilePushEvents = enqueueMobilePushEvents(
+      mobilePushEvents(mobilePushBefore, db),
+      db.mobilePushEvents
+    );
     await writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
     broadcastEvent("state.updated", { at: new Date().toISOString() });
+    scheduleMobilePushWorker(100);
     return result;
   });
   writeQueue = operation.then(() => undefined, () => undefined);
@@ -4076,6 +4558,7 @@ function publicState(db) {
     gstackRuns: sortByDate(db.gstackRuns || []).slice(0, 20).map(publicGstackRun),
     arcade: arcadeSettingsState(db),
     pushToTalk: pushToTalkConfigFromEnv(process.env),
+    mobilePush: publicMobilePushStatus(db),
     mcpApps: {
       servers: publicMcpAppServers()
     },
@@ -4094,6 +4577,72 @@ function publicState(db) {
       gstackModel: process.env.COOPER_GSTACK_MODEL || workModel,
       gstackMaxOutputTokens: Number(process.env.COOPER_GSTACK_MAX_OUTPUT_TOKENS || 2200)
     }
+  };
+}
+
+function publicMobilePushStatus(db) {
+  const devices = (db.mobilePushDevices || []).filter((device) => device.enabled !== false);
+  const events = sortByDate(db.mobilePushEvents || []).slice(0, 12);
+  return {
+    configured: mobilePushConfig.configured,
+    environment: mobilePushConfig.environment,
+    bundleId: mobilePushConfig.bundleId,
+    missing: mobilePushConfig.missing,
+    associatedAppId: iosAssociatedAppId,
+    registeredDevices: devices.length,
+    pendingEvents: events.filter((event) => event.status === "pending").length,
+    lastEvent: events[0] ? publicMobilePushEvent(events[0]) : null
+  };
+}
+
+function publicMobileReadiness(db) {
+  return {
+    generatedAt: new Date().toISOString(),
+    host: {
+      authenticated: true,
+      openAIConfigured: Boolean(process.env.OPENAI_API_KEY)
+    },
+    apns: publicMobilePushStatus(db),
+    universalLinks: {
+      hostAssociationConfigured: Boolean(iosAssociatedAppId),
+      associatedAppId: iosAssociatedAppId
+    },
+    meetings: {
+      calendarHandoffMode: "external_url",
+      webZoomSDKConfigured: Boolean(zoomSdkKey && zoomSdkSecret),
+      hostRoleEnabled: zoomHostRoleEnabled,
+      nativeEmbeddedSDKConfigured: false
+    }
+  };
+}
+
+function publicMobilePushDevice(device) {
+  return {
+    id: device.id,
+    installationId: device.installationId,
+    tokenHash: device.tokenHash,
+    platform: device.platform,
+    environment: device.environment,
+    bundleId: device.bundleId,
+    deviceName: device.deviceName,
+    locale: device.locale,
+    enabled: device.enabled !== false,
+    updatedAt: device.updatedAt,
+    lastDeliveryAt: device.lastDeliveryAt || null,
+    lastError: device.lastError || ""
+  };
+}
+
+function publicMobilePushEvent(event) {
+  return {
+    id: event.id,
+    kind: event.kind,
+    title: event.title,
+    route: event.route,
+    status: event.status,
+    attempts: Number(event.attempts || 0),
+    createdAt: event.createdAt,
+    updatedAt: event.updatedAt
   };
 }
 
@@ -4150,6 +4699,9 @@ async function addProjectSource(projectId, input) {
 
     db.projectSources.push(source);
     project.updatedAt = now;
+    for (const call of db.calls.filter((item) => item.status === "active" && item.projectId === projectId)) {
+      syncCallProjectContext(db, call, now);
+    }
     return source;
   });
 }
@@ -4221,6 +4773,56 @@ function buildProjectContext(db, projectId, maxChars = projectContextChars) {
   }
 
   return limitText(lines.join("\n").trim(), maxChars).text;
+}
+
+function syncCallProjectContext(db, call, now = new Date().toISOString()) {
+  const project = call.projectId
+    ? db.projects.find((item) => item.id === call.projectId)
+    : null;
+  call.projectId = project?.id || "";
+  call.projectTitle = project?.title || "";
+  call.projectContextSnapshot = project ? buildProjectContext(db, project.id) : "";
+  call.updatedAt = now;
+  return project;
+}
+
+function buildLiveCallContext(db, call, { includeActiveTranscript = true } = {}) {
+  const project = call.projectId
+    ? db.projects.find((item) => item.id === call.projectId)
+    : null;
+  const projectContext = call.status === "active" && project
+    ? buildProjectContext(db, project.id)
+    : call.projectContextSnapshot || (project ? buildProjectContext(db, project.id) : "");
+  const resumeContext = call.resumePacket ? formatSessionResumeContext(call.resumePacket) : "";
+  const contextPacketContext = boundedContextPacketContext(
+    contextPacketsForCall(db, call),
+    contextPacketMaxChars
+  );
+  const activeTranscriptContext = includeActiveTranscript ? formatActiveCallTranscript(call) : "";
+  return {
+    project,
+    projectContext,
+    sessionContext: composeRealtimeSessionContext(
+      projectContext,
+      resumeContext,
+      contextPacketContext,
+      activeTranscriptContext
+    )
+  };
+}
+
+function formatActiveCallTranscript(call, { maxTurns = 16, maxChars = 14_000 } = {}) {
+  const turns = Array.isArray(call?.transcript) ? call.transcript.slice(-maxTurns) : [];
+  if (!turns.length) return "";
+  const lines = turns
+    .map((entry) => `${normalizeSpeaker(entry.speaker)}: ${cleanText(entry.text)}`)
+    .filter((line) => !line.endsWith(": "));
+  if (!lines.length) return "";
+  return limitText([
+    "# Current session transcript",
+    "These public turns already happened in this same durable session. Continue from them across chat and voice without asking Michael to repeat himself.",
+    ...lines
+  ].join("\n"), maxChars).text;
 }
 
 function buildCallResumePacket(db, call) {
@@ -4342,6 +4944,41 @@ async function updateToolCall(id, patch) {
     Object.assign(toolCall, patch, { updatedAt: new Date().toISOString() });
     return toolCall;
   });
+}
+
+async function appendTranscriptToCall(callId, entry) {
+  return updateDb((db) => {
+    const call = db.calls.find((item) => item.id === callId);
+    if (!call) return null;
+    const existingIndex = call.transcript.findIndex((item) => sameTranscriptTurn(item, entry));
+    if (existingIndex >= 0) {
+      call.transcript[existingIndex] = { ...call.transcript[existingIndex], ...entry };
+    } else {
+      call.transcript.push(entry);
+    }
+    call.updatedAt = new Date().toISOString();
+    return call;
+  });
+}
+
+async function recordSessionChatUsage(callId, response) {
+  if (!response?.usage) return;
+  await updateDb((db) => {
+    const call = db.calls.find((item) => item.id === callId);
+    if (!call) return null;
+    call.chatUsage = addResponsesApiUsage(call.chatUsage, response.usage, {
+      model: response.model || chatModel,
+      at: new Date().toISOString()
+    });
+    call.updatedAt = new Date().toISOString();
+    return call;
+  });
+}
+
+function writeSessionChatEvent(res, payload) {
+  if (res.writableEnded || res.destroyed) return;
+  const type = cleanText(payload?.type) || "message";
+  res.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
 }
 
 async function recordGstackRun({ skill, mode, input = "", context = "", result = null, durationMs = null, status = "completed", error = null }) {
@@ -4898,15 +5535,33 @@ function artifactOutputType(artifact) {
 }
 
 function defaultArtifactExtension(outputType) {
+  if (outputType === "pdf") return "pdf";
+  if (outputType === "docx") return "docx";
+  if (outputType === "pptx") return "pptx";
+  if (outputType === "xlsx") return "xlsx";
   if (outputType === "html") return "html";
   if (outputType === "mcp_app") return "json";
   return "md";
 }
 
 function defaultArtifactMimeType(outputType) {
+  if (outputType === "pdf") return "application/pdf";
+  if (outputType === "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (outputType === "pptx") return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  if (outputType === "xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   if (outputType === "html") return "text/html";
   if (outputType === "mcp_app") return "application/json";
   return "text/markdown";
+}
+
+function artifactOutputLabel(outputType) {
+  if (outputType === "pdf") return "PDF artifact";
+  if (outputType === "docx") return "Word artifact";
+  if (outputType === "pptx") return "PowerPoint artifact";
+  if (outputType === "xlsx") return "Excel artifact";
+  if (outputType === "html") return "HTML artifact";
+  if (outputType === "mcp_app") return "MCP App artifact";
+  return "Markdown artifact";
 }
 
 function normalizeMarkdown(value) {
@@ -5115,6 +5770,96 @@ async function queueOperatorWorker() {
       scheduleOperatorTask(task.id, 350);
     }
   }
+}
+
+function scheduleMobilePushWorker(delayMs = 250) {
+  if (!mobilePushConfig.configured || mobilePushWorkerActive || mobilePushTimer) return;
+  mobilePushTimer = setTimeout(() => {
+    mobilePushTimer = null;
+    processMobilePushOutbox().catch((error) => {
+      console.error("Mobile push worker failed:", error);
+      scheduleMobilePushWorker(60000);
+    });
+  }, Math.max(0, delayMs));
+  mobilePushTimer.unref?.();
+}
+
+async function processMobilePushOutbox() {
+  if (mobilePushWorkerActive || !mobilePushConfig.configured) return;
+  mobilePushWorkerActive = true;
+  let shouldRetry = false;
+  try {
+    const db = await readDb();
+    const devices = (db.mobilePushDevices || []).filter((device) => device.enabled !== false);
+    const events = (db.mobilePushEvents || [])
+      .filter((event) => event.status === "pending" && Number(event.attempts || 0) < 5)
+      .slice(0, 12);
+
+    for (const event of events) {
+      const candidates = devices.filter((device) => {
+        const registeredAt = Date.parse(device.createdAt || 0);
+        const eventAt = Date.parse(event.createdAt || 0);
+        return !Number.isFinite(registeredAt) || !Number.isFinite(eventAt) || registeredAt <= eventAt;
+      });
+      if (!candidates.length) continue;
+
+      const existing = new Map((event.deliveries || []).map((delivery) => [delivery.tokenHash, delivery]));
+      const results = [];
+      for (const device of candidates) {
+        if (existing.get(device.tokenHash)?.ok) continue;
+        let delivery;
+        try {
+          delivery = await sendMobilePush({ device, event, config: mobilePushConfig });
+        } catch (error) {
+          delivery = { ok: false, retryable: true, status: 0, reason: error.message || "APNs delivery failed." };
+        }
+        results.push({
+          tokenHash: device.tokenHash,
+          deviceId: device.id,
+          ok: Boolean(delivery.ok),
+          retryable: Boolean(delivery.retryable),
+          invalidateDevice: Boolean(delivery.invalidateDevice),
+          status: Number(delivery.status || 0),
+          reason: cleanText(delivery.reason),
+          attemptedAt: new Date().toISOString()
+        });
+      }
+      if (!results.length) continue;
+
+      await updateDb((nextDb) => {
+        const nextEvent = (nextDb.mobilePushEvents || []).find((item) => item.id === event.id);
+        if (!nextEvent) return;
+        const deliveries = new Map((nextEvent.deliveries || []).map((delivery) => [delivery.tokenHash, delivery]));
+        results.forEach((delivery) => deliveries.set(delivery.tokenHash, delivery));
+        nextEvent.deliveries = [...deliveries.values()];
+        nextEvent.attempts = Number(nextEvent.attempts || 0) + 1;
+        nextEvent.updatedAt = new Date().toISOString();
+
+        const relevant = candidates.map((device) => deliveries.get(device.tokenHash)).filter(Boolean);
+        const retryable = relevant.some((delivery) => !delivery.ok && delivery.retryable);
+        const delivered = relevant.some((delivery) => delivery.ok);
+        nextEvent.status = retryable ? "pending" : delivered ? "delivered" : "failed";
+        if (retryable && nextEvent.attempts < 5) shouldRetry = true;
+
+        const invalidHashes = new Set(relevant.filter((delivery) => delivery.invalidateDevice).map((delivery) => delivery.tokenHash));
+        nextDb.mobilePushDevices = (nextDb.mobilePushDevices || [])
+          .filter((device) => !invalidHashes.has(device.tokenHash))
+          .map((device) => {
+            const delivery = deliveries.get(device.tokenHash);
+            if (!delivery) return device;
+            return {
+              ...device,
+              lastDeliveryAt: delivery.ok ? delivery.attemptedAt : device.lastDeliveryAt || null,
+              lastError: delivery.ok ? "" : delivery.reason,
+              updatedAt: delivery.attemptedAt
+            };
+          });
+      });
+    }
+  } finally {
+    mobilePushWorkerActive = false;
+  }
+  if (shouldRetry) scheduleMobilePushWorker(60000);
 }
 
 async function runOperatorTaskStep(taskId) {
@@ -5623,13 +6368,19 @@ await updateDb((db) => {
   db.contextPackets = Array.isArray(db.contextPackets) ? db.contextPackets : [];
   db.operatorTasks = Array.isArray(db.operatorTasks) ? db.operatorTasks : [];
   db.dailyBriefs = Array.isArray(db.dailyBriefs) ? db.dailyBriefs : [];
+  db.mobilePushDevices = Array.isArray(db.mobilePushDevices) ? db.mobilePushDevices : [];
+  db.mobilePushEvents = Array.isArray(db.mobilePushEvents) ? db.mobilePushEvents : [];
   db.calls.forEach((call) => {
     call.transcript = normalizeTranscript(call.transcript || []);
     call.projectId = cleanText(call.projectId);
     call.projectTitle = cleanText(call.projectTitle);
     call.projectContextSnapshot = cleanText(call.projectContextSnapshot);
     call.contextPacketId = cleanText(call.contextPacketId);
-    call.contextSourceCount = Number(call.contextSourceCount || 0);
+    call.contextPacketIds = contextPacketIdsForCall(call);
+    call.contextSourceCount = contextSourceCountForCall(db, call);
+    call.source = cleanText(call.source) || "session";
+    call.sourceLabel = cleanText(call.sourceLabel);
+    call.sourceDetail = cleanText(call.sourceDetail);
     call.realtimeUsage = normalizeCallUsage(call.realtimeUsage);
     const existingSuggestions = new Map((call.suggestions || []).map((suggestion) => [suggestion.kind, suggestion]));
     call.suggestions = defaultSuggestions(call.transcript.length > 0).map((suggestion) => ({
@@ -5701,6 +6452,7 @@ await updateDb((db) => {
 });
 queueWorker();
 await queueOperatorWorker();
+scheduleMobilePushWorker(500);
 
 if (isProduction) {
   app.use(express.static(join(__dirname, "dist")));

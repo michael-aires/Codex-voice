@@ -1,6 +1,6 @@
 # Cooper
 
-Cooper is a local React + Express progressive web app for an AIRES executive voice assistant. It uses OpenAI Realtime 2 over WebRTC for live meeting audio and the OpenAI Responses API for post-call Markdown artifacts.
+Cooper is a local React + Express progressive web app with a native SwiftUI iOS client for an AIRES executive session assistant. It uses OpenAI Realtime 2 over WebRTC for live meeting audio and streamed OpenAI Responses for microphone-independent session chat and generated work.
 
 ## Setup
 
@@ -35,7 +35,7 @@ COOPER_MCP_APP_SERVERS={"mcpServers":{"Cooper":{"url":"https://api.arcade.dev/mc
 
 Arcade write tools are blocked by default. Keep `COOPER_ENABLE_ARCADE_WRITES=false` until the confirmation UI is ready.
 
-After the app is running, open **Settings** and pre-authorize each mapped Arcade tool before using it during a call. Cooper will not execute Arcade-backed voice tools until their Settings authorization status is `Connected`.
+After the app is running, open **Settings** and pre-authorize mapped Arcade tools before using them during a call. Web and native iOS support individual authorization plus an explicit authorize-all flow that keeps every provider-consent link visible. Cooper will not execute Arcade-backed voice tools until their Settings authorization status is `Connected`.
 
 Starting a Cooper session opens a context checkpoint. Notion and GitHub picker searches run through the mapped, pre-authorized Arcade tools; past call notes, pasted text, Markdown, text, and PDF uploads are resolved server-side into one bounded packet. The packet is persisted with the call and included in both Realtime session creation and the browser `session.update`.
 
@@ -72,7 +72,7 @@ ZOOM_SDK_SECRET=your-zoom-meeting-sdk-client-secret
 ZOOM_ENABLE_HOST_ROLE=false
 ```
 
-Cooper embeds Zoom with the Zoom Meeting SDK for Web Component View on the call canvas. Participant joins use a server-generated Meeting SDK JWT. Starting as host is intentionally disabled until a ZAK OAuth flow is added.
+Cooper exposes the Zoom Meeting SDK for Web Component View in every session canvas. Calendar-backed Zoom sessions prefill the meeting number and passcode; any session can also accept them manually. Meetings hosted in the SDK app owner's Zoom account can use a server-generated Meeting SDK JWT for participant join. Zoom now requires a reviewed app plus ZAK or OBF user attribution for meetings hosted outside that account. Starting as host is intentionally disabled until a ZAK OAuth flow is added; keep `ZOOM_ENABLE_HOST_ROLE=false` with the current implementation.
 
 Optional settings:
 
@@ -80,6 +80,9 @@ Optional settings:
 COOPER_SESSION_TTL_HOURS=168
 COOPER_WORK_MODEL=gpt-5.4
 COOPER_FALLBACK_WORK_MODEL=
+COOPER_CHAT_MODEL=
+COOPER_CHAT_MAX_OUTPUT_TOKENS=1800
+COOPER_CHAT_MAX_TOOL_ROUNDS=8
 COOPER_GSTACK_MODEL=gpt-5.4
 COOPER_GSTACK_MAX_OUTPUT_TOKENS=2200
 COOPER_GSTACK_INPUT_MAX_CHARS=32000
@@ -92,6 +95,8 @@ COOPER_PROJECT_SOURCE_MAX_CHARS=250000
 COOPER_PROJECT_UPLOAD_MAX_MB=20
 COOPER_CONTEXT_PACKET_MAX_CHARS=36000
 COOPER_CONTEXT_SEARCH_LIMIT=50
+COOPER_INGEST_TOKEN=replace-with-a-long-random-local-token
+COOPER_PLAN_INGEST_MAX_CHARS=120000
 COOPER_PTT_TOKEN=replace-with-a-long-random-local-token
 COOPER_PTT_MAX_AUDIO_MB=18
 COOPER_PTT_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe
@@ -120,13 +125,37 @@ npm run dev
 
 Open `http://localhost:5000`.
 
+### Chat with an implementation plan
+
+The checked-in [`chat-with-plan`](integrations/chat-with-plan/README.md) integration can send a local Markdown plan into the same durable context-packet and session model used by web and iOS. Its endpoint is loopback-only and uses a separate bearer token; it never accepts the normal app cookie as an ingest credential.
+
+```bash
+integrations/chat-with-plan/install.sh
+node ~/.claude/skills/chat-with-plan/bin/chat-with-plan.mjs setup --voice-dir "$PWD"
+node ~/.claude/skills/chat-with-plan/bin/chat-with-plan.mjs send --plan-file /tmp/plan.md --repo Codex-voice --target both
+```
+
+The web client opens the exact imported session through `?call=<id>`. A booted iOS Simulator receives the matching `cooper://sessions/<id>` route. Resuming from either client retains the bounded original context packet even when a later checkpoint adds more evidence.
+
+### Native iOS device readiness
+
+The SwiftUI app exposes **Settings → Device readiness**, backed by authenticated `/api/mobile-readiness`. The response reports only safe configuration facts: OpenAI availability, public APNs status, universal-link association state, and Zoom integration boundaries. It never returns API keys, APNs private-key material, or Zoom secrets.
+
+The checklist deliberately separates Simulator evidence from release evidence. This repository includes APNs registration/delivery plumbing, external meeting handoff, live voice transport, app-link routing, and Dynamic Type/VoiceOver semantics, but end-to-end release proof still needs an Apple Team/App ID, a provisioned physical iPhone, the deployed host's APNs `.p8` credentials, a final HTTPS associated domain in the signed entitlement, and device audio/notification testing. Native embedded Zoom remains a later product/SDK decision; iOS currently opens the decoded conference URL in the installed meeting app or browser.
+
+### Shared document generation
+
+`PDF brief`, `Word brief`, `PowerPoint decision deck`, and `Excel action register` are first-class shared artifact recipes. Each starts with bounded session evidence and the existing observable job/retry contract. The Cooper host renders the final binary once, stores it with exact MIME and extension metadata, and serves the same authenticated bytes to every client.
+
+PDF opens inline on web and through Quick Look on iOS. Word, PowerPoint, and Excel are generated as editable Office Open XML (`.docx`, `.pptx`, and `.xlsx`), appear as direct authenticated web downloads, and open through native Quick Look and the share sheet on iPhone. PowerPoint uses a four-slide decision narrative; Excel opens on a formula-backed summary and includes an editable action register with frozen headers, status/priority validation, conditional state styling, source lineage, and bounded formulas. The checked-in iOS fixtures are generated by `native/ios-app/scripts/GeneratePreviewDocx.mjs` and `native/ios-app/scripts/GeneratePreviewOffice.mjs`; they are real Office packages used only for deterministic Simulator proof.
+
 ## Test
 
 ```bash
 npm test
 ```
 
-The test suite currently locks Cooper's wake phrase behavior so direct invitations wake him and casual mentions do not.
+The test suite locks Cooper's wake phrase behavior so direct invitations and non-negated mentions wake him, while explicit suppressions such as “don't ask Cooper” remain silent on both web and native iOS.
 
 ## Planning Docs
 
@@ -148,6 +177,8 @@ The test suite currently locks Cooper's wake phrase behavior so direct invitatio
 - Password gate backed by `COOPER_APP_PASSWORD` and an HTTP-only signed session cookie.
 - Project workspaces for sprint tickets, feature epics, agent output, PRDs, and implementation notes.
 - Project context ingestion from pasted text, Markdown/text uploads, and PDF uploads.
+- Token-authenticated local plan ingest with exact web, universal-link, and iOS session destinations.
+- First-class typed session chat on web and native iOS, available before microphone permission and backed by the same transcript, context, recorded tools, write approvals, jobs, artifacts, and later Realtime voice handoff.
 - Live call context ingestion from pasted notes or uploaded Markdown/text/PDF files, with the active Realtime session refreshed after new context is added.
 - Full-screen WebRTC call mode with microphone input, model audio output, and animated waveform.
 - Live collaboration canvas during calls for Mermaid diagrams, UI wireframes, HTML prototypes, running jobs, and completed visual artifacts.
@@ -179,6 +210,7 @@ The test suite currently locks Cooper's wake phrase behavior so direct invitatio
 - HTML prototype artifacts are standalone inline HTML/CSS/JS and render in a sandboxed Work preview with Mobile and Desktop viewport toggles.
 - MCP App artifacts persist as JSON-backed call artifacts and restore as sandboxed iframe canvas apps with App and Metadata tabs.
 - Mermaid artifacts render as readable Markdown with live Mermaid diagrams in both Work and the call canvas.
+- Shared PDF, editable Word, PowerPoint, and Excel recipes persist real binary files; web uses format-specific preview/download surfaces and iOS uses the same authenticated bytes in Quick Look and the system share sheet.
 - Live execution feedback through `/api/events` plus persisted per-job activity logs.
 - Browser/PWA notifications when Cooper finishes queued work, plus manual retry for failed jobs.
 - PWA manifest and service worker for installable mobile/browser use.

@@ -22,9 +22,20 @@ test("the checkpoint offers prepared and immediate entry paths", () => {
 test("prepared sessions queue real background artifacts and reuse the workspace call", () => {
   assert.match(mainSource, /prepareContextCheckpointSession/);
   assert.match(mainSource, /workstream: "session_preparation"/);
-  assert.match(mainSource, /activeCallRef\.current\?\.id/);
+  assert.match(mainSource, /ensureActiveSessionCall\(projectId/);
+  assert.match(mainSource, /activeCallCreationRef\.current/);
   assert.match(serverSource, /qa_checklist:/);
   assert.match(serverSource, /workstream: cleanText\(req\.body\?\.workstream\)/);
+});
+
+test("prepared work cannot block or blank the session workspace", () => {
+  const handlerStart = mainSource.indexOf("async function startContextCheckpointSession");
+  const handlerEnd = mainSource.indexOf("async function prepareContextCheckpointSession", handlerStart);
+  const handler = mainSource.slice(handlerStart, handlerEnd);
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
+  assert.ok(handler.indexOf("openCallWorkspace(meeting, contextPacket)") < handler.indexOf("void prepareContextCheckpointSession"));
+  assert.match(handler, /void prepareContextCheckpointSession\([\s\S]*?\.catch\(\(error\) =>/);
+  assert.match(handler, /setChatError\(message\)/);
 });
 
 test("the call canvas contains the approved prepared-session overview", () => {

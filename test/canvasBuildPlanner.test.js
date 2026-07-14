@@ -58,12 +58,16 @@ test("build request can include selected transcript section and template", () =>
   assert.match(request, /mobile screen/);
 });
 
-test("canvas build catalog covers the four live build modes", () => {
+test("canvas build catalog covers every shared live build mode", () => {
   assert.deepEqual(canvasBuildTypes.map((type) => type.id), [
     "mermaid_diagram",
     "ui_wireframe",
     "html_prototype",
-    "aires_requirements"
+    "aires_requirements",
+    "pdf_brief",
+    "word_brief",
+    "powerpoint_deck",
+    "excel_action_register"
   ]);
 });
 

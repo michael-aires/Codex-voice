@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cooper Chat Micro UI</title>
+  <style>
+    :root {
+      --ink: #2d2c2d;
+      --ink-soft: #525157;
+      --muted: #74747b;
+      --faint: #a7a7a2;
+      --canvas: #fbfbf8;
+      --surface: #fff;
+      --soft: #f3f3ef;
+      --line: #e3e3de;
+      --line-strong: #d1d1ca;
+      --volt: #f0de4a;
+      --volt-strong: #d6c12c;
+      --volt-soft: #fff9ca;
+      --green: #28744b;
+      --green-soft: #edf7f1;
+      --danger: #b94040;
+      --display: Inter, "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      --radius: 8px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #e8e8e4;
+      color: var(--ink);
+      font-family: var(--display);
+      letter-spacing: 0;
+    }
+    button, input, textarea { color: inherit; font: inherit; letter-spacing: 0; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible {
+      outline: 3px solid rgba(214, 193, 44, .34);
+      outline-offset: 2px;
+    }
+    .hidden { display: none !important; }
+    .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+    .prototype-tools {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 100;
+      display: flex;
+      gap: 4px;
+      padding: 4px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 8px;
+      background: rgba(45,44,45,.92);
+      box-shadow: 0 14px 42px rgba(30,30,26,.2);
+    }
+    .prototype-tools button {
+      min-height: 34px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: #d5d5d0;
+      font-size: .72rem;
+      font-weight: 760;
+    }
+    .prototype-tools button.active { background: var(--surface); color: var(--ink); }
+
+    .stage {
+      width: 100vw;
+      height: 100vh;
+      padding: 12px;
+    }
+    .app {
+      position: relative;
+      display: grid;
+      grid-template-rows: 58px minmax(0, 1fr);
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border: 1px solid #cecec8;
+      border-radius: 10px;
+      background: var(--canvas);
+      box-shadow: 0 22px 60px rgba(37,37,32,.13);
+    }
+
+    .topbar {
+      position: relative;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(251,251,248,.96);
+      backdrop-filter: blur(16px);
+    }
+    .brand, .session-state, .top-actions, .mode-switch, .source-chips, .message-meta,
+    .context-head, .source-row, .task-head, .activity-row, .artifact-head, .artifact-actions,
+    .approval-actions, .composer-actions, .composer-hints, .quick-prompts, .source-option {
+      display: flex;
+      align-items: center;
+    }
+    .brand { gap: 10px; font-weight: 830; }
+    .brand-mark {
+      width: 15px;
+      height: 15px;
+      border: 4px solid var(--ink);
+      transform: rotate(45deg);
+    }
+    .brand small {
+      padding-left: 11px;
+      border-left: 1px solid var(--line-strong);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .64rem;
+      font-weight: 540;
+    }
+    .session-state { justify-content: center; gap: 10px; }
+    .session-state strong { font-size: .78rem; }
+    .session-state span { color: var(--muted); font-family: var(--mono); font-size: .61rem; }
+    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .top-actions { justify-content: flex-end; gap: 8px; }
+    .top-actions button, .mode-switch button, .icon-button {
+      display: grid;
+      place-items: center;
+      min-width: 36px;
+      min-height: 36px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+    }
+    .top-actions button:hover { background: var(--soft); }
+    .avatar { background: var(--ink) !important; color: white; font-size: .62rem; font-weight: 800; }
+
+    .chat-shell {
+      position: relative;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .chat-scroll {
+      height: 100%;
+      overflow-y: auto;
+      padding: 34px max(24px, calc((100% - 850px) / 2)) 210px;
+      scroll-behavior: smooth;
+    }
+    .session-heading { margin-bottom: 36px; text-align: center; }
+    .session-heading p {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .64rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .session-heading h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.5rem); line-height: 1.05; }
+    .source-chips { justify-content: center; flex-wrap: wrap; gap: 7px; margin-top: 16px; }
+    .source-chips button, .source-chip {
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--ink-soft);
+      font-size: .68rem;
+      font-weight: 720;
+    }
+    .source-chips button:last-child { border-style: dashed; color: var(--muted); }
+
+    .thread { display: grid; gap: 28px; }
+    .message { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 13px; }
+    .message.user { grid-template-columns: minmax(0, 1fr); justify-items: end; }
+    .speaker {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--ink);
+      color: var(--volt);
+      font-size: .7rem;
+      font-weight: 900;
+    }
+    .message-body { min-width: 0; }
+    .message-meta { gap: 8px; margin-bottom: 7px; }
+    .message-meta strong { font-size: .76rem; }
+    .message-meta time { color: var(--faint); font-family: var(--mono); font-size: .58rem; }
+    .assistant-copy { margin: 0; font-size: 1rem; line-height: 1.55; }
+    .user-copy {
+      max-width: 620px;
+      margin: 0;
+      padding: 12px 15px;
+      border-radius: 8px 8px 2px 8px;
+      background: var(--ink);
+      color: white;
+      font-size: .91rem;
+      line-height: 1.45;
+    }
+
+    .micro-ui {
+      margin-top: 14px;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .micro-label {
+      margin: 0;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .58rem;
+      font-weight: 650;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .context-head, .task-head, .artifact-head {
+      justify-content: space-between;
+      gap: 14px;
+      min-height: 56px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .context-head h2, .task-head h2, .artifact-head h2 { margin: 4px 0 0; font-size: .94rem; }
+    .confidence { color: var(--green); font-family: var(--mono); font-size: .62rem; font-weight: 700; }
+    .context-sources { display: grid; }
+    .source-row {
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr) auto;
+      gap: 11px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .source-row:last-child { border-bottom: 0; }
+    .source-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 6px; background: var(--soft); font-size: .76rem; font-weight: 850; }
+    .source-row strong, .source-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .source-row strong { margin-bottom: 3px; font-size: .78rem; }
+    .source-row small { color: var(--muted); font-size: .67rem; }
+    .source-row em { color: var(--green); font-family: var(--mono); font-size: .58rem; font-style: normal; }
+
+    .task-head { align-items: flex-start; padding-block: 14px; }
+    .task-status { padding: 4px 8px; border-radius: 999px; background: var(--volt-soft); color: #756400; font-family: var(--mono); font-size: .58rem; }
+    .activity-list { display: grid; padding: 5px 16px 10px; }
+    .activity-row { position: relative; gap: 10px; min-height: 35px; color: var(--ink-soft); font-size: .72rem; }
+    .activity-row i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+    .activity-row.done i { background: var(--green); }
+    .activity-row.live i { background: var(--volt-strong); box-shadow: 0 0 0 4px var(--volt-soft); }
+    .activity-row small { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: .57rem; }
+    .task-progress { height: 3px; background: var(--soft); }
+    .task-progress span { display: block; width: 64%; height: 100%; background: var(--volt-strong); transition: width .35s ease; }
+
+    .artifact-head { border-bottom: 0; }
+    .artifact-actions { gap: 6px; }
+    .artifact-actions button {
+      min-height: 32px;
+      padding: 0 11px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: white;
+      font-size: .68rem;
+      font-weight: 760;
+    }
+    .artifact-preview {
+      margin: 0 14px 14px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: #f1f3ed;
+      aspect-ratio: 16 / 9;
+    }
+    .slide {
+      display: grid;
+      grid-template-rows: 72px minmax(0, 1fr);
+      width: 100%;
+      height: 100%;
+      background: white;
+    }
+    .slide header { display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-top: 3px solid var(--volt); background: var(--ink); color: white; }
+    .slide header strong { font-size: 1.05rem; }
+    .slide header span { color: #bbb; font-family: var(--mono); font-size: .56rem; }
+    .slide-body { display: grid; grid-template-columns: 1.2fr .8fr; gap: 28px; padding: 30px; }
+    .slide-body h3 { max-width: 420px; margin: 0 0 13px; font-size: clamp(1.2rem, 2.5vw, 2rem); line-height: 1.04; }
+    .slide-body p { margin: 0; color: var(--ink-soft); font-size: .78rem; line-height: 1.55; }
+    .slide-list { display: grid; align-content: start; gap: 8px; }
+    .slide-list div { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: .68rem; }
+    .slide-list span { color: #8a7900; font-family: var(--mono); }
+
+    .approval { padding: 15px 16px 16px; }
+    .approval p { margin: 0 0 14px; font-size: .82rem; line-height: 1.45; }
+    .approval-actions { gap: 8px; }
+    .primary, .secondary {
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 6px;
+      font-size: .76rem;
+      font-weight: 800;
+    }
+    .primary { border: 1px solid var(--volt-strong); background: var(--volt); }
+    .secondary { border: 1px solid var(--line-strong); background: white; }
+    .approval-result { margin-top: 10px !important; color: var(--green); font-size: .72rem !important; }
+
+    .composer-dock {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      z-index: 15;
+      padding: 20px max(24px, calc((100% - 850px) / 2)) 18px;
+      background: linear-gradient(to bottom, rgba(251,251,248,0), var(--canvas) 24%);
+    }
+    .quick-prompts { gap: 6px; margin: 0 0 8px 6px; overflow-x: auto; }
+    .quick-prompts button {
+      min-height: 29px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,.94);
+      color: var(--ink-soft);
+      font-size: .66rem;
+      white-space: nowrap;
+    }
+    .composer {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      align-items: end;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 14px 40px rgba(30,30,27,.08);
+    }
+    .composer textarea {
+      width: 100%;
+      min-height: 40px;
+      max-height: 120px;
+      padding: 10px 4px 7px;
+      resize: none;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      font-size: .85rem;
+      line-height: 1.35;
+    }
+    .composer .icon-button { border: 0; background: var(--soft); }
+    .composer .send { background: var(--ink); color: white; }
+    .composer .voice { background: var(--volt); color: var(--ink); }
+    .composer-hints { justify-content: space-between; padding: 7px 6px 0; color: var(--muted); font-size: .62rem; }
+    .composer-hints strong { color: var(--green); font-weight: 750; }
+
+    .source-sheet {
+      position: absolute;
+      inset: 0;
+      z-index: 40;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(45,44,45,.26);
+      backdrop-filter: blur(3px);
+    }
+    .source-dialog { width: min(520px, 100%); overflow: hidden; border: 1px solid var(--line-strong); border-radius: 9px; background: white; box-shadow: 0 30px 80px rgba(22,22,19,.22); }
+    .source-dialog header { display: flex; align-items: center; justify-content: space-between; padding: 17px 18px; border-bottom: 1px solid var(--line); }
+    .source-dialog h2 { margin: 0; font-size: 1rem; }
+    .source-dialog header button { border: 0; background: transparent; color: var(--muted); font-size: 1.2rem; }
+    .source-search { padding: 12px; border-bottom: 1px solid var(--line); }
+    .source-search input { width: 100%; min-height: 42px; padding: 0 13px; border: 1px solid var(--line-strong); border-radius: 6px; }
+    .source-options { display: grid; max-height: 310px; overflow-y: auto; }
+    .source-option { display: grid; grid-template-columns: 34px 1fr auto; gap: 11px; width: 100%; padding: 13px 16px; border: 0; border-bottom: 1px solid var(--line); background: white; text-align: left; }
+    .source-option:hover { background: var(--soft); }
+    .source-option strong, .source-option small { display: block; }
+    .source-option strong { margin-bottom: 3px; font-size: .78rem; }
+    .source-option small { color: var(--muted); font-size: .66rem; }
+    .source-option em { color: var(--muted); font-family: var(--mono); font-size: .57rem; font-style: normal; }
+
+    .stage.mobile { display: grid; place-items: center; padding: 18px; }
+    .stage.mobile .app { width: 390px; max-width: 100%; }
+    .stage.mobile .topbar { grid-template-columns: 1fr auto; padding: 0 14px; }
+    .stage.mobile .brand small, .stage.mobile .session-state, .stage.mobile .top-actions button:not(.avatar) { display: none; }
+    .stage.mobile .chat-scroll { padding: 24px 15px 196px; }
+    .stage.mobile .session-heading { margin-bottom: 30px; text-align: left; }
+    .stage.mobile .session-heading h1 { font-size: 1.55rem; }
+    .stage.mobile .source-chips { justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; }
+    .stage.mobile .message { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+    .stage.mobile .speaker { width: 28px; height: 28px; font-size: .58rem; }
+    .stage.mobile .assistant-copy { font-size: .91rem; }
+    .stage.mobile .micro-ui { margin-left: -38px; }
+    .stage.mobile .user-copy { max-width: 92%; }
+    .stage.mobile .slide { grid-template-rows: 57px minmax(0, 1fr); }
+    .stage.mobile .slide header { padding: 0 16px; }
+    .stage.mobile .slide header strong { font-size: .76rem; }
+    .stage.mobile .slide-body { display: block; padding: 18px; }
+    .stage.mobile .slide-body h3 { font-size: 1.05rem; }
+    .stage.mobile .slide-body > div:first-child p { font-size: .66rem; }
+    .stage.mobile .slide-list { display: none; }
+    .stage.mobile .artifact-preview { aspect-ratio: 4 / 3; }
+    .stage.mobile .artifact-actions button:first-child { display: none; }
+    .stage.mobile .composer-dock { padding: 18px 10px 10px; }
+    .stage.mobile .composer { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .stage.mobile .composer .voice { display: none; }
+    .stage.mobile .composer-hints span:last-child { display: none; }
+    .stage.mobile .quick-prompts { margin-left: 0; }
+    .stage.mobile .source-sheet { padding: 0; align-items: end; }
+    .stage.mobile .source-dialog { width: 100%; max-height: 82%; border-radius: 10px 10px 0 0; }
+
+    @media (max-width: 700px) {
+      .stage { padding: 0; }
+      .app { border: 0; border-radius: 0; }
+      .prototype-tools { display: none; }
+      .topbar { grid-template-columns: 1fr auto; padding: 0 14px; }
+      .brand small, .session-state, .top-actions button:not(.avatar) { display: none; }
+      .chat-scroll { padding: 24px 15px 196px; }
+      .session-heading { text-align: left; }
+      .source-chips { justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; }
+      .message { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+      .speaker { width: 28px; height: 28px; }
+      .micro-ui { margin-left: -38px; }
+      .slide-list { display: none; }
+      .slide-body { display: block; padding: 18px; }
+      .artifact-preview { aspect-ratio: 4 / 3; }
+      .composer-dock { padding-inline: 10px; }
+      .composer { grid-template-columns: auto minmax(0, 1fr) auto; }
+      .composer .voice { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-tools" aria-label="Prototype viewport">
+    <button class="active" data-view="desktop">Desktop</button>
+    <button data-view="mobile">Mobile</button>
+  </div>
+
+  <main class="stage" id="stage">
+    <section class="app">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark"></span><strong>Cooper</strong><small>AIRES workspace</small></div>
+        <div class="session-state"><i class="live-dot"></i><strong>Peterson permissions</strong><span>context ready</span></div>
+        <div class="top-actions">
+          <button aria-label="Search"><svg class="icon"><circle cx="8" cy="8" r="5"></circle><path d="m12 12 4 4"></path></svg></button>
+          <button class="avatar" aria-label="Profile">MM</button>
+        </div>
+      </header>
+
+      <section class="chat-shell">
+        <div class="chat-scroll" id="chatScroll">
+          <header class="session-heading">
+            <p>Prepared session · July 14</p>
+            <h1>Corporate Demand Notes</h1>
+            <div class="source-chips">
+              <span class="source-chip">Notion · PDD-4756</span>
+              <span class="source-chip">GitHub · PR #1842</span>
+              <button data-open-sources>+ Add context</button>
+            </div>
+          </header>
+
+          <section class="thread" id="thread" aria-live="polite">
+            <article class="message">
+              <span class="speaker">C</span>
+              <div class="message-body">
+                <div class="message-meta"><strong>Cooper</strong><time>9:42 AM</time></div>
+                <p class="assistant-copy">I have the Notion ticket and the linked pull request. Here is the shared context I’ll use, whether we continue by voice or chat.</p>
+                <section class="micro-ui" aria-label="Loaded session context">
+                  <header class="context-head">
+                    <div><p class="micro-label">Context checkpoint</p><h2>What Cooper knows</h2></div>
+                    <span class="confidence">2 sources resolved</span>
+                  </header>
+                  <div class="context-sources">
+                    <div class="source-row"><span class="source-icon">N</span><div><strong>Peterson: Corporate Demand Notes missing from UI</strong><small>Notion · PDD-4756 · full page loaded</small></div><em>PRIMARY</em></div>
+                    <div class="source-row"><span class="source-icon">GH</span><div><strong>Restore demand-notes permission path</strong><small>GitHub · PR #1842 · 14 files changed</small></div><em>LINKED</em></div>
+                  </div>
+                </section>
+              </div>
+            </article>
+
+            <article class="message user">
+              <p class="user-copy">Turn this into scoped requirements, and show me the draft while you work.</p>
+            </article>
+
+            <article class="message">
+              <span class="speaker">C</span>
+              <div class="message-body">
+                <div class="message-meta"><strong>Cooper</strong><time>9:43 AM</time></div>
+                <p class="assistant-copy">I’m building the first pass from the selected evidence. You can keep talking or send another request while it runs.</p>
+                <section class="micro-ui" id="taskCard" aria-label="Running artifact task">
+                  <header class="task-head"><div><p class="micro-label">Background work</p><h2>AIRES scoped requirements</h2></div><span class="task-status" id="taskStatus">RUNNING</span></header>
+                  <div class="activity-list">
+                    <div class="activity-row done"><i></i><span>Read Notion evidence packet</span><small>done</small></div>
+                    <div class="activity-row done"><i></i><span>Compare implementation against PR</span><small>done</small></div>
+                    <div class="activity-row live" id="liveStep"><i></i><span>Draft vertical slices and acceptance criteria</span><small>working</small></div>
+                    <div class="activity-row" id="waitingStep"><i></i><span>Render reviewable HTML</span><small>next</small></div>
+                  </div>
+                  <div class="task-progress"><span id="progressBar"></span></div>
+                </section>
+              </div>
+            </article>
+
+            <article class="message" id="artifactMessage">
+              <span class="speaker">C</span>
+              <div class="message-body">
+                <div class="message-meta"><strong>Cooper</strong><time>9:44 AM</time></div>
+                <p class="assistant-copy">The working draft is ready. The artifact stays in the conversation, so we can revise it without leaving chat.</p>
+                <section class="micro-ui" aria-label="Requirements artifact preview">
+                  <header class="artifact-head">
+                    <div><p class="micro-label">Artifact · HTML</p><h2>Corporate Demand Notes requirements</h2></div>
+                    <div class="artifact-actions"><button>Copy markdown</button><button>Open</button></div>
+                  </header>
+                  <div class="artifact-preview">
+                    <div class="slide">
+                      <header><strong>Corporate Demand Notes</strong><span>01 / 06 · scoped requirements</span></header>
+                      <div class="slide-body">
+                        <div><p class="micro-label">Core outcome</p><h3>Restore a visible, permission-safe path to demand notes.</h3><p>Authorized roles can find, read, and manage demand notes without weakening API or route protection.</p></div>
+                        <div class="slide-list"><div><span>01</span><strong>Restore navigation</strong></div><div><span>02</span><strong>Centralize permission rules</strong></div><div><span>03</span><strong>Verify UI and API paths</strong></div></div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </article>
+
+            <article class="message">
+              <span class="speaker">C</span>
+              <div class="message-body">
+                <div class="message-meta"><strong>Cooper</strong><time>9:44 AM</time></div>
+                <p class="assistant-copy">One decision will change the implementation plan. Should Sales Reps receive read-only access, or the same edit controls as Developer Admins?</p>
+                <section class="micro-ui approval" id="approvalCard" aria-label="Decision request">
+                  <p><strong>Choose the permission policy</strong><br />This answer will update the role matrix and acceptance criteria.</p>
+                  <div class="approval-actions"><button class="primary" data-approve>Read-only for Sales Reps</button><button class="secondary" data-approve>Allow editing</button></div>
+                </section>
+              </div>
+            </article>
+          </section>
+        </div>
+
+        <footer class="composer-dock">
+          <div class="quick-prompts">
+            <button data-prompt="Summarize the decision so far">Summarize</button>
+            <button data-prompt="Create the QA checklist next">Build QA checklist</button>
+            <button data-prompt="What are we missing?">What are we missing?</button>
+          </div>
+          <form class="composer" id="composer">
+            <button class="icon-button" type="button" aria-label="Add context" data-open-sources>+</button>
+            <textarea id="prompt" rows="1" placeholder="Message Cooper..."></textarea>
+            <button class="icon-button voice" type="button" aria-label="Switch to voice"><svg class="icon"><path d="M9 3a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path><path d="M4 9v1a5 5 0 0 0 10 0V9M9 15v3"></path></svg></button>
+            <button class="icon-button send" type="submit" aria-label="Send"><svg class="icon"><path d="m3 3 14 6-14 6 3-6-3-6Z"></path><path d="M6 9h11"></path></svg></button>
+          </form>
+          <div class="composer-hints"><span><strong>Chat mode</strong> · voice is optional</span><span>Cooper can run work while you continue</span></div>
+        </footer>
+
+        <div class="source-sheet hidden" id="sourceSheet" role="dialog" aria-modal="true" aria-labelledby="sourceTitle">
+          <section class="source-dialog">
+            <header><div><p class="micro-label">Connected workspace</p><h2 id="sourceTitle">Add context</h2></div><button id="closeSources" aria-label="Close">×</button></header>
+            <div class="source-search"><input id="sourceSearch" placeholder="Search Notion, GitHub, meetings..." /></div>
+            <div class="source-options" id="sourceOptions">
+              <button class="source-option" data-source="Sprint Board · Active sprint"><span class="source-icon">N</span><span><strong>Sprint Board · Active sprint</strong><small>Notion database · 14 matching tasks</small></span><em>NOTION</em></button>
+              <button class="source-option" data-source="PR #1842 · Restore demand notes"><span class="source-icon">GH</span><span><strong>PR #1842 · Restore demand notes</strong><small>GitHub pull request · updated 16 min ago</small></span><em>GITHUB</em></button>
+              <button class="source-option" data-source="Permissions review · July 11"><span class="source-icon">M</span><span><strong>Permissions review · July 11</strong><small>Past Cooper session · 38 transcript turns</small></span><em>MEETING</em></button>
+            </div>
+          </section>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script>
+    const stage = document.getElementById("stage");
+    const thread = document.getElementById("thread");
+    const chatScroll = document.getElementById("chatScroll");
+    const prompt = document.getElementById("prompt");
+    const sourceSheet = document.getElementById("sourceSheet");
+    const sourceSearch = document.getElementById("sourceSearch");
+
+    if (new URLSearchParams(window.location.search).get("view") === "mobile") {
+      stage.classList.add("mobile");
+      document.querySelectorAll("[data-view]").forEach((item) => item.classList.toggle("active", item.dataset.view === "mobile"));
+    }
+
+    document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
+      document.querySelectorAll("[data-view]").forEach((item) => item.classList.toggle("active", item === button));
+      stage.classList.toggle("mobile", button.dataset.view === "mobile");
+    }));
+
+    document.querySelectorAll("[data-open-sources]").forEach((button) => button.addEventListener("click", () => {
+      sourceSheet.classList.remove("hidden");
+      setTimeout(() => sourceSearch.focus(), 20);
+    }));
+    document.getElementById("closeSources").addEventListener("click", () => sourceSheet.classList.add("hidden"));
+    sourceSheet.addEventListener("click", (event) => { if (event.target === sourceSheet) sourceSheet.classList.add("hidden"); });
+
+    sourceSearch.addEventListener("input", () => {
+      const query = sourceSearch.value.toLowerCase();
+      document.querySelectorAll(".source-option").forEach((option) => {
+        option.classList.toggle("hidden", !option.textContent.toLowerCase().includes(query));
+      });
+    });
+
+    document.querySelectorAll("[data-source]").forEach((button) => button.addEventListener("click", () => {
+      const chip = document.createElement("span");
+      chip.className = "source-chip";
+      chip.textContent = button.dataset.source;
+      document.querySelector(".source-chips button:last-child").before(chip);
+      sourceSheet.classList.add("hidden");
+    }));
+
+    document.querySelectorAll("[data-prompt]").forEach((button) => button.addEventListener("click", () => {
+      prompt.value = button.dataset.prompt;
+      prompt.focus();
+    }));
+
+    document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => {
+      document.querySelector(".approval-actions").remove();
+      const result = document.createElement("p");
+      result.className = "approval-result";
+      result.textContent = `Decision recorded: ${button.textContent}. The artifact and implementation plan are updating.`;
+      document.getElementById("approvalCard").append(result);
+    }));
+
+    document.getElementById("composer").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = prompt.value.trim();
+      if (!value) return;
+      const user = document.createElement("article");
+      user.className = "message user";
+      user.innerHTML = `<p class="user-copy"></p>`;
+      user.querySelector("p").textContent = value;
+      thread.append(user);
+      prompt.value = "";
+
+      const response = document.createElement("article");
+      response.className = "message";
+      response.innerHTML = `<span class="speaker">C</span><div class="message-body"><div class="message-meta"><strong>Cooper</strong><time>now</time></div><p class="assistant-copy">Got it. I’ll use the loaded evidence, keep the work visible here, and bring back the next decision or artifact without interrupting the session.</p></div>`;
+      setTimeout(() => { thread.append(response); chatScroll.scrollTop = chatScroll.scrollHeight; }, 420);
+      chatScroll.scrollTop = chatScroll.scrollHeight;
+    });
+
+    setTimeout(() => {
+      document.getElementById("progressBar").style.width = "100%";
+      document.getElementById("taskStatus").textContent = "COMPLETE";
+      document.getElementById("liveStep").className = "activity-row done";
+      document.getElementById("liveStep").querySelector("small").textContent = "done";
+      document.getElementById("waitingStep").className = "activity-row done";
+      document.getElementById("waitingStep").querySelector("small").textContent = "done";
+    }, 1800);
+  </script>
+</body>
+</html>

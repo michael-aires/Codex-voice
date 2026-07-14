@@ -11,6 +11,8 @@ import {
   operatorToolNames
 } from "../cooperTools.js";
 import { createAudioResponseEvent } from "./realtimeEvents.js";
+import { jsonSseEvents } from "./sessionChatProtocol.js";
+import { dailyBriefSlideIndexFromTranscript } from "./dailyBriefPresentation.js";
 import {
   addRealtimeResponseUsage,
   addRealtimeTranscriptionUsage,
@@ -527,6 +529,9 @@ function buildComputerUseSessionUpdate() {
 }
 
 function App() {
+  const [deepLinkedCallId] = React.useState(() => (
+    new URLSearchParams(window.location.search).get("call")?.trim() || ""
+  ));
   const [entered, setEntered] = React.useState(() => localStorage.getItem("cooper.entered") === "true");
   const [workspace, setWorkspace] = React.useState(() => localStorage.getItem("cooper.workspace") || "");
   const [authChecked, setAuthChecked] = React.useState(false);
@@ -552,6 +557,8 @@ function App() {
   const [dailyBriefLoading, setDailyBriefLoading] = React.useState(false);
   const [dailyBriefError, setDailyBriefError] = React.useState("");
   const [dailyBriefOpen, setDailyBriefOpen] = React.useState(false);
+  const [dailyBriefPlaybackSlideIndex, setDailyBriefPlaybackSlideIndex] = React.useState(0);
+  const [dailyBriefPlaybackActive, setDailyBriefPlaybackActive] = React.useState(false);
   const [todayFilter, setTodayFilter] = React.useState("all");
   const [selectedTodayItemId, setSelectedTodayItemId] = React.useState("");
   const [sessionFocus, setSessionFocus] = React.useState(null);
@@ -562,6 +569,9 @@ function App() {
   const [contextCheckpointSeed, setContextCheckpointSeed] = React.useState(null);
   const [contextCheckpointBusy, setContextCheckpointBusy] = React.useState(false);
   const [artifactContent, setArtifactContent] = React.useState("");
+  const selectedArtifactContentType = artifactOutputTypeFromMetadata(
+    state.artifacts.find((artifact) => artifact.id === selectedArtifactId)
+  );
   const [connected, setConnected] = React.useState(false);
   const [connecting, setConnecting] = React.useState(false);
   const [status, setStatus] = React.useState("Ready");
@@ -570,6 +580,9 @@ function App() {
   const [notificationPermission, setNotificationPermission] = React.useState(() => getNotificationPermission());
   const [prompt, setPrompt] = React.useState("");
   const [events, setEvents] = React.useState([]);
+  const [chatStreaming, setChatStreaming] = React.useState(false);
+  const [chatError, setChatError] = React.useState("");
+  const [chatActivities, setChatActivities] = React.useState([]);
   const [callStartupError, setCallStartupError] = React.useState("");
   const [transcripts, setTranscripts] = React.useState([]);
   const pcRef = React.useRef(null);
@@ -577,6 +590,7 @@ function App() {
   const audioRef = React.useRef(null);
   const streamRef = React.useRef(null);
   const activeCallRef = React.useRef(null);
+  const activeCallCreationRef = React.useRef(null);
   const callStartedAtRef = React.useRef(null);
   const activeProjectContextRef = React.useRef("");
   const sessionContextPacketRef = React.useRef(null);
@@ -590,8 +604,12 @@ function App() {
   const pendingResponseRef = React.useRef(null);
   const lastResponseEventRef = React.useRef(null);
   const pendingSessionOpeningPromptRef = React.useRef("");
+  const chatAbortControllerRef = React.useRef(null);
+  const dailyBriefPlaybackActiveRef = React.useRef(false);
+  const dailyBriefPlaybackSlideIndexRef = React.useRef(0);
   const knownCompletedJobsRef = React.useRef(new Set());
   const didLoadStateRef = React.useRef(false);
+  const deepLinkHandledRef = React.useRef(false);
   const selectedCallIdRef = React.useRef(null);
   const selectedProjectIdRef = React.useRef(null);
   const selectedArtifactIdRef = React.useRef(null);
@@ -616,6 +634,18 @@ function App() {
   React.useEffect(() => {
     selectedArtifactIdRef.current = selectedArtifactId;
   }, [selectedArtifactId]);
+
+  React.useEffect(() => {
+    if (!authenticated || !deepLinkedCallId || deepLinkHandledRef.current) return;
+    deepLinkHandledRef.current = true;
+    localStorage.setItem("cooper.entered", "true");
+    localStorage.setItem("cooper.workspace", "cooper");
+    selectedCallIdRef.current = deepLinkedCallId;
+    setSelectedCallId(deepLinkedCallId);
+    setEntered(true);
+    setWorkspace("cooper");
+    setView("library");
+  }, [authenticated, deepLinkedCallId]);
 
   React.useEffect(() => {
     let active = true;
@@ -661,6 +691,10 @@ function App() {
       setArtifactContent("");
       return;
     }
+    if (!["markdown", "html", "mcp_app"].includes(selectedArtifactContentType)) {
+      setArtifactContent("");
+      return;
+    }
     fetch(`/api/artifacts/${selectedArtifactId}/content`, { credentials: "same-origin" })
       .then((response) => {
         if (response.status === 401) {
@@ -672,7 +706,7 @@ function App() {
       })
       .then(setArtifactContent)
       .catch(() => setArtifactContent("Unable to load artifact."));
-  }, [authenticated, selectedArtifactId]);
+  }, [authenticated, selectedArtifactId, selectedArtifactContentType]);
 
   React.useEffect(() => {
     if (!authenticated || !entered || workspace !== "cooper" || view !== "settings") return;
@@ -1188,6 +1222,7 @@ function App() {
   }
 
   function requestCooper(text = "", reason = "manual") {
+    const startsDailyBriefPlayback = reason === "session_presentation" && sessionFocusRef.current?.type === "daily_brief";
     const userText = text.trim();
     if (userText) {
       const sentUserText = sendEvent({
@@ -1214,6 +1249,12 @@ function App() {
     const sent = sendEvent(responseEvent);
 
     if (sent) {
+      if (startsDailyBriefPlayback) {
+        dailyBriefPlaybackActiveRef.current = true;
+        dailyBriefPlaybackSlideIndexRef.current = 0;
+        setDailyBriefPlaybackActive(true);
+        setDailyBriefPlaybackSlideIndex(0);
+      }
       responseInProgressRef.current = true;
       setStatus("Cooper preparing");
       addEvent("Cooper", userText || "Called by voice.");
@@ -1295,17 +1336,20 @@ function App() {
     }
 
     if (event.type === "response.output_audio_transcript.delta" || event.type === "response.audio_transcript.delta") {
-      appendTranscriptDelta(outputTranscriptBuffersRef.current, event, event.delta);
+      const transcript = appendTranscriptDelta(outputTranscriptBuffersRef.current, event, event.delta);
+      syncDailyBriefPlayback(transcript);
       return;
     }
 
     if (event.type === "response.output_audio_transcript.done" || event.type === "response.audio_transcript.done") {
+      syncDailyBriefPlayback(event.transcript);
       finalizeCooperTranscript(event, event.transcript, outputTranscriptBuffersRef.current);
       return;
     }
 
     if (event.type === "response.output_text.delta") {
-      appendTranscriptDelta(textTranscriptBuffersRef.current, event, event.delta);
+      const transcript = appendTranscriptDelta(textTranscriptBuffersRef.current, event, event.delta);
+      syncDailyBriefPlayback(transcript);
       return;
     }
 
@@ -1315,10 +1359,13 @@ function App() {
     }
 
     if (event.type === "response.done") {
+      syncDailyBriefPlayback(extractRealtimeResponseText(event.response));
       if (event.response?.usage) {
         realtimeUsageRef.current = addRealtimeResponseUsage(realtimeUsageRef.current, event.response.usage);
       }
       responseInProgressRef.current = false;
+      dailyBriefPlaybackActiveRef.current = false;
+      setDailyBriefPlaybackActive(false);
       setSpeaking(false);
       setStatus("Listening");
       const calls = event.response?.output?.filter((item) => item.type === "function_call") || [];
@@ -1368,8 +1415,11 @@ function App() {
     setHearing(false);
     setEvents([]);
     setCallStartupError("");
-    setTranscripts([]);
-    transcriptsRef.current = [];
+    const existingTranscript = activeCallRef.current?.transcript?.length
+      ? activeCallRef.current.transcript
+      : transcriptsRef.current;
+    setTranscripts(existingTranscript);
+    transcriptsRef.current = existingTranscript;
     realtimeUsageRef.current = createEmptyRealtimeUsage();
     outputTranscriptBuffersRef.current = new Map();
     textTranscriptBuffersRef.current = new Map();
@@ -1394,19 +1444,20 @@ function App() {
       const focusContext = sessionFocusRef.current ? todayItemContext(sessionFocusRef.current) : "";
       const checkpointContext = sessionContextPacketRef.current?.sessionContext || "";
       activeProjectContextRef.current = [focusContext, projectContext, checkpointContext].filter(Boolean).join("\n\n");
-      const call = activeCallRef.current?.id
-        ? activeCallRef.current
-        : await createCall(projectId, {
-          title: sessionFocusRef.current?.type === "resumed_session"
-            ? `Continue: ${sessionFocusRef.current.title}`
-            : sessionFocusRef.current
-              ? `Cooper session: ${sessionFocusRef.current.title}`
-              : "",
-          resumedFromCallId: sessionFocusRef.current?.resumedFromCallId || "",
-          contextPacketId: sessionContextPacketRef.current?.packet?.id || ""
-        });
+      const call = await ensureActiveSessionCall(projectId);
       activeCallRef.current = call;
       callStartedAtRef.current = Date.now();
+      let authoritativeRealtimeSession = null;
+      const liveContextResponse = await fetch(`/api/calls/${call.id}/live-context`, {
+        credentials: "same-origin",
+        cache: "no-store"
+      });
+      if (liveContextResponse.ok) {
+        const liveContext = await liveContextResponse.json();
+        activeProjectContextRef.current = liveContext.sessionContext || activeProjectContextRef.current;
+        authoritativeRealtimeSession = liveContext.realtimeSession || null;
+        if (liveContext.call) activeCallRef.current = liveContext.call;
+      }
 
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
@@ -1426,7 +1477,9 @@ function App() {
         setConnected(true);
         setConnecting(false);
         setStatus("Configuring");
-        sendEvent(buildSessionUpdate(activeProjectContextRef.current));
+        sendEvent(authoritativeRealtimeSession
+          ? { type: "session.update", session: authoritativeRealtimeSession }
+          : buildSessionUpdate(activeProjectContextRef.current));
       };
       dc.onmessage = (message) => {
         try {
@@ -1554,7 +1607,15 @@ function App() {
       openCallWorkspace(meeting, contextPacket);
       pendingSessionOpeningPromptRef.current = buildSessionPresentationVoicePrompt({ packet, sessionContext, focus: meeting });
       if (contextPacket.preparationKinds.length) {
-        await prepareContextCheckpointSession({ meeting, contextPacket, preparationKinds: contextPacket.preparationKinds });
+        void prepareContextCheckpointSession({
+          meeting,
+          contextPacket,
+          preparationKinds: contextPacket.preparationKinds
+        }).catch((error) => {
+          const message = error.message || "The session opened, but its prepared documents could not be queued.";
+          setChatError(message);
+          addEvent("Preparation", message);
+        });
       }
     } finally {
       setContextCheckpointBusy(false);
@@ -1566,15 +1627,10 @@ function App() {
     if (!kinds.length || !contextPacket?.packet?.id) return;
 
     const projectId = selectedProject?.id || "";
-    let call = activeCallRef.current;
-    if (!call?.id) {
-      call = await createCall(projectId, {
-        title: `Prepared session: ${meeting?.title || "Cooper collaboration"}`,
-        contextPacketId: contextPacket.packet.id
-      });
-      activeCallRef.current = call;
-      setSelectedCallId(call.id);
-    }
+    const call = await ensureActiveSessionCall(projectId, {
+      title: `Prepared session: ${meeting?.title || "Cooper collaboration"}`,
+      contextPacketId: contextPacket.packet.id
+    });
 
     const focusContext = meeting ? todayItemContext(meeting) : "";
     activeProjectContextRef.current = [focusContext, contextPacket.sessionContext].filter(Boolean).join("\n\n");
@@ -1604,12 +1660,20 @@ function App() {
     setSelectedArtifactId("");
     setPrompt("");
     setEvents([]);
+    setChatActivities([]);
+    setChatError("");
+    setChatStreaming(false);
     setTranscripts([]);
     transcriptsRef.current = [];
     activeCallRef.current = null;
+    activeCallCreationRef.current = null;
     callStartedAtRef.current = null;
     activeProjectContextRef.current = [item ? todayItemContext(item) : "", contextPacket?.sessionContext || ""].filter(Boolean).join("\n\n");
     setCallStartupError("");
+    dailyBriefPlaybackActiveRef.current = false;
+    dailyBriefPlaybackSlideIndexRef.current = 0;
+    setDailyBriefPlaybackActive(false);
+    setDailyBriefPlaybackSlideIndex(0);
     setStatus("Ready");
     setSpeaking(false);
     setHearing(false);
@@ -1635,6 +1699,35 @@ function App() {
     const payload = await response.json();
     await refreshState();
     return payload.call;
+  }
+
+  async function ensureActiveSessionCall(projectId = selectedProject?.id || "", options = {}) {
+    if (activeCallRef.current?.id && activeCallRef.current.status === "active") {
+      return activeCallRef.current;
+    }
+    if (activeCallCreationRef.current) return activeCallCreationRef.current;
+
+    const creation = createCall(projectId, {
+      title: options.title || (sessionFocusRef.current?.type === "resumed_session"
+        ? `Continue: ${sessionFocusRef.current.title}`
+        : sessionFocusRef.current
+          ? `Cooper session: ${sessionFocusRef.current.title}`
+          : ""),
+      resumedFromCallId: options.resumedFromCallId || sessionFocusRef.current?.resumedFromCallId || "",
+      contextPacketId: options.contextPacketId || sessionContextPacketRef.current?.packet?.id || ""
+    }).then((call) => {
+      activeCallRef.current = call;
+      callStartedAtRef.current ||= Date.now();
+      setSelectedCallId(call.id);
+      return call;
+    });
+    activeCallCreationRef.current = creation;
+
+    try {
+      return await creation;
+    } finally {
+      if (activeCallCreationRef.current === creation) activeCallCreationRef.current = null;
+    }
   }
 
   async function resumeSavedCall(call) {
@@ -1690,7 +1783,7 @@ function App() {
     }).catch(() => addEvent("Transcript", "Save failed."));
   }
 
-  function commitTranscriptEntry(partial) {
+  function commitTranscriptEntry(partial, { persist = true } = {}) {
     const entry = {
       id: partial.id || uid(),
       at: partial.at || new Date().toISOString(),
@@ -1713,25 +1806,44 @@ function App() {
     }
 
     setTranscripts(transcriptsRef.current);
-    saveTranscriptEntry(entry);
+    if (persist) saveTranscriptEntry(entry);
     return entry;
+  }
+
+  function removeLocalTranscriptEntry(id) {
+    transcriptsRef.current = transcriptsRef.current.filter((entry) => entry.id !== id);
+    setTranscripts(transcriptsRef.current);
   }
 
   function appendTranscriptDelta(buffer, event, value = "", { replace = false } = {}) {
     const text = String(value || "");
-    if (!text) return;
+    if (!text) return "";
     const key = transcriptKey(event);
     const current = buffer.get(key) || {
       text: "",
       responseId: event.response_id || "",
       itemId: event.item_id || ""
     };
-    buffer.set(key, {
+    const next = {
       ...current,
       text: replace ? text : `${current.text}${text}`,
       responseId: event.response_id || current.responseId,
       itemId: event.item_id || current.itemId
-    });
+    };
+    buffer.set(key, next);
+    return next.text;
+  }
+
+  function syncDailyBriefPlayback(transcript = "") {
+    if (!dailyBriefPlaybackActiveRef.current || sessionFocusRef.current?.type !== "daily_brief") return;
+    const nextIndex = dailyBriefSlideIndexFromTranscript(
+      sessionFocusRef.current.slides,
+      transcript,
+      dailyBriefPlaybackSlideIndexRef.current
+    );
+    if (nextIndex === dailyBriefPlaybackSlideIndexRef.current) return;
+    dailyBriefPlaybackSlideIndexRef.current = nextIndex;
+    setDailyBriefPlaybackSlideIndex(nextIndex);
   }
 
   function finalizeCooperTranscript(event, transcript, buffer) {
@@ -1781,6 +1893,8 @@ function App() {
     pcRef.current = null;
     streamRef.current = null;
     audioRef.current = null;
+    chatAbortControllerRef.current?.abort();
+    chatAbortControllerRef.current = null;
 
     const call = activeCallRef.current;
     const durationSeconds = callStartedAtRef.current ? Math.round((Date.now() - callStartedAtRef.current) / 1000) : 0;
@@ -1800,25 +1914,106 @@ function App() {
     }
 
     activeCallRef.current = null;
+    activeCallCreationRef.current = null;
     callStartedAtRef.current = null;
     activeProjectContextRef.current = "";
     sessionContextPacketRef.current = null;
     pendingSessionOpeningPromptRef.current = "";
+    dailyBriefPlaybackActiveRef.current = false;
+    setDailyBriefPlaybackActive(false);
     setConnected(false);
     setConnecting(false);
     setSpeaking(false);
     setHearing(false);
+    setChatStreaming(false);
+    setChatActivities([]);
     setStatus(failed ? "Failed" : "Ready");
     await refreshState();
     if (!failed) setView("library");
   }
 
-  function submitPrompt(event) {
+  async function submitPrompt(event) {
     event.preventDefault();
     const text = prompt.trim();
-    if (!text) return;
-    requestCooper(text, "typed_prompt");
+    if (!text || chatStreaming) return;
     setPrompt("");
+    await sendSessionChat(text);
+  }
+
+  async function sendSessionChat(message) {
+    const messageId = uid();
+    const streamingEntryId = `stream-${messageId}`;
+    let streamedText = "";
+    setChatStreaming(true);
+    setChatError("");
+    setStatus("Cooper typing");
+    const abortController = new AbortController();
+    chatAbortControllerRef.current = abortController;
+
+    try {
+      const call = await ensureActiveSessionCall();
+      const response = await fetch(`/api/calls/${call.id}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        signal: abortController.signal,
+        body: JSON.stringify({ message, messageId })
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `Cooper chat failed with ${response.status}.`);
+      }
+
+      for await (const chatEvent of jsonSseEvents(response.body)) {
+        if (chatEvent.type === "message.accepted" && chatEvent.entry) {
+          commitTranscriptEntry(chatEvent.entry, { persist: false });
+          if (chatEvent.call) activeCallRef.current = chatEvent.call;
+        } else if (chatEvent.type === "message.delta") {
+          streamedText += chatEvent.delta || "";
+          commitTranscriptEntry({
+            id: streamingEntryId,
+            at: new Date().toISOString(),
+            speaker: "Cooper",
+            text: streamedText,
+            source: "typed_chat_stream",
+            responseId: chatEvent.responseId || ""
+          }, { persist: false });
+        } else if (chatEvent.type === "message.completed" && chatEvent.entry) {
+          removeLocalTranscriptEntry(streamingEntryId);
+          commitTranscriptEntry(chatEvent.entry, { persist: false });
+          if (chatEvent.call) activeCallRef.current = chatEvent.call;
+        } else if (chatEvent.type === "activity.started" || chatEvent.type === "activity.completed") {
+          const activity = chatEvent.activity;
+          if (!activity?.id) continue;
+          setChatActivities((current) => {
+            const existing = current.findIndex((item) => item.id === activity.id);
+            if (existing < 0) return [...current, activity].slice(-6);
+            const next = [...current];
+            next[existing] = { ...next[existing], ...activity };
+            return next;
+          });
+        } else if (chatEvent.type === "session.snapshot") {
+          if (chatEvent.call) activeCallRef.current = chatEvent.call;
+        } else if (chatEvent.type === "error") {
+          throw new Error(chatEvent.error || "Cooper chat failed.");
+        }
+      }
+      setStatus(connected ? "Listening" : "Chat ready");
+      addEvent("Chat", "Cooper completed the typed turn.");
+      await refreshState();
+      if (connected && activeCallRef.current?.id) {
+        await refreshLiveContext(activeCallRef.current.projectId || "");
+      }
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      removeLocalTranscriptEntry(streamingEntryId);
+      setChatError(error.message || "Cooper chat failed.");
+      setStatus("Chat needs attention");
+      addEvent("Error", error.message || "Cooper chat failed.");
+    } finally {
+      if (chatAbortControllerRef.current === abortController) chatAbortControllerRef.current = null;
+      setChatStreaming(false);
+    }
   }
 
   function addOperatorMessage(role, text, meta = {}) {
@@ -2440,18 +2635,37 @@ function App() {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Could not create a live context project.");
     selectProject(payload.project.id);
+    if (activeCallRef.current?.id) {
+      const attachResponse = await fetch(`/api/calls/${activeCallRef.current.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ projectId: payload.project.id })
+      });
+      const attached = await attachResponse.json().catch(() => ({}));
+      if (!attachResponse.ok) throw new Error(attached.error || "Could not attach live context to this session.");
+      activeCallRef.current = attached.call;
+      setSelectedCallId(attached.call.id);
+    }
     return payload.project.id;
   }
 
   async function refreshLiveContext(projectId) {
-    const response = await fetch(`/api/projects/${projectId}/context`, { credentials: "same-origin" });
+    const activeCall = activeCallRef.current;
+    const path = activeCall?.id
+      ? `/api/calls/${activeCall.id}/live-context`
+      : `/api/projects/${projectId}/context`;
+    const response = await fetch(path, { credentials: "same-origin" });
     if (!response.ok) return "";
     const payload = await response.json().catch(() => ({}));
-    const context = payload.context || "";
+    const context = payload.sessionContext || payload.context || "";
     if (context) {
       activeProjectContextRef.current = context;
+      if (payload.call) activeCallRef.current = payload.call;
       if (dcRef.current?.readyState === "open") {
-        sendEvent(buildSessionUpdate(context));
+        sendEvent(payload.realtimeSession
+          ? { type: "session.update", session: payload.realtimeSession }
+          : buildSessionUpdate(context));
       }
     }
     return context;
@@ -2693,6 +2907,9 @@ function App() {
         state={operatorState}
         selectedTask={selectedOperatorTask}
         events={events}
+        chatStreaming={chatStreaming}
+        chatError={chatError}
+        chatActivities={chatActivities}
         callConnected={operatorCallConnected}
         callConnecting={operatorCallConnecting}
         callStatus={operatorCallStatus}
@@ -2809,9 +3026,14 @@ function App() {
         status={status}
         project={selectedProject}
         speaking={speaking}
+        dailyBriefPlaybackSlideIndex={dailyBriefPlaybackSlideIndex}
+        dailyBriefPlaybackActive={dailyBriefPlaybackActive}
         hearing={hearing}
         transcripts={transcripts}
         events={events}
+        chatStreaming={chatStreaming}
+        chatError={chatError}
+        chatActivities={chatActivities}
         startupError={callStartupError}
         activeCall={activeCallRef.current}
         artifacts={state.artifacts}
@@ -4714,7 +4936,7 @@ function DailyBriefDialog({ brief, loading, error, onClose, onRefresh, onPresent
   );
 }
 
-function DailyBriefDeck({ brief, loading = false, onPresent, onRefresh, embedded = false, autoAdvance = false }) {
+function DailyBriefDeck({ brief, loading = false, onPresent, onRefresh, embedded = false, playbackSlideIndex = null }) {
   const slides = brief?.slides || [];
   const [activeIndex, setActiveIndex] = React.useState(0);
   const activeSlide = slides[activeIndex] || null;
@@ -4722,12 +4944,9 @@ function DailyBriefDeck({ brief, loading = false, onPresent, onRefresh, embedded
   React.useEffect(() => setActiveIndex(0), [brief?.id, brief?.generatedAt]);
 
   React.useEffect(() => {
-    if (!autoAdvance || slides.length < 2) return undefined;
-    const timer = window.setInterval(() => {
-      setActiveIndex((index) => Math.min(slides.length - 1, index + 1));
-    }, 9000);
-    return () => window.clearInterval(timer);
-  }, [autoAdvance, slides.length]);
+    if (!Number.isInteger(playbackSlideIndex) || slides.length < 2) return;
+    setActiveIndex(Math.min(slides.length - 1, Math.max(0, playbackSlideIndex)));
+  }, [playbackSlideIndex, slides.length]);
 
   if (!activeSlide) return null;
   const next = () => setActiveIndex((index) => Math.min(slides.length - 1, index + 1));
@@ -4735,7 +4954,7 @@ function DailyBriefDeck({ brief, loading = false, onPresent, onRefresh, embedded
 
   return (
     <div className={`daily-brief-deck ${embedded ? "embedded" : ""}`}>
-      <div className="daily-brief-slide">
+      <div aria-live={Number.isInteger(playbackSlideIndex) ? "polite" : "off"} className="daily-brief-slide" key={activeSlide.id}>
         <div className="daily-brief-slide-kicker">
           <span>{activeSlide.eyebrow}</span>
           <small>{String(activeIndex + 1).padStart(2, "0")} / {String(slides.length).padStart(2, "0")}</small>
@@ -4944,11 +5163,11 @@ function TodayDetail({ item, onBack, onStartItem, onOpenSource, onNavigate, onSt
   );
 }
 
-function TodayCanvasBrief({ item, onBuild, speaking = false }) {
+function TodayCanvasBrief({ item, onBuild }) {
   if (item.type === "daily_brief") {
     return (
       <div className="today-canvas-daily-brief">
-        <DailyBriefDeck brief={item} embedded autoAdvance={speaking} />
+        <DailyBriefDeck brief={item} embedded />
       </div>
     );
   }
@@ -4981,9 +5200,14 @@ function CallScreen({
   status,
   project,
   speaking,
+  dailyBriefPlaybackSlideIndex,
+  dailyBriefPlaybackActive,
   hearing,
   transcripts,
   events,
+  chatStreaming,
+  chatError,
+  chatActivities = [],
   startupError,
   activeCall,
   artifacts,
@@ -5015,7 +5239,7 @@ function CallScreen({
     const [railTab, setRailTab] = React.useState("now");
     const [memoryChapterId, setMemoryChapterId] = React.useState("");
     const mode = speaking ? "speaking" : hearing ? "hearing" : connected ? "listening" : "idle";
-    const modeLabel = callModeLabel({ speaking, hearing, connecting, connected });
+    const modeLabel = chatStreaming ? "Cooper is typing" : callModeLabel({ speaking, hearing, connecting, connected });
     const callId = activeCall?.id || "";
     const callJobs = React.useMemo(() => jobs.filter((job) => job.callId === callId), [jobs, callId]);
     const callArtifacts = React.useMemo(() => artifacts.filter((artifact) => artifact.callId === callId), [artifacts, callId]);
@@ -5033,8 +5257,8 @@ function CallScreen({
     const latestCooper = [...transcripts].reverse().find((entry) => normalizeSpeaker(entry.speaker) === "Cooper");
     const latestConnectionIssue = events.find((event) => ["Connection", "Error"].includes(event.label));
     const restoredChapter = memoryChapterId ? activeMemoryChapter : null;
-    const railQuote = restoredChapter?.title || latestMichael?.text || sessionFocus?.prompt || (connected ? "Say Cooper any time you want him to join." : "Start the call when you are ready.");
-    const railUtterance = restoredChapter?.summary || latestCooper?.text || sessionFocus?.callIntro || (connected ? modeLabel : "Ready when you are.");
+    const railQuote = restoredChapter?.title || latestMichael?.text || sessionFocus?.prompt || (connected ? "Say Cooper any time you want him to join." : "Message Cooper without turning on the microphone.");
+    const railUtterance = restoredChapter?.summary || latestCooper?.text || sessionFocus?.callIntro || (connected ? modeLabel : "Chat is ready. Voice is optional.");
     const elapsedLabel = activeCall?.startedAt
       ? formatDuration(Math.max(0, Math.floor((Date.now() - new Date(activeCall.startedAt).getTime()) / 1000)))
       : "--:--";
@@ -5087,9 +5311,9 @@ function CallScreen({
                   )}
                   {!connected && !connecting && !startupFailed && (
                     <article className="call-decision-card">
-                      <p>Start the call so Cooper can listen and bring work onto the canvas.</p>
+                      <p>Typed chat is ready now. Start voice only when you want Cooper to listen to the room.</p>
                       <div>
-                        <button className="call-primary-mini" onClick={onConnect} type="button">Join call</button>
+                        <button className="call-primary-mini" onClick={onConnect} disabled={chatStreaming} type="button">Add voice</button>
                         <button className="call-secondary-mini" onClick={onBack} type="button">Back</button>
                       </div>
                     </article>
@@ -5114,6 +5338,13 @@ function CallScreen({
 
                   <p className="call-section-label">running quietly</p>
                   <div className="call-quiet-list">
+                    {chatActivities.map((activity) => (
+                      <div className={`call-quiet-row chat-activity ${activity.status}`} key={activity.id}>
+                        <span />
+                        <p>{activity.label || activity.name}</p>
+                        <small>{String(activity.status || "running").replaceAll("_", " ")}</small>
+                      </div>
+                    ))}
                     {quietJobs.map((job) => (
                       <div className="call-quiet-row" key={job.id}>
                         <span />
@@ -5121,7 +5352,7 @@ function CallScreen({
                         <small>{statusLabel(job.status).toLowerCase()}</small>
                       </div>
                     ))}
-                    {!quietJobs.length && (
+                    {!quietJobs.length && !chatActivities.length && (
                       <div className="call-quiet-row muted">
                         <span />
                         <p>Quiet. No background work.</p>
@@ -5152,16 +5383,17 @@ function CallScreen({
                 <input
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
-                  placeholder={connected ? "Just talk — or type if you can’t..." : callPromptPlaceholder(connected)}
-                  disabled={!connected}
+                  placeholder={chatStreaming ? "Cooper is responding..." : connected ? "Talk or send a typed turn..." : "Message Cooper — microphone optional"}
+                  disabled={chatStreaming}
                 />
-                <button type="submit" disabled={!connected || !prompt.trim()} aria-label="Send">
+                <button type="submit" disabled={chatStreaming || !prompt.trim()} aria-label="Send">
                   <Send size={18} />
                 </button>
               </form>
+              {chatError && <p className="call-chat-error" role="alert">{chatError}</p>}
               <div className="call-bottom-note">
-                <span><i />Cooper hears the room. Speaks only when named.</span>
-                <button type="button" onClick={onEndCall}>End call</button>
+                <span><i />{connected ? "Voice and chat share this session." : "Chat, tools, canvas, and artifacts are live."}</span>
+                <button type="button" onClick={onEndCall} disabled={chatStreaming}>End session</button>
               </div>
             </section>
           </section>
@@ -5172,6 +5404,8 @@ function CallScreen({
               project={project}
               connected={connected}
               speaking={speaking}
+              dailyBriefPlaybackSlideIndex={dailyBriefPlaybackSlideIndex}
+              dailyBriefPlaybackActive={dailyBriefPlaybackActive}
               transcripts={transcripts}
               artifacts={artifacts}
               jobs={jobs}
@@ -5207,6 +5441,8 @@ function CallCanvas({
   project,
   connected,
   speaking,
+  dailyBriefPlaybackSlideIndex,
+  dailyBriefPlaybackActive,
   transcripts = [],
   artifacts,
   jobs,
@@ -5276,7 +5512,6 @@ function CallCanvas({
             ? "Cooper will use the selected calendar task or meeting brief as the source."
             : "Cooper will combine recent transcript, meeting focus, selected project context, and the chosen template.";
     const zoomDetails = zoomMeetingDetailsFromItem(sessionFocus);
-    const hasZoomMeeting = Boolean(sessionFocus?.type === "meeting" && zoomDetails.isZoom);
     const sessionPresentation = React.useMemo(() => (
       sessionFocus?.type === "daily_brief"
         ? sessionFocus
@@ -5332,12 +5567,6 @@ function CallCanvas({
       setSelectedSectionId(transcriptSections[0].id);
     }
   }, [selectedSectionId, transcriptSections]);
-
-  React.useEffect(() => {
-    if (activeTab === "zoom" && !hasZoomMeeting) {
-      setActiveTab("preview");
-    }
-  }, [activeTab, hasZoomMeeting]);
 
   React.useEffect(() => {
     setArtifactMode(artifactInitialMode(visibleArtifact));
@@ -5503,7 +5732,7 @@ function CallCanvas({
   }
 
   const canvasToolTabs = [
-    ...(hasZoomMeeting ? [["zoom", "Zoom"]] : []),
+    ["zoom", "Zoom"],
     ["build", "Build"],
     ["context", "Context"],
     ["examples", "Templates"],
@@ -5568,7 +5797,13 @@ function CallCanvas({
 
       {activeTab === "presentation" && (
         <div className="call-canvas-document session-presentation-canvas">
-          <DailyBriefDeck brief={sessionPresentation} embedded autoAdvance={speaking} />
+          <DailyBriefDeck
+            brief={sessionPresentation}
+            embedded
+            playbackSlideIndex={sessionFocus?.type === "daily_brief" && (dailyBriefPlaybackActive || dailyBriefPlaybackSlideIndex > 0)
+              ? dailyBriefPlaybackSlideIndex
+              : null}
+          />
         </div>
       )}
 
@@ -5599,7 +5834,7 @@ function CallCanvas({
               title={visibleArtifact.title}
             />
             ) : sessionFocus ? (
-              <TodayCanvasBrief item={sessionFocus} onBuild={() => setActiveTab("build")} speaking={speaking} />
+              <TodayCanvasBrief item={sessionFocus} onBuild={() => setActiveTab("build")} />
             ) : (
               <div className="canvas-empty large">
                 <Files size={28} />
@@ -5616,23 +5851,19 @@ function CallCanvas({
                     <Library size={17} />
                     <span>Templates</span>
                   </button>
-                  {hasZoomMeeting && (
-                    <button onClick={() => setActiveTab("zoom")}>
-                      <Monitor size={17} />
-                      <span>Zoom</span>
-                    </button>
-                  )}
+                  <button onClick={() => setActiveTab("zoom")}>
+                    <Monitor size={17} />
+                    <span>Zoom</span>
+                  </button>
                 </div>
               </div>
             )}
         </div>
       )}
 
-      {hasZoomMeeting && (
-        <div className={activeTab === "zoom" ? "call-zoom-panel" : "call-zoom-panel dormant"}>
-          <ZoomMeetingPanel sessionFocus={sessionFocus} zoomDetails={zoomDetails} />
-        </div>
-      )}
+      <div className={activeTab === "zoom" ? "call-zoom-panel" : "call-zoom-panel dormant"}>
+        <ZoomMeetingPanel sessionFocus={sessionFocus} zoomDetails={zoomDetails} />
+      </div>
 
       {activeTab === "build" && (
         <div className="canvas-body call-tool-body">
@@ -6043,7 +6274,7 @@ function ZoomMeetingPanel({ sessionFocus, zoomDetails }) {
         </div>
 
         <p className="zoom-intro">
-          This Zoom panel appears only when the selected calendar meeting includes Zoom conference details.
+          Zoom is available in every Cooper session. Calendar meeting details are filled in automatically when available.
         </p>
 
         {sessionFocus?.type === "meeting" && (
@@ -6105,8 +6336,8 @@ function ZoomMeetingPanel({ sessionFocus, zoomDetails }) {
           <strong>{readyLabel}</strong>
           <span>
             {zoomMessage || (hasCalendarZoomNumber
-              ? "Calendar supplied the Zoom meeting number. Participant join is enabled first; host start needs a ZAK flow."
-              : "Calendar marked this as Zoom, but no meeting number was synced yet. Paste it here or connect Calendar/Zoom sync.")}
+              ? "Calendar supplied the Zoom meeting number. Same-account participant join uses the current SDK flow; external-account meetings need ZAK or OBF attribution."
+              : "Paste a Zoom meeting number and passcode. Same-account participant join uses the current SDK flow; external-account meetings need ZAK or OBF attribution.")}
           </span>
         </div>
 
@@ -6358,6 +6589,14 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onRes
                 <h1>{selectedCall.title}</h1>
                 <p className="detail-summary">{selectedSummary}</p>
                 {selectedCall.projectTitle && <p className="project-link-line">{selectedCall.projectTitle}</p>}
+                {selectedCall.source === "plan_ingest" && (
+                  <p className="session-lineage-note">
+                    <FileText size={14} />
+                    <span>
+                      {selectedCall.sourceLabel || "Imported plan"} · {Number(selectedCall.contextSourceCount || 0)} locked context source{Number(selectedCall.contextSourceCount || 0) === 1 ? "" : "s"}
+                    </span>
+                  </p>
+                )}
                 {selectedCall.resumedFromCallId && (
                   <p className="session-lineage-note">
                     <RotateCcw size={14} />
@@ -6456,6 +6695,10 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
   const latestCall = calls.find((call) => call.status === "ended") || calls[0] || null;
   const isHtmlArtifact = selectedArtifact?.outputType === "html";
   const isMcpAppArtifact = selectedArtifact?.outputType === "mcp_app";
+  const selectedOutputType = artifactOutputTypeFromMetadata(selectedArtifact);
+  const isPdfArtifact = selectedOutputType === "pdf";
+  const isOfficeArtifact = ["docx", "pptx", "xlsx"].includes(selectedOutputType);
+  const officeConfig = officeArtifactConfig(selectedOutputType);
   const canPrototypeFromArtifact = selectedArtifact && ["execution_plan", "product_requirements", "code_sketch"].includes(selectedArtifact.kind);
   const selectedCall = selectedArtifact ? calls.find((call) => call.id === selectedArtifact.callId) : null;
   const artifactCategories = [
@@ -6470,8 +6713,8 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
     : artifacts.slice(0, 4);
 
   React.useEffect(() => {
-    setArtifactMode(isHtmlArtifact ? "preview" : isMcpAppArtifact ? "app" : "rendered");
-  }, [isHtmlArtifact, isMcpAppArtifact, selectedArtifact?.id]);
+    setArtifactMode(isHtmlArtifact || isPdfArtifact ? "preview" : isMcpAppArtifact ? "app" : isOfficeArtifact ? "download" : "rendered");
+  }, [isHtmlArtifact, isMcpAppArtifact, isPdfArtifact, isOfficeArtifact, selectedArtifact?.id]);
 
   function prototypeFromArtifact() {
     if (!selectedArtifact) return;
@@ -6575,8 +6818,12 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
                     <span>Prototype</span>
                   </button>
                 )}
-                <a className="secondary-link" href={`/api/artifacts/${selectedArtifact.id}/content`} target="_blank" rel="noreferrer">
-                  {isHtmlArtifact ? "HTML" : isMcpAppArtifact ? "JSON" : "Markdown"}
+                <a
+                  className="secondary-link"
+                  href={`/api/artifacts/${selectedArtifact.id}/content`}
+                  {...(isOfficeArtifact ? { download: `${selectedArtifact.title}.${officeConfig.extension}` } : { target: "_blank", rel: "noreferrer" })}
+                >
+                  {isHtmlArtifact ? "HTML" : isMcpAppArtifact ? "JSON" : isPdfArtifact ? "PDF" : isOfficeArtifact ? officeConfig.product : "Markdown"}
                 </a>
               </div>
             </div>
@@ -6606,7 +6853,7 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
               <dt>Source call</dt>
               <dd>{selectedCall?.title || "Unknown call"}</dd>
               <dt>Output</dt>
-              <dd>{isHtmlArtifact ? "HTML preview" : isMcpAppArtifact ? "MCP app" : "Markdown + rendered read view"}</dd>
+              <dd>{isHtmlArtifact ? "HTML preview" : isMcpAppArtifact ? "MCP app" : isPdfArtifact ? "Host-generated PDF" : isOfficeArtifact ? officeConfig.description : "Markdown + rendered read view"}</dd>
             </dl>
             <div className="tag-row">
               <span>{artifactLabel(selectedArtifact.kind).toLowerCase()}</span>
@@ -6652,6 +6899,14 @@ function ArtifactDocument({ artifact, mode, onModeChange, content, title }) {
     );
   }
 
+  if (outputType === "pdf") {
+    return <PdfArtifactDocument artifact={artifact} title={title} />;
+  }
+
+  if (["docx", "pptx", "xlsx"].includes(outputType)) {
+    return <OfficeArtifactDocument artifact={artifact} title={title} outputType={outputType} />;
+  }
+
   return (
     <MarkdownArtifactDocument
       mode={mode}
@@ -6660,6 +6915,55 @@ function ArtifactDocument({ artifact, mode, onModeChange, content, title }) {
       title={title}
     />
   );
+}
+
+function PdfArtifactDocument({ artifact, title }) {
+  const source = `/api/artifacts/${encodeURIComponent(artifact.id)}/content`;
+  return (
+    <section className="pdf-artifact-document" aria-label={`${title} PDF preview`}>
+      <div className="pdf-artifact-toolbar">
+        <div>
+          <strong>{title}</strong>
+          <small>Host-generated PDF</small>
+        </div>
+        <a className="secondary-action compact" href={source} target="_blank" rel="noreferrer">
+          Open PDF
+        </a>
+      </div>
+      <iframe src={source} title={`${title} PDF`} />
+    </section>
+  );
+}
+
+function OfficeArtifactDocument({ artifact, title, outputType }) {
+  const source = `/api/artifacts/${encodeURIComponent(artifact.id)}/content`;
+  const config = officeArtifactConfig(outputType);
+  return (
+    <section className={`office-artifact-document ${outputType}`} aria-label={`${title} ${config.product} file`}>
+      <div className="office-artifact-card">
+        <span className="office-artifact-mark" aria-hidden="true">{config.mark}</span>
+        <div>
+          <small>MICROSOFT {config.product.toUpperCase()} · EDITABLE {config.extension.toUpperCase()}</small>
+          <h2>{title}</h2>
+          <p>
+            Generated on the authenticated Cooper host. Download the original Office Open XML file to edit it in
+            {` ${config.product}`} or another compatible Office app.
+          </p>
+        </div>
+        <a className="primary-action" href={source} download={`${title}.${config.extension}`}>
+          Download {config.product} file
+        </a>
+      </div>
+    </section>
+  );
+}
+
+function officeArtifactConfig(outputType) {
+  return {
+    docx: { product: "Word", extension: "docx", mark: "W", description: "Editable Word document" },
+    pptx: { product: "PowerPoint", extension: "pptx", mark: "P", description: "Editable PowerPoint deck" },
+    xlsx: { product: "Excel", extension: "xlsx", mark: "X", description: "Editable Excel workbook" }
+  }[outputType] || { product: "Office", extension: "bin", mark: "O", description: "Editable Office document" };
 }
 
 function MarkdownArtifactDocument({ mode, onModeChange, markdown, title }) {
@@ -7197,7 +7501,10 @@ function artifactLabel(kind) {
     code_sketch: "Code sketch",
     landing_page: "Landing page",
     mini_app: "Mini app",
-    executive_report: "Executive report"
+    executive_report: "Executive report",
+    word_brief: "Word brief",
+    powerpoint_deck: "PowerPoint deck",
+    excel_action_register: "Excel action register"
   }[kind] || String(kind || "Artifact").replace(/_/g, " ");
 }
 
@@ -7207,6 +7514,10 @@ function defaultCanvasPrompt(kind) {
     ui_wireframe: "Create a mobile-first low-fidelity UI wireframe for the product experience we are discussing.",
     html_prototype: "Create a mobile-first interactive HTML prototype for the product workflow we are discussing.",
     aires_requirements: "Create an AIRES scoped requirements artifact from the current conversation and project context. Include problem, goal, scope boundaries, MoSCoW, vertical INVEST slices, Given/When/Then criteria, and Definition of Ready.",
+    pdf_brief: "Create a concise portrait PDF brief from the current conversation and bounded session evidence.",
+    word_brief: "Create an editable Word brief from the current conversation and bounded session evidence.",
+    powerpoint_deck: "Create a concise decision-ready PowerPoint deck from the current conversation and bounded session evidence.",
+    excel_action_register: "Create an editable Excel action register with formulas, validation, owners, status, priority, and source context from the current conversation.",
     landing_page: "Create a polished standalone landing page from the current conversation and project context.",
     mini_app: "Create an interactive single-file mini application from the current conversation and project context.",
     executive_report: "Create a polished executive report from the current conversation and project context."
