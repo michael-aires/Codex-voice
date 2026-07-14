@@ -1,0 +1,282 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B00000000000000000000001 /* CooperMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000011 /* CooperMobileApp.swift */; };
+		B00000000000000000000002 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000012 /* Models.swift */; };
+		B00000000000000000000003 /* CooperAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000013 /* CooperAPIClient.swift */; };
+		B00000000000000000000004 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000014 /* AppModel.swift */; };
+		B00000000000000000000005 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000015 /* AppShellView.swift */; };
+		B00000000000000000000006 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000016 /* TodayView.swift */; };
+		B00000000000000000000007 /* SessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000017 /* SessionsView.swift */; };
+		B00000000000000000000008 /* ConnectionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000018 /* ConnectionsView.swift */; };
+		B00000000000000000000009 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000019 /* SettingsView.swift */; };
+		B0000000000000000000000A /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0000000000000000000001A /* Components.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B00000000000000000000010 /* CooperMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CooperMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00000000000000000000011 /* CooperMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CooperMobileApp.swift; sourceTree = "<group>"; };
+		B00000000000000000000012 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		B00000000000000000000013 /* CooperAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CooperAPIClient.swift; sourceTree = "<group>"; };
+		B00000000000000000000014 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		B00000000000000000000015 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
+		B00000000000000000000016 /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
+		B00000000000000000000017 /* SessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsView.swift; sourceTree = "<group>"; };
+		B00000000000000000000018 /* ConnectionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsView.swift; sourceTree = "<group>"; };
+		B00000000000000000000019 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B0000000000000000000001A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		B0000000000000000000001B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B00000000000000000000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B00000000000000000000030 = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000031 /* CooperMobile */,
+				B00000000000000000000032 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B00000000000000000000031 /* CooperMobile */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000011 /* CooperMobileApp.swift */,
+				B00000000000000000000012 /* Models.swift */,
+				B00000000000000000000013 /* CooperAPIClient.swift */,
+				B00000000000000000000014 /* AppModel.swift */,
+				B00000000000000000000015 /* AppShellView.swift */,
+				B00000000000000000000016 /* TodayView.swift */,
+				B00000000000000000000017 /* SessionsView.swift */,
+				B00000000000000000000018 /* ConnectionsView.swift */,
+				B00000000000000000000019 /* SettingsView.swift */,
+				B0000000000000000000001A /* Components.swift */,
+				B0000000000000000000001B /* Info.plist */,
+			);
+			path = CooperMobile;
+			sourceTree = "<group>";
+		};
+		B00000000000000000000032 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B00000000000000000000010 /* CooperMobile.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B00000000000000000000040 /* CooperMobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B00000000000000000000070 /* Build configuration list for PBXNativeTarget "CooperMobile" */;
+			buildPhases = (
+				B00000000000000000000050 /* Sources */,
+				B00000000000000000000020 /* Frameworks */,
+				B00000000000000000000060 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CooperMobile;
+			productName = CooperMobile;
+			productReference = B00000000000000000000010 /* CooperMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B00000000000000000000041 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					B00000000000000000000040 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+				};
+			};
+			buildConfigurationList = B00000000000000000000071 /* Build configuration list for PBXProject "CooperMobile" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = B00000000000000000000030;
+			productRefGroup = B00000000000000000000032 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B00000000000000000000040 /* CooperMobile */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B00000000000000000000060 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B00000000000000000000050 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000001 /* CooperMobileApp.swift in Sources */,
+				B00000000000000000000002 /* Models.swift in Sources */,
+				B00000000000000000000003 /* CooperAPIClient.swift in Sources */,
+				B00000000000000000000004 /* AppModel.swift in Sources */,
+				B00000000000000000000005 /* AppShellView.swift in Sources */,
+				B00000000000000000000006 /* TodayView.swift in Sources */,
+				B00000000000000000000007 /* SessionsView.swift in Sources */,
+				B00000000000000000000008 /* ConnectionsView.swift in Sources */,
+				B00000000000000000000009 /* SettingsView.swift in Sources */,
+				B0000000000000000000000A /* Components.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B00000000000000000000080 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B00000000000000000000081 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		B00000000000000000000082 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CooperMobile/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.aires.cooper.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B00000000000000000000083 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CooperMobile/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.aires.cooper.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B00000000000000000000070 /* Build configuration list for PBXNativeTarget "CooperMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B00000000000000000000082 /* Debug */,
+				B00000000000000000000083 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B00000000000000000000071 /* Build configuration list for PBXProject "CooperMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B00000000000000000000080 /* Debug */,
+				B00000000000000000000081 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = B00000000000000000000041 /* Project object */;
+}
