@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cooper Session Preparation Flow</title>
+  <style>
+    :root {
+      --ink: #2d2c2d;
+      --ink-strong: #161616;
+      --muted: #6f716b;
+      --faint: #9b9d96;
+      --line: #dedfd9;
+      --line-strong: #c8cac2;
+      --paper: #ffffff;
+      --soft: #f5f5f1;
+      --canvas: #efefe9;
+      --volt: #f5df3e;
+      --volt-soft: #fff8c8;
+      --green: #1f6a46;
+      --green-soft: #edf7f1;
+      --red: #a5342d;
+      --shadow: 0 24px 60px rgb(45 44 45 / 11%);
+      --font-ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--soft); color: var(--ink); font-family: var(--font-ui); }
+    body { margin: 0; min-width: 320px; min-height: 100vh; }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible { outline: 3px solid rgb(245 223 62 / 55%); outline-offset: 2px; }
+    svg { display: block; }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: 60px minmax(0, 1fr);
+      background: var(--soft);
+    }
+
+    .topbar {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
+      align-items: center;
+      gap: 20px;
+      padding: 0 28px;
+      border-bottom: 1px solid var(--line);
+      background: rgb(255 255 255 / 96%);
+    }
+
+    .brand, .session-meta, .view-switch { display: flex; align-items: center; }
+    .brand { gap: 10px; min-width: 0; }
+    .brand-mark {
+      width: 26px;
+      height: 26px;
+      display: grid;
+      place-items: center;
+      background: var(--ink);
+      color: var(--volt);
+      transform: rotate(45deg);
+    }
+    .brand-mark span { transform: rotate(-45deg); font-weight: 900; font-size: 12px; }
+    .brand strong { font-size: 16px; }
+    .brand small { padding-left: 11px; border-left: 1px solid var(--line); color: var(--muted); font: 11px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+
+    .view-switch {
+      gap: 2px;
+      padding: 3px;
+      background: var(--soft);
+      border-radius: 7px;
+    }
+    .view-switch button {
+      min-height: 34px;
+      padding: 0 14px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .view-switch button.active { background: var(--paper); color: var(--ink-strong); box-shadow: 0 1px 4px rgb(45 44 45 / 10%); }
+
+    .session-meta { justify-content: flex-end; gap: 10px; color: var(--muted); font: 11px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+    .shell {
+      width: min(1500px, 100%);
+      min-height: calc(100vh - 60px);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr);
+      background: var(--paper);
+      border-left: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+    }
+
+    .rail {
+      min-width: 0;
+      padding: 30px 24px;
+      border-right: 1px solid var(--line);
+      background: var(--paper);
+    }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--muted);
+      font: 700 10px/1.4 var(--font-mono);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .rail h2 { margin: 0; color: var(--ink-strong); font-size: 23px; line-height: 1.14; letter-spacing: -0.02em; }
+    .rail-copy { margin: 13px 0 24px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .rail-section { padding: 20px 0; border-top: 1px solid var(--line); }
+    .rail-section:first-of-type { border-top: 0; }
+    .rail-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start; margin-top: 12px; }
+    .rail-icon { width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font: 700 10px/1 var(--font-mono); }
+    .rail-row strong { display: block; overflow: hidden; color: var(--ink-strong); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+    .rail-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .rail-note { margin-top: 20px; padding: 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--soft); color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .rail-note strong { color: var(--ink); }
+
+    .workspace { min-width: 0; padding: 30px 34px 40px; overflow: hidden auto; }
+    .stepper {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 28px;
+      border-bottom: 1px solid var(--line);
+    }
+    .step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+      min-width: 0;
+      padding: 0 12px 15px 0;
+      color: var(--faint);
+    }
+    .step::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: transparent; }
+    .step.active { color: var(--ink-strong); }
+    .step.active::after { background: var(--ink); }
+    .step.done { color: var(--green); }
+    .step-index { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid currentColor; border-radius: 50%; font: 700 10px/1 var(--font-mono); }
+    .step strong { display: block; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .step small { display: block; margin-top: 2px; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+    .screen { display: none; }
+    .screen.active { display: block; animation: reveal 240ms ease-out; }
+    @keyframes reveal { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+    .screen-head { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; margin-bottom: 24px; }
+    .screen-head h1 { max-width: 760px; margin: 0; color: var(--ink-strong); font-size: 34px; line-height: 1.08; letter-spacing: -0.035em; }
+    .screen-head p:not(.eyebrow) { max-width: 700px; margin: 12px 0 0; color: var(--muted); font-size: 15px; line-height: 1.55; }
+    .selection-count { flex: none; padding-top: 24px; color: var(--muted); font: 11px/1.4 var(--font-mono); text-transform: uppercase; }
+
+    .mode-control { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 22px; }
+    .mode-button {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--paper);
+      text-align: left;
+      cursor: pointer;
+    }
+    .mode-button.active { border-color: #cfb900; background: var(--volt-soft); }
+    .mode-glyph { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 7px; background: var(--soft); font: 800 15px/1 var(--font-mono); }
+    .mode-button.active .mode-glyph { background: var(--volt); }
+    .mode-button strong { display: block; color: var(--ink-strong); font-size: 14px; }
+    .mode-button small { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+
+    .agent-rationale {
+      display: none;
+      margin-bottom: 18px;
+      padding: 13px 15px;
+      border-left: 3px solid var(--volt);
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .agent-rationale.visible { display: block; }
+    .agent-rationale strong { color: var(--ink); }
+
+    .document-list { border-top: 1px solid var(--line); }
+    .document-row {
+      display: grid;
+      grid-template-columns: 26px minmax(0, 1fr) minmax(120px, 0.55fr) 84px;
+      gap: 14px;
+      align-items: center;
+      min-height: 72px;
+      padding: 12px 4px;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+    }
+    .document-row:hover { background: #fafaf7; }
+    .document-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); }
+    .document-title strong { display: block; color: var(--ink-strong); font-size: 14px; }
+    .document-title small, .document-why { color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .document-title small { display: block; margin-top: 4px; }
+    .effort { justify-self: end; color: var(--muted); font: 10px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+
+    .footer-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 24px; }
+    .button-row { display: flex; gap: 10px; align-items: center; }
+    .button {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 17px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: var(--paper);
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .button:hover { border-color: var(--ink); }
+    .button.primary { border-color: #d3bc08; background: var(--volt); color: var(--ink-strong); }
+    .button.dark { border-color: var(--ink); background: var(--ink); color: #fff; }
+    .button.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+    .button:disabled { cursor: not-allowed; opacity: 0.42; }
+
+    .prep-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 22px; align-items: start; }
+    .prep-stage { min-height: 570px; padding: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+    .cooper-orbit { position: relative; width: 92px; height: 92px; display: grid; place-items: center; margin-bottom: 26px; }
+    .cooper-orbit::before, .cooper-orbit::after { content: ""; position: absolute; inset: 0; border: 1px solid var(--line-strong); border-radius: 50%; animation: orbit 2.4s ease-out infinite; }
+    .cooper-orbit::after { animation-delay: 1.2s; }
+    @keyframes orbit { 0% { opacity: 0.9; transform: scale(0.64); } 90%,100% { opacity: 0; transform: scale(1); } }
+    .cooper-core { z-index: 1; width: 46px; height: 46px; display: grid; place-items: center; background: var(--ink); color: var(--volt); transform: rotate(45deg); }
+    .cooper-core span { transform: rotate(-45deg); font-weight: 900; }
+    .prep-stage h1 { margin: 0; color: var(--ink-strong); font-size: 32px; line-height: 1.08; letter-spacing: -0.03em; }
+    .prep-status-copy { margin: 12px 0 24px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .progress-track { height: 4px; overflow: hidden; background: #dedfd9; }
+    .progress-value { width: 0; height: 100%; background: var(--volt); transition: width 480ms ease; }
+    .progress-meta { display: flex; justify-content: space-between; gap: 14px; margin: 9px 0 24px; color: var(--muted); font: 10px/1.4 var(--font-mono); text-transform: uppercase; }
+
+    .pipeline { border-top: 1px solid var(--line); }
+    .pipeline-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 61px;
+      border-bottom: 1px solid var(--line);
+      color: var(--faint);
+    }
+    .pipeline-state { width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid currentColor; border-radius: 50%; font: 700 9px/1 var(--font-mono); }
+    .pipeline-row strong { display: block; font-size: 13px; }
+    .pipeline-row small { display: block; margin-top: 2px; font-size: 11px; }
+    .pipeline-row em { font: normal 10px/1.4 var(--font-mono); text-transform: uppercase; }
+    .pipeline-row.running { color: var(--ink); }
+    .pipeline-row.running .pipeline-state { border-color: #cbb400; background: var(--volt); }
+    .pipeline-row.done { color: var(--green); }
+    .pipeline-row.done .pipeline-state { border-color: var(--green); background: var(--green-soft); }
+
+    .prep-aside { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+    .prep-aside-head { padding: 16px; border-bottom: 1px solid var(--line); }
+    .prep-aside-head strong { display: block; color: var(--ink-strong); font-size: 14px; }
+    .prep-aside-head small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .output-status-row { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 9px; align-items: center; min-height: 52px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+    .output-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+    .output-status-row.running .output-dot { background: var(--volt); animation: blink 1s infinite; }
+    .output-status-row.done .output-dot { background: var(--green); }
+    @keyframes blink { 50% { opacity: 0.28; } }
+    .output-status-row strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .output-status-row small { color: var(--muted); font: 9px/1 var(--font-mono); text-transform: uppercase; }
+    .prep-aside-actions { display: grid; gap: 8px; padding: 14px; }
+    .prep-aside-actions .button { width: 100%; }
+
+    .ready-layout { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 22px; }
+    .deck { min-height: 560px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--canvas); }
+    .deck-head { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding: 15px 18px; background: var(--paper); border-bottom: 1px solid var(--line); }
+    .deck-head strong { color: var(--ink-strong); font-size: 13px; }
+    .deck-head small { color: var(--muted); font: 10px/1.3 var(--font-mono); text-transform: uppercase; }
+    .slide-wrap { display: grid; place-items: center; padding: 34px; }
+    .slide {
+      width: min(820px, 100%);
+      aspect-ratio: 16 / 9;
+      display: grid;
+      align-content: center;
+      padding: 7%;
+      border-top: 3px solid var(--volt);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .slide-label { color: var(--muted); font: 700 9px/1.4 var(--font-mono); text-transform: uppercase; letter-spacing: 0.14em; }
+    .slide h2 { max-width: 650px; margin: 18px 0 10px; color: var(--ink-strong); font-size: 32px; line-height: 1.08; letter-spacing: -0.03em; }
+    .slide > p { max-width: 650px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .slide-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 30px; background: var(--line); border: 1px solid var(--line); }
+    .slide-metrics div { padding: 15px; background: var(--paper); }
+    .slide-metrics strong { display: block; color: var(--ink-strong); font-size: 22px; }
+    .slide-metrics small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+    .deck-controls { display: flex; justify-content: center; align-items: center; gap: 7px; min-height: 52px; padding: 10px; background: var(--paper); border-top: 1px solid var(--line); }
+    .deck-controls button { width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); cursor: pointer; }
+    .deck-dot { width: 6px; height: 6px; border: 0; border-radius: 50%; background: var(--line-strong); }
+    .deck-dot.active { background: var(--ink); }
+
+    .ready-aside { display: grid; align-content: start; gap: 14px; }
+    .ready-card { padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+    .ready-card h3 { margin: 0 0 10px; color: var(--ink-strong); font-size: 14px; }
+    .ready-list { display: grid; gap: 10px; }
+    .ready-item { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 9px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    .ready-item span:first-child { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: var(--green); }
+    .ready-actions { display: grid; gap: 8px; }
+    .ready-actions .button { width: 100%; }
+
+    .current-flow { display: grid; gap: 0; border-top: 1px solid var(--line); }
+    .current-row { display: grid; grid-template-columns: 46px 180px minmax(0, 1fr) 140px; gap: 14px; align-items: center; min-height: 74px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .current-index { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; font: 700 10px/1 var(--font-mono); }
+    .current-row strong { color: var(--ink-strong); font-size: 13px; }
+    .current-row p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .current-row em { justify-self: end; color: var(--muted); font: normal 10px/1.4 var(--font-mono); text-align: right; text-transform: uppercase; }
+    .finding-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 22px; }
+    .finding { padding: 17px; border: 1px solid var(--line); border-radius: 7px; }
+    .finding strong { display: block; color: var(--ink-strong); font-size: 13px; }
+    .finding p { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+    .toast { position: fixed; right: 20px; bottom: 20px; z-index: 20; max-width: 340px; padding: 13px 15px; border-radius: 7px; background: var(--ink); color: #fff; box-shadow: var(--shadow); font-size: 12px; line-height: 1.45; opacity: 0; transform: translateY(10px); pointer-events: none; transition: 180ms ease; }
+    .toast.visible { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 980px) {
+      .topbar { grid-template-columns: 1fr auto; padding: 0 18px; }
+      .view-switch { order: 3; grid-column: 1 / -1; display: none; }
+      .session-meta { font-size: 9px; }
+      .shell { grid-template-columns: 1fr; }
+      .rail { display: none; }
+      .workspace { padding: 24px 20px 36px; }
+      .prep-layout, .ready-layout { grid-template-columns: 1fr; }
+      .prep-aside, .ready-aside { order: -1; }
+      .prep-aside { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+      .prep-aside-head { grid-column: 1 / -1; }
+      .prep-aside-actions { min-width: 190px; }
+    }
+
+    @media (max-width: 700px) {
+      .app { grid-template-rows: 54px minmax(0, 1fr); }
+      .topbar { min-height: 54px; padding: 0 14px; }
+      .brand small, .session-meta span:last-child { display: none; }
+      .shell { min-height: calc(100vh - 54px); border: 0; }
+      .workspace { padding: 18px 15px 96px; }
+      .stepper { grid-template-columns: repeat(4, 1fr); margin-bottom: 22px; }
+      .step { display: block; padding: 0 4px 12px 0; }
+      .step-index { width: 24px; height: 24px; margin-bottom: 5px; }
+      .step strong { font-size: 9px; }
+      .step small { display: none; }
+      .screen-head { display: block; }
+      .screen-head h1, .prep-stage h1 { font-size: 27px; }
+      .selection-count { padding-top: 10px; }
+      .mode-control { grid-template-columns: 1fr; }
+      .document-row { grid-template-columns: 24px minmax(0, 1fr) 68px; gap: 10px; }
+      .document-why { display: none; }
+      .effort { font-size: 8px; }
+      .footer-actions { align-items: stretch; flex-direction: column-reverse; }
+      .button-row { display: grid; grid-template-columns: 1fr; width: 100%; }
+      .button { width: 100%; }
+      .prep-stage { min-height: 520px; padding: 22px 18px; }
+      .prep-aside { display: block; }
+      .output-status-list { display: grid; grid-template-columns: 1fr; }
+      .prep-aside-actions { min-width: 0; }
+      .pipeline-row { grid-template-columns: 26px minmax(0, 1fr); }
+      .pipeline-row em { display: none; }
+      .slide-wrap { padding: 16px; }
+      .slide { aspect-ratio: auto; min-height: 390px; padding: 28px 22px; }
+      .slide h2 { font-size: 26px; }
+      .slide-metrics { grid-template-columns: 1fr; }
+      .current-row { grid-template-columns: 34px minmax(0, 1fr); gap: 8px; padding: 14px 0; }
+      .current-row p, .current-row em { grid-column: 2; justify-self: start; text-align: left; }
+      .finding-grid { grid-template-columns: 1fr; }
+      .toast { left: 14px; right: 14px; bottom: 14px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark"><span>C</span></span><strong>Cooper</strong><small>AIRES workspace</small></div>
+      <nav class="view-switch" aria-label="Prototype views">
+        <button class="active" data-view="prototype" type="button">Target flow</button>
+        <button data-view="current" type="button">What happens today</button>
+      </nav>
+      <div class="session-meta"><span class="status-dot"></span><span>Session preparation prototype</span></div>
+    </header>
+
+    <div class="shell">
+      <aside class="rail">
+        <p class="eyebrow">Session</p>
+        <h2>Corporate Demand Notes</h2>
+        <p class="rail-copy">Review the missing UI and permissions path, agree on scope, and leave with testable next work.</p>
+
+        <section class="rail-section">
+          <p class="eyebrow">Selected context</p>
+          <div class="rail-row"><span class="rail-icon">N</span><div><strong>PDD-4756</strong><small>Notion ticket · primary</small></div></div>
+          <div class="rail-row"><span class="rail-icon">GH</span><div><strong>permissions-read-path</strong><small>GitHub pull request</small></div></div>
+          <div class="rail-row"><span class="rail-icon">M</span><div><strong>Product triage</strong><small>Prior meeting transcript</small></div></div>
+        </section>
+
+        <section class="rail-section">
+          <p class="eyebrow">Evidence boundary</p>
+          <div class="rail-row"><span class="rail-icon">3</span><div><strong>Three sources</strong><small>Source text is bounded and cited.</small></div></div>
+          <div class="rail-row"><span class="rail-icon">1</span><div><strong>One unresolved question</strong><small>Role behavior still needs confirmation.</small></div></div>
+        </section>
+
+        <div class="rail-note"><strong>What this changes</strong><br />The room opens after Cooper has the packet, selected documents, quality results, and presentation. Entering early remains available.</div>
+      </aside>
+
+      <main class="workspace">
+        <div id="prototype-view">
+          <nav class="stepper" aria-label="Session preparation stages">
+            <div class="step done" data-stepper="context"><span class="step-index">✓</span><span><strong>Context</strong><small>3 sources selected</small></span></div>
+            <div class="step active" data-stepper="outputs"><span class="step-index">02</span><span><strong>Outputs</strong><small>Choose preparation</small></span></div>
+            <div class="step" data-stepper="prepare"><span class="step-index">03</span><span><strong>Prepare</strong><small>Visible agent work</small></span></div>
+            <div class="step" data-stepper="ready"><span class="step-index">04</span><span><strong>Ready</strong><small>Presentation handoff</small></span></div>
+          </nav>
+
+          <section class="screen active" id="selection-screen">
+            <header class="screen-head">
+              <div><p class="eyebrow">Prepare the room</p><h1>What should Cooper create before you enter?</h1><p>Choose the working documents that will make the conversation richer, or let Cooper select the smallest useful set from the session goal and evidence.</p></div>
+              <span class="selection-count" id="selection-count">4 documents selected</span>
+            </header>
+
+            <div class="mode-control" role="group" aria-label="Document selection mode">
+              <button class="mode-button" id="agent-mode" type="button"><span class="mode-glyph">C</span><span><strong>Let Cooper decide</strong><small>Select a focused set and explain why each document belongs.</small></span></button>
+              <button class="mode-button active" id="manual-mode" type="button"><span class="mode-glyph">✓</span><span><strong>Choose documents</strong><small>Keep direct control over the preparation pipeline.</small></span></button>
+            </div>
+
+            <div class="agent-rationale" id="agent-rationale"><strong>Cooper's recommendation:</strong> prepare the shared brief, decision map, and scoped requirements. The loaded PR and ticket make a QA checklist useful, but it can continue after entry.</div>
+
+            <div class="document-list" id="document-list">
+              <label class="document-row"><input checked data-document="brief" type="checkbox" /><span class="document-title"><strong>Shared context brief</strong><small>HTML · Required for readiness</small></span><span class="document-why">Establishes facts, hypotheses, citations, and missing context.</span><span class="effort">Focused</span></label>
+              <label class="document-row"><input checked data-document="map" type="checkbox" /><span class="document-title"><strong>Decision map</strong><small>Mermaid · Required for readiness</small></span><span class="document-why">Makes choices, dependencies, and unresolved gates visible.</span><span class="effort">Focused</span></label>
+              <label class="document-row"><input checked data-document="requirements" type="checkbox" /><span class="document-title"><strong>AIRES scoped requirements</strong><small>HTML · Required for readiness</small></span><span class="document-why">Turns the evidence into boundaries, slices, and acceptance criteria.</span><span class="effort">Deep</span></label>
+              <label class="document-row"><input checked data-document="qa" type="checkbox" /><span class="document-title"><strong>QA checklist</strong><small>Markdown · May continue in background</small></span><span class="document-why">Defines observable verification and regression coverage.</span><span class="effort">Deep</span></label>
+              <label class="document-row"><input data-document="adr" type="checkbox" /><span class="document-title"><strong>Architecture decision record</strong><small>Markdown · Optional</small></span><span class="document-why">Captures options and consequences when architecture is the decision.</span><span class="effort">Deep</span></label>
+              <label class="document-row"><input data-document="prototype" type="checkbox" /><span class="document-title"><strong>UI prototype</strong><small>HTML · Optional</small></span><span class="document-why">Gives the room an interactive surface to critique during the session.</span><span class="effort">Extended</span></label>
+            </div>
+
+            <footer class="footer-actions">
+              <button class="button quiet" id="back-context" type="button">Back to context</button>
+              <div class="button-row"><button class="button" id="enter-direct" type="button">Enter without preparation</button><button class="button primary" id="begin-prep" type="button">Create and prepare session</button></div>
+            </footer>
+          </section>
+
+          <section class="screen" id="preparation-screen">
+            <div class="prep-layout">
+              <section class="prep-stage">
+                <div class="cooper-orbit"><span class="cooper-core"><span>C</span></span></div>
+                <p class="eyebrow">Cooper is preparing the room</p>
+                <h1 id="prep-title">Resolving the selected sources</h1>
+                <p class="prep-status-copy" id="prep-copy">Loading the exact Notion page, pull request, and prior discussion into one bounded packet.</p>
+                <div class="progress-track" aria-label="Preparation progress"><div class="progress-value" id="progress-value"></div></div>
+                <div class="progress-meta"><span id="progress-label">Starting</span><span id="progress-percent">0%</span></div>
+                <div class="pipeline" id="pipeline"></div>
+              </section>
+
+              <aside class="prep-aside">
+                <div class="prep-aside-head"><strong>Session outputs</strong><small>Required work gates automatic entry. Optional work may continue inside the session.</small></div>
+                <div class="output-status-list" id="output-status-list"></div>
+                <div class="prep-aside-actions"><button class="button dark" id="skip-prep" type="button">Enter session now</button><button class="button" id="cancel-prep" type="button">Change selection</button></div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="screen" id="early-session-screen">
+            <header class="screen-head"><div><p class="eyebrow">Session open</p><h1>Keep talking. Preparation continues in the background.</h1><p>Cooper already has the bounded context packet. Working documents will replace their progress rows as quality checks finish.</p></div><span class="selection-count">Entered early</span></header>
+            <div class="ready-layout">
+              <section class="deck">
+                <header class="deck-head"><strong>Live session canvas</strong><small>Context available · documents preparing</small></header>
+                <div class="slide-wrap"><article class="slide"><span class="slide-label">Context first</span><h2>Restore the missing demand-notes path without weakening permissions.</h2><p>The ticket, pull request, and prior discussion are loaded. Cooper can discuss the evidence now while the selected documents continue through generation and quality checks.</p><div class="slide-metrics"><div><strong>3</strong><small>sources available</small></div><div><strong id="early-ready-count">0</strong><small>documents ready</small></div><div><strong>live</strong><small>background pipeline</small></div></div></article></div>
+              </section>
+              <aside class="ready-aside">
+                <section class="ready-card"><h3>Running quietly</h3><div class="output-status-list" id="early-output-status-list"></div></section>
+                <section class="ready-card"><h3>What you can do now</h3><div class="ready-list"><div class="ready-item"><span></span><span>Ask Cooper questions from the loaded context.</span></div><div class="ready-item"><span></span><span>Watch each document appear on the canvas when ready.</span></div><div class="ready-item"><span></span><span>Continue in chat or add voice without restarting the work.</span></div></div></section>
+                <div class="ready-actions"><button class="button" id="return-prep" type="button">View preparation details</button></div>
+              </aside>
+            </div>
+          </section>
+
+          <section class="screen" id="ready-screen">
+            <header class="screen-head"><div><p class="eyebrow">The room is prepared</p><h1>Cooper has the context, documents, and opening presentation.</h1><p>Everyone enters from the same evidence. Generated work remains editable and every claim retains its source boundary.</p></div><span class="selection-count">Ready to enter</span></header>
+            <div class="ready-layout">
+              <section class="deck">
+                <header class="deck-head"><strong>Opening session brief</strong><small>Slide 1 of 4 · context + generated work</small></header>
+                <div class="slide-wrap"><article class="slide"><span class="slide-label">Session brief</span><h2>Restore the missing demand-notes path without weakening permissions.</h2><p>The ticket, pull request, and prior discussion agree on the UI gap. The room still needs to confirm role visibility, source-of-truth behavior, and the verification owner.</p><div class="slide-metrics"><div><strong>3</strong><small>sources resolved</small></div><div><strong id="ready-doc-count">4</strong><small>documents ready</small></div><div><strong>1</strong><small>decision to resolve first</small></div></div></article></div>
+                <footer class="deck-controls"><button type="button" aria-label="Previous slide">←</button><span class="deck-dot active"></span><span class="deck-dot"></span><span class="deck-dot"></span><span class="deck-dot"></span><button type="button" aria-label="Next slide">→</button></footer>
+              </section>
+              <aside class="ready-aside">
+                <section class="ready-card"><h3>What Cooper knows</h3><div class="ready-list"><div class="ready-item"><span></span><span>The permission UI exists but is not reachable for expected roles.</span></div><div class="ready-item"><span></span><span>The code change restores navigation and adds permission checks.</span></div><div class="ready-item"><span></span><span>Role behavior and verification ownership remain open.</span></div></div></section>
+                <section class="ready-card"><h3>Prepared documents</h3><div class="ready-list" id="ready-output-list"></div></section>
+                <div class="ready-actions"><button class="button primary" id="enter-ready" type="button">Enter prepared session</button><button class="button" id="reset-flow" type="button">Run prototype again</button></div>
+              </aside>
+            </div>
+          </section>
+        </div>
+
+        <section class="screen" id="current-view">
+          <header class="screen-head"><div><p class="eyebrow">Current implementation</p><h1>The session opens first. Preparation catches up afterward.</h1><p>This is the source-grounded flow in the current worktree. The documents are real and durable, but their work is compressed into a quiet background list after the checkpoint disappears.</p></div></header>
+          <div class="current-flow">
+            <article class="current-row"><span class="current-index">01</span><strong>Resolve sources</strong><p>The browser posts selected sources. The server fetches and persists one bounded context packet.</p><em>Blocking</em></article>
+            <article class="current-row"><span class="current-index">02</span><strong>Open workspace</strong><p>The checkpoint closes and the call canvas renders immediately, before a call record or preparation jobs are visibly ready.</p><em>Immediate</em></article>
+            <article class="current-row"><span class="current-index">03</span><strong>Create call record</strong><p>A durable call is created with the packet ID and becomes the owner of all preparation jobs.</p><em>Background</em></article>
+            <article class="current-row"><span class="current-index">04</span><strong>Queue four documents</strong><p>Shared brief, decision map, scoped requirements, and QA checklist are selected by default.</p><em>Fixed set</em></article>
+            <article class="current-row"><span class="current-index">05</span><strong>Generate serially</strong><p>One worker runs multi-step OpenAI requests, quality checks, repairs, retries, and publication.</p><em>Minutes</em></article>
+            <article class="current-row"><span class="current-index">06</span><strong>Refresh presentation</strong><p>The local opening deck exists early; document counts and artifact tabs update as outputs complete.</p><em>Progressive</em></article>
+          </div>
+          <div class="finding-grid">
+            <article class="finding"><strong>Latest run succeeded</strong><p>All four preparation jobs completed. The final output arrived about eight minutes after queueing.</p></article>
+            <article class="finding"><strong>The visibility gap is real</strong><p>There is no dedicated loading state between context selection and the session workspace.</p></article>
+            <article class="finding"><strong>Other failure signals exist</strong><p>Historical logs show a missing CSS import, duplicate dev-server ports, and intermittent Notion timeouts.</p></article>
+          </div>
+          <footer class="footer-actions"><span></span><button class="button primary" id="show-target" type="button">View the proposed flow</button></footer>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script>
+    const documents = {
+      brief: { title: "Shared context brief", optional: false },
+      map: { title: "Decision map", optional: false },
+      requirements: { title: "AIRES scoped requirements", optional: false },
+      qa: { title: "QA checklist", optional: true },
+      adr: { title: "Architecture decision record", optional: true },
+      prototype: { title: "UI prototype", optional: true }
+    };
+
+    const pipelineSteps = [
+      { title: "Resolve and verify sources", detail: "Notion, GitHub, and meeting context", copy: "Loading the exact Notion page, pull request, and prior discussion into one bounded packet." },
+      { title: "Build the evidence packet", detail: "Normalize, cite, and persist source lineage", copy: "Separating source facts from user intent and treating remote content as untrusted evidence." },
+      { title: "Plan the session outputs", detail: "Confirm required and optional documents", copy: "Cooper is matching the session goal to the smallest useful set of preparation documents." },
+      { title: "Generate working documents", detail: "Run durable background document jobs", copy: "The shared brief, decision map, and requirements draft are being generated against the same packet." },
+      { title: "Validate quality and lineage", detail: "Check structure, citations, and missing context", copy: "Cooper is checking that outputs are complete, source-bounded, and safe to bring into the room." },
+      { title: "Assemble the presentation", detail: "Summarize context and generated documents", copy: "The opening presentation is being rebuilt with document summaries, links, and the most important questions." },
+      { title: "Load Cooper's session memory", detail: "Packet, artifact manifest, and opening prompt", copy: "Cooper is receiving the same context, document manifest, and presentation the room will see." }
+    ];
+
+    const selectionScreen = document.getElementById("selection-screen");
+    const preparationScreen = document.getElementById("preparation-screen");
+    const earlySessionScreen = document.getElementById("early-session-screen");
+    const readyScreen = document.getElementById("ready-screen");
+    const prototypeView = document.getElementById("prototype-view");
+    const currentView = document.getElementById("current-view");
+    const selectionCount = document.getElementById("selection-count");
+    const agentMode = document.getElementById("agent-mode");
+    const manualMode = document.getElementById("manual-mode");
+    const agentRationale = document.getElementById("agent-rationale");
+    const progressValue = document.getElementById("progress-value");
+    const progressLabel = document.getElementById("progress-label");
+    const progressPercent = document.getElementById("progress-percent");
+    const prepTitle = document.getElementById("prep-title");
+    const prepCopy = document.getElementById("prep-copy");
+    const pipeline = document.getElementById("pipeline");
+    const outputStatusList = document.getElementById("output-status-list");
+    const earlyOutputStatusList = document.getElementById("early-output-status-list");
+    const earlyReadyCount = document.getElementById("early-ready-count");
+    const readyOutputList = document.getElementById("ready-output-list");
+    const toast = document.getElementById("toast");
+    let preparationTimer = null;
+    let activePipelineIndex = 0;
+
+    function selectedDocuments() {
+      return [...document.querySelectorAll("[data-document]:checked")].map((input) => input.dataset.document);
+    }
+
+    function updateSelectionCount() {
+      const count = selectedDocuments().length;
+      selectionCount.textContent = `${count} document${count === 1 ? "" : "s"} selected`;
+      document.getElementById("begin-prep").disabled = count === 0;
+    }
+
+    function setMode(mode) {
+      const agent = mode === "agent";
+      agentMode.classList.toggle("active", agent);
+      manualMode.classList.toggle("active", !agent);
+      agentRationale.classList.toggle("visible", agent);
+      if (agent) {
+        document.querySelectorAll("[data-document]").forEach((input) => {
+          input.checked = ["brief", "map", "requirements", "qa"].includes(input.dataset.document);
+        });
+      }
+      updateSelectionCount();
+    }
+
+    function setScreen(name) {
+      selectionScreen.classList.toggle("active", name === "selection");
+      preparationScreen.classList.toggle("active", name === "prepare");
+      earlySessionScreen.classList.toggle("active", name === "early");
+      readyScreen.classList.toggle("active", name === "ready");
+      const order = { selection: 1, prepare: 2, early: 2, ready: 3 };
+      document.querySelectorAll("[data-stepper]").forEach((step, index) => {
+        step.classList.toggle("done", index < order[name]);
+        step.classList.toggle("active", index === order[name]);
+        const marker = step.querySelector(".step-index");
+        marker.textContent = index < order[name] ? "✓" : String(index + 1).padStart(2, "0");
+      });
+    }
+
+    function renderPipeline(index) {
+      pipeline.innerHTML = pipelineSteps.map((step, stepIndex) => {
+        const status = stepIndex < index ? "done" : stepIndex === index ? "running" : "";
+        const marker = stepIndex < index ? "✓" : String(stepIndex + 1).padStart(2, "0");
+        const label = stepIndex < index ? "complete" : stepIndex === index ? "working" : "waiting";
+        return `<div class="pipeline-row ${status}"><span class="pipeline-state">${marker}</span><span><strong>${step.title}</strong><small>${step.detail}</small></span><em>${label}</em></div>`;
+      }).join("");
+    }
+
+    function renderOutputs(stageIndex) {
+      const ids = selectedDocuments();
+      let readyCount = 0;
+      const rows = ids.map((id, index) => {
+        const generationStarted = stageIndex >= 3;
+        const completed = stageIndex >= 5 || (generationStarted && index < Math.max(0, stageIndex - 2));
+        const running = generationStarted && !completed && index === Math.max(0, stageIndex - 3);
+        if (completed) readyCount += 1;
+        const status = completed ? "done" : running ? "running" : "";
+        const label = completed ? "ready" : running ? "building" : "queued";
+        return `<div class="output-status-row ${status}"><span class="output-dot"></span><strong>${documents[id].title}</strong><small>${label}</small></div>`;
+      }).join("");
+      outputStatusList.innerHTML = rows;
+      earlyOutputStatusList.innerHTML = rows;
+      earlyReadyCount.textContent = String(readyCount);
+    }
+
+    function beginPreparation() {
+      if (!selectedDocuments().length) return;
+      clearInterval(preparationTimer);
+      activePipelineIndex = 0;
+      setScreen("prepare");
+      renderPipeline(0);
+      renderOutputs(0);
+      updateProgress();
+      preparationTimer = window.setInterval(() => {
+        activePipelineIndex += 1;
+        if (activePipelineIndex >= pipelineSteps.length) {
+          clearInterval(preparationTimer);
+          showReady();
+          return;
+        }
+        renderPipeline(activePipelineIndex);
+        renderOutputs(activePipelineIndex);
+        updateProgress();
+      }, 1050);
+    }
+
+    function updateProgress() {
+      const step = pipelineSteps[activePipelineIndex];
+      const percent = Math.round((activePipelineIndex / pipelineSteps.length) * 100);
+      prepTitle.textContent = step.title;
+      prepCopy.textContent = step.copy;
+      progressValue.style.width = `${percent}%`;
+      progressPercent.textContent = `${percent}%`;
+      progressLabel.textContent = `Stage ${activePipelineIndex + 1} of ${pipelineSteps.length}`;
+    }
+
+    function showReady() {
+      const ids = selectedDocuments();
+      progressValue.style.width = "100%";
+      setScreen("ready");
+      document.getElementById("ready-doc-count").textContent = String(ids.length);
+      readyOutputList.innerHTML = ids.map((id) => `<div class="ready-item"><span></span><span>${documents[id].title}</span></div>`).join("");
+    }
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("visible");
+      window.setTimeout(() => toast.classList.remove("visible"), 2600);
+    }
+
+    function resetFlow() {
+      clearInterval(preparationTimer);
+      setMode("manual");
+      setScreen("selection");
+      progressValue.style.width = "0";
+    }
+
+    document.querySelectorAll("[data-document]").forEach((input) => input.addEventListener("change", () => {
+      setMode("manual");
+      updateSelectionCount();
+    }));
+    agentMode.addEventListener("click", () => setMode("agent"));
+    manualMode.addEventListener("click", () => setMode("manual"));
+    document.getElementById("begin-prep").addEventListener("click", beginPreparation);
+    document.getElementById("cancel-prep").addEventListener("click", resetFlow);
+    document.getElementById("skip-prep").addEventListener("click", () => {
+      showToast("Session opened. Preparation continues as visible background work.");
+      setScreen("early");
+    });
+    document.getElementById("return-prep").addEventListener("click", () => setScreen("prepare"));
+    document.getElementById("enter-direct").addEventListener("click", () => showToast("Session opened with the bounded context packet and no preparation jobs."));
+    document.getElementById("enter-ready").addEventListener("click", () => showToast("Prepared session opened. Chat is ready; voice remains optional."));
+    document.getElementById("reset-flow").addEventListener("click", resetFlow);
+    document.getElementById("back-context").addEventListener("click", () => showToast("In production this returns to source selection without losing the packet draft."));
+
+    document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => {
+      document.querySelectorAll("[data-view]").forEach((item) => item.classList.toggle("active", item === button));
+      const current = button.dataset.view === "current";
+      prototypeView.style.display = current ? "none" : "block";
+      currentView.classList.toggle("active", current);
+    }));
+    document.getElementById("show-target").addEventListener("click", () => {
+      const button = document.querySelector('[data-view="prototype"]');
+      button.click();
+    });
+
+    updateSelectionCount();
+  </script>
+</body>
+</html>

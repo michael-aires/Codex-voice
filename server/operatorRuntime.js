@@ -169,18 +169,19 @@ export const OPERATOR_PRESETS = [
 
 export function operatorRuntimeInfo(env = process.env) {
   const home = env.HOME || homedir();
+  const codexAppServerEnabled = env.COOPER_OPERATOR_CODEX_APP_SERVER !== "false";
   return {
     mode: "local",
     browserProfile: env.COOPER_OPERATOR_BROWSER_PROFILE || join(home, ".cooper", "profiles", "operator"),
     codexWorkspace: env.COOPER_OPERATOR_WORKSPACE || join(home, ".cooper", "operator-workspace"),
-    codexRuntime: env.COOPER_OPERATOR_CODEX_RUNTIME || "codex exec",
+    codexRuntime: env.COOPER_OPERATOR_CODEX_RUNTIME || "codex app-server",
     visibleBrowser: true,
     browserLaunchEnabled:
       env.COOPER_OPERATOR_LAUNCH_BROWSER === "true" ||
       (env.COOPER_OPERATOR_LAUNCH_BROWSER !== "false" && env.NODE_ENV !== "production"),
     computerUseEnabled: env.COOPER_OPERATOR_COMPUTER_USE === "true",
     computerUseBridge: env.COOPER_OPERATOR_COMPUTER_USE_BRIDGE || "",
-    codexAppServerEnabled: env.COOPER_OPERATOR_CODEX_APP_SERVER === "true",
+    codexAppServerEnabled,
     codexMcpEnabled: env.COOPER_OPERATOR_CODEX_MCP === "true",
     agentsSdkEnabled: env.COOPER_OPERATOR_AGENTS_SDK === "true",
     sandboxAgentsEnabled: env.COOPER_OPERATOR_SANDBOX_AGENTS === "true",
@@ -190,7 +191,7 @@ export function operatorRuntimeInfo(env = process.env) {
       hostedTools: true,
       computerUse: env.COOPER_OPERATOR_COMPUTER_USE === "true",
       computerUseBridge: env.COOPER_OPERATOR_COMPUTER_USE_BRIDGE || "",
-      codexAppServer: env.COOPER_OPERATOR_CODEX_APP_SERVER === "true",
+      codexAppServer: codexAppServerEnabled,
       codexMcp: env.COOPER_OPERATOR_CODEX_MCP === "true",
       agentsSdk: env.COOPER_OPERATOR_AGENTS_SDK === "true",
       sandboxAgents: env.COOPER_OPERATOR_SANDBOX_AGENTS === "true"
@@ -324,6 +325,8 @@ export function createOperatorTask(input = {}, now = new Date().toISOString()) {
       ? input.templateIds.map(cleanText).filter(Boolean)
       : preset?.templateIds || [],
     computerIntent: normalizeComputerIntent(input.computerIntent || input),
+    workspacePath: cleanText(input.workspacePath || input.workspace_path),
+    codexModel: cleanText(input.codexModel || input.codex_model),
     relatedCallId: cleanText(input.relatedCallId),
     jobIds: Array.isArray(input.jobIds) ? input.jobIds.map(cleanText).filter(Boolean) : [],
     jobsQueuedAt: cleanText(input.jobsQueuedAt),
@@ -332,6 +335,11 @@ export function createOperatorTask(input = {}, now = new Date().toISOString()) {
     steps,
     stepIndex: 0,
     codexInvocations: 0,
+    runtime: createCodexRuntimeState({
+      adapter: skill === "codex_app_server" ? "codex_app_server" : "",
+      cwd: cleanText(input.workspacePath || input.workspace_path),
+      model: cleanText(input.codexModel || input.codex_model)
+    }),
     approvals: [],
     artifacts: [],
     logs: [
@@ -360,6 +368,8 @@ export function hydrateOperatorTask(task = {}) {
     artifactKinds: Array.isArray(task.artifactKinds) ? task.artifactKinds.map(cleanText).filter(Boolean) : [],
     templateIds: Array.isArray(task.templateIds) ? task.templateIds.map(cleanText).filter(Boolean) : [],
     computerIntent: normalizeComputerIntent(task.computerIntent || task),
+    workspacePath: cleanText(task.workspacePath || task.workspace_path),
+    codexModel: cleanText(task.codexModel || task.codex_model),
     relatedCallId: cleanText(task.relatedCallId),
     jobIds: Array.isArray(task.jobIds) ? task.jobIds.map(cleanText).filter(Boolean) : [],
     jobsQueuedAt: cleanText(task.jobsQueuedAt),
@@ -368,6 +378,7 @@ export function hydrateOperatorTask(task = {}) {
     steps: Array.isArray(task.steps) && task.steps.length ? task.steps.map(cleanText).filter(Boolean) : operatorSkillSteps(skill),
     stepIndex: Number(task.stepIndex || 0),
     codexInvocations: Number(task.codexInvocations || 0),
+    runtime: createCodexRuntimeState(task.runtime),
     approvals: Array.isArray(task.approvals) ? task.approvals.map(hydrateApproval) : [],
     artifacts: Array.isArray(task.artifacts) ? task.artifacts.map(hydrateArtifact) : [],
     logs: Array.isArray(task.logs) && task.logs.length ? task.logs.map(hydrateLog) : [createOperatorLog("recovered", "Task recovered", "Operator recovered this task from local persistence.")],
@@ -416,6 +427,9 @@ export function createOperatorApproval(input = {}, at = new Date().toISOString()
     type: cleanText(input.type) || "operator_approval",
     title: cleanText(input.title) || "Approval required",
     description: cleanText(input.description) || "Approve this checkpoint before Operator continues.",
+    runtimeRequestId: input.runtimeRequestId ?? null,
+    runtimeMethod: cleanText(input.runtimeMethod),
+    runtimePayload: input.runtimePayload && typeof input.runtimePayload === "object" ? input.runtimePayload : null,
     status: "pending",
     requestedAt: at,
     resolvedAt: null
@@ -466,9 +480,29 @@ function hydrateApproval(approval) {
     type: cleanText(approval.type) || "operator_approval",
     title: cleanText(approval.title) || "Approval required",
     description: cleanText(approval.description) || "Approve this checkpoint before Operator continues.",
+    runtimeRequestId: approval.runtimeRequestId ?? null,
+    runtimeMethod: cleanText(approval.runtimeMethod),
+    runtimePayload: approval.runtimePayload && typeof approval.runtimePayload === "object" ? approval.runtimePayload : null,
     status: cleanText(approval.status) || "pending",
     requestedAt: cleanText(approval.requestedAt) || new Date().toISOString(),
     resolvedAt: cleanText(approval.resolvedAt)
+  };
+}
+
+function createCodexRuntimeState(runtime = {}) {
+  return {
+    adapter: cleanText(runtime.adapter),
+    transportMode: cleanText(runtime.transportMode) || "disconnected",
+    connectionStatus: cleanText(runtime.connectionStatus) || "disconnected",
+    threadId: cleanText(runtime.threadId),
+    turnId: cleanText(runtime.turnId),
+    threadStatus: cleanText(runtime.threadStatus),
+    cwd: cleanText(runtime.cwd),
+    model: cleanText(runtime.model),
+    lastEventAt: cleanText(runtime.lastEventAt),
+    lastReconciledAt: cleanText(runtime.lastReconciledAt),
+    lastMessage: cleanText(runtime.lastMessage),
+    error: cleanText(runtime.error)
   };
 }
 

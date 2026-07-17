@@ -207,6 +207,9 @@ The test suite locks Cooper's wake phrase behavior so direct invitations and non
 - Transcript capture for microphone/user turns and Cooper's spoken output transcript events.
 - Post-call suggestions for work: post-call kit, execution plan, PRD, HTML prototype, follow-up summary, and code sketch.
 - Rate-limited server-side job loop that calls `/v1/responses` one step at a time, retries transient/rate-limit failures, and writes artifacts to `data/artifacts`.
+- Five-stage document pipeline for Capture, Shape, Generate, Validate, and Publish, with source manifests, public activity events, priority ordering, restart recovery, pause/resume/cancel controls, deterministic quality scoring, and one bounded repair pass.
+- First-class session document tool for hands-free PRDs, execution plans, QA checklists, architecture decision records, sprint recaps, decision logs, release briefs, executive reports, Word briefs, PowerPoint decks, and Excel action registers.
+- Versioned artifact revisions preserve lineage between published versions and keep quality/source metadata visible in the Work inspector.
 - HTML prototype artifacts are standalone inline HTML/CSS/JS and render in a sandboxed Work preview with Mobile and Desktop viewport toggles.
 - MCP App artifacts persist as JSON-backed call artifacts and restore as sandboxed iframe canvas apps with App and Metadata tabs.
 - Mermaid artifacts render as readable Markdown with live Mermaid diagrams in both Work and the call canvas.

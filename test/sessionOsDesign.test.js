@@ -7,6 +7,7 @@ const planPath = new URL("../docs/11-session-os-production-plan.md", import.meta
 const auditPath = new URL("../docs/12-session-os-completion-audit.md", import.meta.url);
 const appPath = new URL("../src/main.jsx", import.meta.url);
 const componentsPath = new URL("../src/sessionOs.jsx", import.meta.url);
+const redesignCssPath = new URL("../src/aires-redesign.css", import.meta.url);
 
 test("Session OS stylesheet locks the accepted design tokens", async () => {
   const css = await readFile(cssPath, "utf8");
@@ -47,13 +48,29 @@ test("production app mounts the shared Session OS shell across every workspace",
   const components = await readFile(componentsPath, "utf8");
 
   assert.ok((app.match(/<SessionOsTopbar/g) || []).length >= 5);
-  for (const capability of ["Talk with Cooper", "Delegate work", "Computer Use", "Lock workspace"]) {
+  for (const capability of ["Talk with Cooper", "Codex orchestration", "Computer Use", "Lock workspace"]) {
     assert.match(components, new RegExp(capability));
   }
   assert.match(app, /<SessionMemory/);
   assert.match(app, /className="project-empty-state"/);
   assert.match(components, /aria-current=\{active === item\.id \? "page" : undefined\}/);
   assert.match(components, /aria-label="New session"/);
+});
+
+test("the shared AIRES navigation is collapsed by default and closes on every destination change", async () => {
+  const [components, css] = await Promise.all([
+    readFile(componentsPath, "utf8"),
+    readFile(redesignCssPath, "utf8")
+  ]);
+
+  assert.match(components, /className="session-os-launcher"/);
+  assert.match(components, /aria-label="Open Cooper AIRES workspace navigation"/);
+  assert.match(components, /React\.useEffect\(\(\) => \{\s*setMenuOpen\(false\);\s*\}, \[active\]\)/);
+  assert.match(components, /function navigate\(destination\) \{\s*setMenuOpen\(false\);\s*onNavigate\?\.\(destination\)/);
+  assert.match(css, /Every application surface keeps only the naked AIRES mark/);
+  assert.match(css, /\.session-os-sidebar-panel\s*\{[\s\S]*visibility:\s*hidden;[\s\S]*transform:\s*translateX\(-102%\)/);
+  assert.match(css, /\.session-os-topbar\.app-navigation\.is-open \.session-os-sidebar-panel\s*\{[\s\S]*visibility:\s*visible;[\s\S]*transform:\s*translateX\(0\)/);
+  assert.match(css, /\.app-shell\.session-os-shell,[\s\S]*\.computer-use-page\s*\{\s*padding:\s*0;/);
 });
 
 test("completion audit covers every required workspace and verification gate", async () => {

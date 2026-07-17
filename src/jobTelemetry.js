@@ -4,7 +4,7 @@ export function progressPercent(job = {}) {
   const stepIndex = Math.min(stepCount, Math.max(0, Number(job.stepIndex || 0)));
   if (job.status === "failed") return Math.max(8, Math.round((stepIndex / stepCount) * 100));
   const base = (stepIndex / stepCount) * 100;
-  return Math.min(96, Math.max(8, Math.round(base + (job.status === "running" ? 18 / stepCount : 0))));
+  return Math.min(96, Math.max(8, Math.round(base + (["running", "pausing", "canceling"].includes(job.status) ? 18 / stepCount : 0))));
 }
 
 export function elapsedMsSince(value, now = Date.now()) {
@@ -36,7 +36,7 @@ export function jobStatusLine(job = {}, now = Date.now()) {
     ? job.lastApiStartedAt
     : job.lastActivityAt || job.updatedAt || job.createdAt;
   const elapsed = elapsedMsSince(elapsedSource, now);
-  if (elapsed > 0 && ["running", "queued"].includes(job.status)) {
+  if (elapsed > 0 && ["running", "queued", "pausing", "canceling"].includes(job.status)) {
     parts.push(`${formatDurationMs(elapsed)} ${job.apiStatus === "waiting_for_openai" ? "waiting" : "since update"}`);
   }
 
@@ -55,6 +55,12 @@ export function jobApiLine(job = {}, now = Date.now()) {
   }
   if (job.apiStatus === "waiting_between_steps") return "API: pacing before the next model call.";
   if (job.apiStatus === "finalizing") return "API: model steps complete; writing artifact file.";
+  if (job.apiStatus === "validating") return "Pipeline: validating structure, evidence, and output safety.";
+  if (job.apiStatus === "repairing") return "Pipeline: repairing failed public quality checks.";
+  if (job.apiStatus === "paused") return "Pipeline: paused at a safe checkpoint.";
+  if (job.apiStatus === "pause_requested") return "Pipeline: pause requested after the current model step.";
+  if (job.apiStatus === "cancel_requested") return "Pipeline: cancel requested after the current model step.";
+  if (job.apiStatus === "canceled") return "Pipeline: canceled; no more model calls will run.";
   if (job.apiStatus === "retry_scheduled") return "API: retry scheduled after a recoverable failure.";
   if (job.apiStatus === "failed") return "API: failed; manual retry is available.";
   if (job.apiStatus === "completed") return "API: artifact completed.";

@@ -2108,6 +2108,73 @@ button.job-row {
   font-weight: 850;
 }
 
+.job-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.job-controls .inline-action {
+  min-height: 30px;
+  margin-top: 0;
+  padding: 0 9px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.job-controls .inline-action.danger {
+  border-color: #e7c6c1;
+  color: #a2382c;
+}
+
+.job-controls .inline-action:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.job-pipeline-stage {
+  color: #48554f;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
+.job-quality.passed {
+  color: #21704f;
+  font-weight: 750;
+}
+
+.job-quality.needs_review {
+  color: #8b5b00;
+  font-weight: 750;
+}
+
+.artifact-revision-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--aires-border, #d9ddd8);
+}
+
+.artifact-revision-panel textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  padding: 10px;
+  font: inherit;
+}
+
+.artifact-revision-panel .primary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 0;
+  border-radius: 8px;
+}
+
 .activity-stream {
   margin-top: 16px;
   padding-top: 14px;

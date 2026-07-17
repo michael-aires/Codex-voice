@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cooper — Knowledge Studio Prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #2d2c2d;
+      --muted: #686765;
+      --faint: #8e8d89;
+      --line: #d7d6d2;
+      --line-soft: #e9e8e4;
+      --workspace: #f7f7f5;
+      --surface: #ffffff;
+      --volt: #f0de4a;
+      --volt-soft: #fff9cb;
+      --green: #2f766d;
+      --blue: #2563eb;
+      --danger: #b42318;
+      --radius: 8px;
+      --header: 64px;
+      --rail: 340px;
+      --ease: 160ms ease-out;
+      --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--surface);
+      font-family: var(--font);
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    svg { display: block; }
+    [hidden] { display: none !important; }
+
+    .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .icon.small { width: 15px; height: 15px; }
+    .icon.large { width: 22px; height: 22px; }
+
+    .app { min-height: 100%; }
+    .screen { min-height: 100vh; background: var(--surface); }
+
+    .brand { display: inline-flex; align-items: center; gap: 12px; font-size: 21px; font-weight: 600; width: fit-content; }
+    .brand-mark { width: 20px; height: 20px; color: var(--ink); }
+
+    .workspace-launcher {
+      position: fixed;
+      top: 18px;
+      left: 18px;
+      z-index: 65;
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      overflow: hidden;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      text-align: left;
+      transition: width 190ms ease-out, background 190ms ease-out, box-shadow 190ms ease-out;
+    }
+    .workspace-launcher:hover,
+    .workspace-launcher:focus-visible {
+      width: 204px;
+      background: #fff;
+      box-shadow: 0 8px 28px rgb(45 44 45 / 10%);
+      outline: none;
+    }
+    .workspace-launcher .brand-mark { width: 24px; height: 24px; flex: 0 0 24px; }
+    .workspace-lockup {
+      min-width: 126px;
+      opacity: 0;
+      transform: translateX(-5px);
+      transition: opacity 130ms ease-out 35ms, transform 160ms ease-out 35ms;
+    }
+    .workspace-launcher:hover .workspace-lockup,
+    .workspace-launcher:focus-visible .workspace-lockup { opacity: 1; transform: translateX(0); }
+    .workspace-lockup strong { display: block; font-size: 16px; line-height: 1.05; font-weight: 600; letter-spacing: -0.01em; }
+    .workspace-lockup span { display: block; margin-top: 4px; color: var(--muted); font-size: 7px; line-height: 1; font-weight: 600; letter-spacing: 0.2em; white-space: nowrap; }
+
+    .workspace-nav-scrim {
+      position: fixed;
+      inset: 0;
+      z-index: 68;
+      border: 0;
+      background: rgb(45 44 45 / 18%);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 190ms ease-out;
+      cursor: default;
+    }
+    .workspace-drawer {
+      position: fixed;
+      inset: 0 auto 0 0;
+      z-index: 70;
+      width: 252px;
+      display: flex;
+      flex-direction: column;
+      padding: 18px 16px 16px;
+      border-right: 1px solid var(--line-soft);
+      background: #fff;
+      transform: translateX(-100%);
+      transition: transform 220ms ease-out;
+      box-shadow: 18px 0 48px rgb(45 44 45 / 7%);
+    }
+    body.workspace-nav-open .workspace-nav-scrim { opacity: 1; pointer-events: auto; }
+    body.workspace-nav-open .workspace-drawer { transform: translateX(0); }
+    body.workspace-nav-open .workspace-launcher { opacity: 0; pointer-events: none; }
+    .drawer-head { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 3px 0 8px; }
+    .drawer-brand { display: flex; align-items: center; gap: 12px; }
+    .drawer-close { width: 36px; height: 36px; border: 0; border-radius: 6px; background: transparent; display: grid; place-items: center; }
+    .drawer-close:hover { background: var(--workspace); }
+    .workspace-nav { display: grid; gap: 4px; margin-top: 34px; }
+    .workspace-nav-item {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      font-size: 14px;
+      font-weight: 500;
+      text-align: left;
+    }
+    .workspace-nav-item:hover { background: var(--workspace); }
+    .workspace-nav-item.active { background: var(--ink); color: #fff; }
+    .workspace-nav-item .icon { width: 17px; height: 17px; }
+    .drawer-spacer { flex: 1; }
+    .drawer-new { width: 100%; margin-bottom: 12px; }
+    .drawer-workspace { padding: 16px 12px 5px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+    .library-layout { display: grid; grid-template-columns: minmax(0, 1fr) 408px; min-height: 100vh; }
+    .library-main { padding: 96px 60px 64px; border-right: 1px solid var(--line); min-width: 0; }
+    .library-side { padding: 36px 32px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    .page-title { margin: 0 0 20px; font-size: 38px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 600; }
+    .search-box {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 15px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .search-box:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px rgb(37 99 235 / 12%); }
+    .search-box input { flex: 1; border: 0; outline: 0; min-width: 0; font-size: 15px; background: transparent; }
+    .search-box input::placeholder { color: #807f7b; }
+    .library-controls { display: flex; align-items: center; gap: 12px; margin: 18px 0 26px; }
+    .filter-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .filter-tab { border: 0; background: transparent; padding: 10px 14px; border-radius: 999px; font-weight: 500; }
+    .filter-tab:hover { background: var(--workspace); }
+    .filter-tab.active { color: #fff; background: var(--ink); }
+    .control-spacer { flex: 1; }
+
+    .button {
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      padding: 0 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      font-weight: 500;
+      white-space: nowrap;
+      transition: background var(--ease), border-color var(--ease), transform var(--ease);
+    }
+    .button:hover { background: var(--workspace); border-color: #bebdb8; }
+    .button:active { transform: translateY(1px); }
+    .button.accent { background: var(--volt); border-color: #d7c72e; }
+    .button.accent:hover { background: #ead735; }
+    .button.dark { background: var(--ink); color: #fff; border-color: var(--ink); }
+    .button.dark:hover { background: #1f1e1f; }
+    .button.quiet { border-color: transparent; background: transparent; }
+    .button.small { min-height: 36px; padding: 0 12px; font-size: 13px; }
+    .icon-button {
+      width: 42px;
+      height: 42px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .icon-button:hover { background: var(--workspace); }
+
+    .doc-list { border-top: 1px solid var(--line-soft); }
+    .doc-row {
+      width: 100%;
+      min-height: 86px;
+      display: grid;
+      grid-template-columns: minmax(260px, 1.8fr) 126px 112px 128px;
+      align-items: center;
+      gap: 22px;
+      padding: 14px 18px;
+      border: 0;
+      border-bottom: 1px solid var(--line-soft);
+      background: var(--surface);
+      text-align: left;
+      position: relative;
+    }
+    .doc-row::before { content: ""; position: absolute; inset: 8px auto 8px 0; width: 3px; background: transparent; }
+    .doc-row:hover { background: #fcfcfb; }
+    .doc-row.selected { background: #faf9f6; }
+    .doc-row.selected::before { background: var(--volt); }
+    .doc-main { display: flex; align-items: center; gap: 15px; min-width: 0; }
+    .doc-icon { width: 46px; height: 46px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+    .doc-copy { min-width: 0; }
+    .doc-copy strong { display: block; font-size: 16px; line-height: 1.3; font-weight: 600; margin-bottom: 5px; }
+    .doc-copy span { color: var(--muted); line-height: 1.4; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .doc-meta { color: var(--muted); font-size: 13px; }
+    .doc-type { display: inline-flex; align-items: center; gap: 7px; }
+    .doc-date { white-space: nowrap; }
+    .published { display: flex; align-items: center; gap: 7px; width: fit-content; margin-top: 6px; color: var(--green); }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+    .templates { margin-top: 30px; }
+    .templates h2 { margin: 0 0 15px; font-size: 15px; font-weight: 600; }
+    .template-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .template-card { min-height: 70px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; text-align: left; padding: 14px; display: flex; align-items: center; gap: 12px; }
+    .template-card:hover { border-color: #bcbab4; background: #fcfcfb; }
+    .template-card strong { display: block; font-size: 13px; margin-bottom: 4px; }
+    .template-card span { display: block; color: var(--muted); font-size: 11px; line-height: 1.35; }
+
+    .side-icon { width: 58px; height: 58px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 20px; }
+    .side-title { margin: 0; font-size: 24px; line-height: 1.2; letter-spacing: -0.025em; }
+    .detail-list { margin: 28px 0 0; border-top: 1px solid var(--line-soft); }
+    .detail-item { display: grid; grid-template-columns: 104px 1fr; gap: 16px; padding: 20px 0; border-bottom: 1px solid var(--line-soft); }
+    .detail-item dt { font-weight: 500; }
+    .detail-item dd { margin: 0; color: var(--muted); }
+    .versions { margin-top: 28px; }
+    .versions h3 { font-size: 14px; margin: 0 0 16px; }
+    .version-row { display: grid; grid-template-columns: 1fr 74px auto; gap: 12px; align-items: center; min-height: 42px; color: var(--muted); font-size: 12px; }
+    .current-tag { padding: 5px 8px; border-radius: 5px; background: #e5f1ed; color: var(--green); }
+    .side-actions { margin-top: 40px; display: grid; gap: 10px; }
+
+    .menu { position: fixed; z-index: 80; width: 224px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; box-shadow: 0 16px 40px rgb(45 44 45 / 14%); }
+    .menu button { width: 100%; min-height: 42px; display: flex; align-items: center; gap: 11px; padding: 0 11px; border: 0; background: transparent; border-radius: 6px; text-align: left; }
+    .menu button:hover { background: var(--workspace); }
+    .new-menu { right: 214px; top: 118px; }
+    .overflow-menu { right: 24px; top: 58px; }
+
+    .editor-header {
+      height: var(--header);
+      display: grid;
+      grid-template-columns: 1fr minmax(240px, 460px) 1fr;
+      align-items: center;
+      gap: 20px;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--line-soft);
+      background: #fff;
+      position: sticky;
+      top: 0;
+      z-index: 45;
+    }
+    .editor-back { display: inline-flex; align-items: center; gap: 11px; border: 0; background: transparent; width: fit-content; font-weight: 500; padding: 8px 0; }
+    .editor-title { justify-self: center; display: inline-flex; align-items: center; gap: 9px; font-size: 17px; font-weight: 600; }
+    .editor-actions { justify-self: end; display: flex; align-items: center; gap: 10px; }
+    .save-state { color: var(--muted); font-size: 12px; margin-right: 6px; }
+
+    .editor-shell { display: grid; grid-template-columns: minmax(0, 1fr) var(--rail); min-height: calc(100vh - var(--header)); background: var(--workspace); }
+    .editor-main { min-width: 0; }
+    .tool-strip {
+      height: 68px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 0 34px;
+      border-bottom: 1px solid var(--line-soft);
+      background: #fff;
+      position: sticky;
+      top: var(--header);
+      z-index: 30;
+      overflow-x: auto;
+    }
+    .tool-button { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 6px; background: transparent; flex: 0 0 auto; }
+    .tool-button:hover, .tool-button.active { background: var(--workspace); border-color: var(--line-soft); }
+    .tool-select { height: 38px; min-width: 124px; border: 0; border-radius: 6px; background: transparent; padding: 0 10px; }
+    .tool-divider { width: 1px; height: 26px; background: var(--line-soft); margin: 0 9px; flex: 0 0 auto; }
+
+    .document-stage { padding: 0 40px 80px; min-height: calc(100vh - var(--header) - 68px); }
+    .document-page {
+      width: min(956px, 100%);
+      min-height: 980px;
+      margin: 0 auto;
+      padding: 66px 108px 92px;
+      background: #fff;
+      border: 1px solid var(--line);
+      box-shadow: 0 1px 2px rgb(45 44 45 / 5%);
+      outline: none;
+      caret-color: #d9c500;
+    }
+    .document-page:focus { border-color: #bbb9b3; }
+    .document-page h1 { margin: 0 0 10px; font-size: 46px; line-height: 1.04; letter-spacing: -0.045em; font-weight: 600; }
+    .document-page .date { margin: 0 0 48px; color: var(--muted); font-size: 16px; }
+    .document-page h2 { margin: 34px 0 12px; font-size: 20px; line-height: 1.25; letter-spacing: -0.02em; }
+    .document-page p, .document-page li { font-size: 15px; line-height: 1.68; }
+    .document-page p { margin: 0 0 14px; }
+    .document-page ul { padding-left: 24px; margin: 10px 0 20px; }
+    .document-page li { padding-left: 5px; margin: 5px 0; }
+    .inline-highlight { background: var(--volt-soft); border-bottom: 2px solid var(--volt); padding: 1px 2px; }
+    .insight-block { margin: 20px 0 28px; border: 1px solid var(--line); border-left: 3px solid var(--volt); border-radius: 6px; padding: 18px 20px; background: #fbfbfa; }
+    .insight-block strong { display: block; margin-bottom: 7px; }
+    .insight-block p { margin: 0; color: var(--muted); font-size: 13px; }
+
+    .utility-rail { background: #fff; border-left: 1px solid var(--line-soft); min-width: 0; position: sticky; top: var(--header); height: calc(100vh - var(--header)); overflow-y: auto; }
+    .rail-tabs { display: flex; align-items: center; gap: 24px; padding: 0 30px; border-bottom: 1px solid var(--line-soft); }
+    .rail-tab { height: 68px; position: relative; border: 0; background: transparent; padding: 0; font-weight: 500; }
+    .rail-tab::after { content: ""; position: absolute; height: 2px; left: 0; right: 0; bottom: -1px; background: transparent; }
+    .rail-tab.active::after { background: var(--volt); }
+    .rail-panel { padding: 26px 30px 40px; }
+    .field-group { margin-bottom: 28px; }
+    .field-group > label, .field-label { display: block; margin-bottom: 10px; font-weight: 500; }
+    .field-help { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .field-control { width: 100%; height: 42px; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 0 12px; }
+    .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+    .segmented button { height: 42px; border: 0; border-right: 1px solid var(--line); background: #fff; display: grid; place-items: center; }
+    .segmented button:last-child { border-right: 0; }
+    .segmented button.active { background: var(--workspace); }
+    .privacy-note { margin-top: 34px; padding-top: 24px; border-top: 1px solid var(--line-soft); }
+    .privacy-note strong { display: block; margin-bottom: 12px; }
+    .privacy-line { display: flex; align-items: flex-start; gap: 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .privacy-line.shared { color: var(--green); }
+    .block-list { display: grid; gap: 9px; }
+    .block-button { min-height: 54px; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 10px 12px; display: flex; align-items: center; gap: 12px; text-align: left; }
+    .block-button:hover { background: var(--workspace); border-color: #bbb9b3; }
+    .block-button strong { display: block; font-size: 13px; }
+    .block-button span { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .detail-stack { display: grid; gap: 0; border-top: 1px solid var(--line-soft); }
+    .detail-line { display: grid; grid-template-columns: 96px 1fr; gap: 12px; padding: 15px 0; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+    .detail-line span:first-child { font-weight: 500; }
+    .detail-line span:last-child { color: var(--muted); }
+
+    .ask-cooper {
+      position: fixed;
+      right: 28px;
+      bottom: 24px;
+      min-width: 164px;
+      height: 50px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      z-index: 50;
+      box-shadow: 0 8px 24px rgb(45 44 45 / 10%);
+      font-weight: 600;
+    }
+    .ask-cooper:hover { background: var(--workspace); }
+    .spark { color: #c5af00; }
+
+    .chat-panel { display: flex; flex-direction: column; height: calc(100vh - var(--header)); padding: 0; }
+    .chat-head { padding: 22px 24px 18px; border-bottom: 1px solid var(--line-soft); }
+    .chat-head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .chat-head h2 { margin: 0; font-size: 18px; }
+    .chat-status { display: inline-flex; align-items: center; gap: 7px; color: var(--green); font-size: 12px; margin-top: 8px; }
+    .chat-body { flex: 1; overflow-y: auto; padding: 24px; }
+    .chat-intro { padding: 16px; border: 1px solid var(--line); border-left: 3px solid var(--volt); border-radius: 6px; background: #fbfbfa; }
+    .chat-intro strong { display: block; margin-bottom: 7px; }
+    .chat-intro p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .chat-message { margin-top: 20px; }
+    .chat-message strong { display: block; margin-bottom: 6px; font-size: 12px; }
+    .chat-message p { margin: 0; line-height: 1.55; }
+    .chat-message.user { padding-left: 28px; }
+    .chat-compose { padding: 16px 20px 20px; border-top: 1px solid var(--line-soft); background: #fff; }
+    .chat-input { min-height: 92px; border: 1px solid var(--line); border-radius: 7px; padding: 12px; display: flex; flex-direction: column; }
+    .chat-input textarea { flex: 1; resize: none; border: 0; outline: 0; min-height: 46px; }
+    .chat-input-actions { display: flex; justify-content: space-between; align-items: center; }
+
+    .diagram-shell { display: grid; grid-template-columns: minmax(0, 1fr) var(--rail); min-height: calc(100vh - var(--header)); }
+    .diagram-main { min-width: 0; background: #fff; position: relative; overflow: hidden; }
+    .diagram-toolbar { height: 68px; display: flex; align-items: center; gap: 8px; padding: 0 34px; border-bottom: 1px solid var(--line-soft); background: #fff; position: relative; z-index: 5; overflow-x: auto; }
+    .diagram-canvas { position: relative; height: calc(100vh - var(--header) - 68px); min-height: 620px; overflow: hidden; background-color: #fff; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Ccircle cx='1' cy='1' r='.8' fill='%23deddd9'/%3E%3C/svg%3E"); background-size: 16px 16px; }
+    .diagram-stage { position: absolute; top: 115px; left: 50%; width: 980px; height: 520px; transform: translateX(-50%); }
+    .group { position: absolute; top: 140px; height: 260px; border: 1px solid #e7d86c; background: rgb(255 249 203 / 22%); border-radius: 10px; }
+    .group h3 { position: absolute; top: -52px; left: 0; margin: 0; font-size: 18px; }
+    .group.signals { left: 0; width: 240px; }
+    .group.synthesis { left: 345px; width: 240px; }
+    .group.decisions { left: 690px; width: 245px; }
+    .node { position: absolute; height: 64px; display: flex; align-items: center; gap: 12px; padding: 0 14px; border: 1px solid #aaa9a5; border-radius: 7px; background: #fff; box-shadow: 0 1px 2px rgb(45 44 45 / 5%); font-weight: 500; z-index: 3; }
+    .node.selected { border: 2px solid var(--volt); }
+    .node .node-icon { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 6px; }
+    .n1 { left: 20px; top: 170px; width: 194px; }
+    .n2 { left: 20px; top: 306px; width: 194px; }
+    .n3 { left: 365px; top: 170px; width: 210px; }
+    .n4 { left: 365px; top: 306px; width: 210px; }
+    .n5 { left: 710px; top: 170px; width: 214px; }
+    .n6 { left: 710px; top: 276px; width: 214px; }
+    .n7 { left: 710px; top: 382px; width: 214px; }
+    .connections { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; overflow: visible; }
+    .connections path { fill: none; stroke: var(--ink); stroke-width: 1.5; marker-end: url(#arrowhead); }
+    .canvas-controls { position: absolute; left: 24px; bottom: 24px; z-index: 8; display: grid; gap: 8px; }
+    .mini-map { width: 160px; height: 96px; border: 1px solid var(--line); border-radius: 7px; background: #fff; padding: 10px; }
+    .mini-map-inner { height: 100%; border: 1px solid var(--volt); display: flex; align-items: center; justify-content: center; gap: 6px; }
+    .mini-map-inner i { width: 26px; height: 16px; background: #deddd8; display: block; }
+    .ready-line { display: flex; align-items: center; gap: 9px; color: var(--green); font-size: 12px; margin: 14px 0 18px; }
+
+    .modal-scrim { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgb(45 44 45 / 35%); }
+    .modal { width: min(680px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 22px 64px rgb(45 44 45 / 18%); }
+    .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 24px 26px 20px; border-bottom: 1px solid var(--line-soft); }
+    .modal-head h2 { margin: 0 0 6px; font-size: 22px; }
+    .modal-head p { margin: 0; color: var(--muted); }
+    .modal-body { padding: 24px 26px 28px; }
+    .create-options { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .create-option { min-height: 132px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; padding: 18px; text-align: left; }
+    .create-option:hover { border-color: #aaa8a2; background: #fcfcfb; }
+    .create-option .doc-icon { margin-bottom: 14px; }
+    .create-option strong { display: block; margin-bottom: 6px; font-size: 15px; }
+    .create-option span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+    .toast { position: fixed; left: 50%; bottom: 24px; z-index: 120; transform: translateX(-50%); min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-radius: 7px; background: var(--ink); color: #fff; box-shadow: 0 8px 24px rgb(45 44 45 / 20%); }
+    .mobile-only { display: none; }
+    .rail-close { display: none; }
+
+    @media (max-width: 1120px) {
+      .library-layout { grid-template-columns: minmax(0, 1fr) 340px; }
+      .library-main { padding-inline: 32px; }
+      .doc-row { grid-template-columns: minmax(240px, 1.8fr) 104px 96px 112px; gap: 14px; }
+      .template-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .document-page { padding-inline: 80px; }
+      :root { --rail: 320px; }
+    }
+
+    @media (max-width: 860px) {
+      .desktop-only { display: none !important; }
+      .mobile-only { display: inline-grid; }
+      .library-layout { display: block; }
+      .library-main { padding: 88px 18px 56px; border-right: 0; }
+      .library-side { display: none; }
+      .workspace-launcher { top: 14px; left: 10px; }
+      .workspace-drawer { width: min(282px, 88vw); }
+      .page-title { font-size: 34px; }
+      .library-controls { align-items: flex-start; flex-wrap: wrap; }
+      .filter-tabs { order: 2; width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 3px; }
+      .control-spacer { display: none; }
+      .sort-button { margin-left: auto; }
+      .doc-row { grid-template-columns: minmax(0, 1fr) auto; min-height: 94px; padding-inline: 10px; }
+      .doc-row .doc-type, .doc-row .doc-author { display: none; }
+      .doc-row .doc-date { text-align: right; max-width: 84px; white-space: normal; overflow-wrap: anywhere; }
+      .doc-row .published { margin-left: auto; justify-content: flex-end; }
+      .doc-copy span { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+      .template-strip { display: flex; overflow-x: auto; }
+      .template-card { min-width: 210px; }
+
+      .editor-header { grid-template-columns: auto 1fr auto; padding: 0 12px; gap: 8px; }
+      .editor-back span { display: none; }
+      .editor-title { font-size: 15px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .editor-actions .save-state, .editor-actions .share-button, .editor-actions .overflow-trigger { display: none; }
+      .editor-actions .button.accent { width: 42px; padding: 0; }
+      .editor-actions .button.accent span { display: none; }
+      .editor-shell, .diagram-shell { display: block; }
+      .tool-strip, .diagram-toolbar { top: var(--header); padding-inline: 14px; height: 58px; }
+      .document-stage { padding: 16px 0 72px; }
+      .document-page { min-height: calc(100vh - 122px); width: 100%; border-left: 0; border-right: 0; padding: 42px 22px 72px; }
+      .document-page h1 { font-size: 36px; }
+      .utility-rail { position: fixed; top: var(--header); right: 0; bottom: 0; width: min(360px, 92vw); height: calc(100vh - var(--header)); z-index: 70; transform: translateX(100%); transition: transform 200ms ease-out; box-shadow: -16px 0 40px rgb(45 44 45 / 12%); }
+      body.rail-open .utility-rail { transform: translateX(0); }
+      .rail-close { display: none; position: fixed; right: 14px; bottom: 18px; z-index: 76; }
+      .ask-cooper { right: 16px; bottom: 16px; min-width: 138px; }
+      .diagram-canvas { height: calc(100vh - var(--header) - 58px); overflow: auto; }
+      .diagram-stage { left: 44px; transform: none; }
+      .modal-scrim { padding: 0; align-items: end; }
+      .modal { width: 100%; max-height: 90vh; border-radius: 12px 12px 0 0; }
+      .create-options { grid-template-columns: 1fr; }
+      .new-menu { right: 16px; top: 112px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+    <defs>
+      <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></symbol>
+      <symbol id="i-diagram" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M6 17v-2a3 3 0 0 1 3-3h6a3 3 0 0 1 3 3v2"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.4 4.1L17.5 9l-4.1 1.9L12 15l-1.4-4.1L6.5 9l4.1-1.9zM18 15l.7 2.3L21 18l-2.3.7L18 21l-.7-2.3L15 18l2.3-.7z"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M20 17a8 8 0 0 0-11-7.4L4 12"/></symbol>
+      <symbol id="i-redo" viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M4 17a8 8 0 0 1 11-7.4l5 2.4"/></symbol>
+      <symbol id="i-bold" viewBox="0 0 24 24"><path d="M8 4h5a4 4 0 0 1 0 8H8zM8 12h6a4 4 0 0 1 0 8H8z"/></symbol>
+      <symbol id="i-italic" viewBox="0 0 24 24"><path d="M10 4h8M6 20h8M14 4 10 20"/></symbol>
+      <symbol id="i-underline" viewBox="0 0 24 24"><path d="M7 4v6a5 5 0 0 0 10 0V4M5 21h14"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-list-ordered" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 5h1v3M4 12h2l-2 3h2M4 18h2v3H4"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></symbol>
+      <symbol id="i-comment" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></symbol>
+      <symbol id="i-align-left" viewBox="0 0 24 24"><path d="M4 6h16M4 10h10M4 14h16M4 18h10"/></symbol>
+      <symbol id="i-align-center" viewBox="0 0 24 24"><path d="M4 6h16M7 10h10M4 14h16M7 18h10"/></symbol>
+      <symbol id="i-align-right" viewBox="0 0 24 24"><path d="M4 6h16M10 10h10M4 14h16M10 18h10"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-cursor" viewBox="0 0 24 24"><path d="m5 3 14 8-6 2-2 6z"/></symbol>
+      <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 11V6a2 2 0 0 1 4 0v4-6a2 2 0 0 1 4 0v6-4a2 2 0 0 1 4 0v8a7 7 0 0 1-7 7h-1a7 7 0 0 1-5.7-3L3 13a2 2 0 0 1 3-2z"/></symbol>
+      <symbol id="i-connector" viewBox="0 0 24 24"><circle cx="5" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 7 17 17"/></symbol>
+      <symbol id="i-text" viewBox="0 0 24 24"><path d="M5 4h14M12 4v16M8 20h8"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/></symbol>
+      <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-heading" viewBox="0 0 24 24"><path d="M5 4v16M19 4v16M5 12h14"/></symbol>
+      <symbol id="i-callout" viewBox="0 0 24 24"><path d="M7 17h10l4 4V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2z"/></symbol>
+      <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 10h18M9 4v16M15 4v16"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4zM22 2 11 13"/></symbol>
+    </defs>
+  </svg>
+
+  <main class="app" id="app">
+    <section class="screen" id="libraryScreen">
+      <button class="workspace-launcher" id="workspaceLauncher" type="button" aria-label="Open Cooper AIRES workspace navigation" aria-haspopup="dialog" aria-expanded="false">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1.5 22.5 12 12 22.5 1.5 12Z"/><path fill="#fff" d="M12 6.6c.56 2.82 2.58 4.84 5.4 5.4-2.82.56-4.84 2.58-5.4 5.4-.56-2.82-2.58-4.84-5.4-5.4 2.82-.56 4.84-2.58 5.4-5.4Z"/></svg>
+        <span class="workspace-lockup"><strong>Cooper</strong><span>AIRES WORKSPACE</span></span>
+      </button>
+      <button class="workspace-nav-scrim" id="workspaceNavScrim" type="button" tabindex="-1" aria-label="Close workspace navigation"></button>
+      <aside class="workspace-drawer" id="workspaceDrawer" aria-label="Cooper AIRES workspace navigation" aria-hidden="true">
+        <div class="drawer-head">
+          <div class="drawer-brand"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1.5 22.5 12 12 22.5 1.5 12Z"/><path fill="#fff" d="M12 6.6c.56 2.82 2.58 4.84 5.4 5.4-2.82.56-4.84 2.58-5.4 5.4-.56-2.82-2.58-4.84-5.4-5.4 2.82-.56 4.84-2.58 5.4-5.4Z"/></svg><span class="workspace-lockup" style="opacity:1;transform:none"><strong>Cooper</strong><span>AIRES WORKSPACE</span></span></div>
+          <button class="drawer-close" id="workspaceDrawerClose" type="button" aria-label="Close workspace navigation"><svg class="icon"><use href="#i-x"/></svg></button>
+        </div>
+        <nav class="workspace-nav" aria-label="Primary">
+          <button class="workspace-nav-item" data-workspace-destination="Today" type="button"><svg class="icon"><use href="#i-spark"/></svg><span>Today</span></button>
+          <button class="workspace-nav-item" data-workspace-destination="Sessions" type="button"><svg class="icon"><use href="#i-comment"/></svg><span>Sessions</span></button>
+          <button class="workspace-nav-item" data-workspace-destination="Projects" type="button"><svg class="icon"><use href="#i-list"/></svg><span>Projects</span></button>
+          <button class="workspace-nav-item active" data-workspace-destination="Docs" type="button"><svg class="icon"><use href="#i-file"/></svg><span>Docs</span></button>
+          <button class="workspace-nav-item" data-workspace-destination="Settings" type="button"><svg class="icon"><use href="#i-sliders"/></svg><span>Settings</span></button>
+        </nav>
+        <div class="drawer-spacer"></div>
+        <button class="button accent drawer-new" id="drawerNew" type="button"><svg class="icon small"><use href="#i-plus"/></svg><span>New document</span></button>
+        <div class="drawer-workspace">Daily Catch Up<br />Cooper · AIRES workspace</div>
+      </aside>
+      <div class="library-layout">
+        <section class="library-main">
+          <h1 class="page-title">Docs</h1>
+          <label class="search-box"><svg class="icon"><use href="#i-search"/></svg><input id="docSearch" type="search" placeholder="Search your knowledge" aria-label="Search your knowledge" /></label>
+          <div class="library-controls">
+            <div class="filter-tabs" role="tablist" aria-label="Document filters">
+              <button class="filter-tab active" data-filter="all" type="button">All</button><button class="filter-tab" data-filter="document" type="button">Documents</button><button class="filter-tab" data-filter="diagram" type="button">Diagrams</button><button class="filter-tab" data-filter="published" type="button">Published</button><button class="filter-tab" data-filter="mine" type="button">Mine</button>
+            </div>
+            <span class="control-spacer"></span>
+            <button class="button accent" id="newButton" type="button" aria-haspopup="menu" aria-expanded="false"><span>New</span><svg class="icon small"><use href="#i-chevron-down"/></svg></button>
+            <button class="button sort-button" type="button"><span>Sort: Last edited</span><svg class="icon small"><use href="#i-sliders"/></svg></button>
+          </div>
+          <div class="doc-list" id="docList" aria-label="Knowledge documents"></div>
+          <section class="templates">
+            <h2>Start from a template</h2>
+            <div class="template-strip">
+              <button class="template-card" data-template="Meeting notes" type="button"><svg class="icon large"><use href="#i-file"/></svg><span><strong>Meeting notes</strong><span>Capture discussion and decisions</span></span></button>
+              <button class="template-card" data-template="Project brief" type="button"><svg class="icon large"><use href="#i-file"/></svg><span><strong>Project brief</strong><span>Define goals, scope, and success</span></span></button>
+              <button class="template-card" data-template="Decision log" type="button"><svg class="icon large"><use href="#i-file"/></svg><span><strong>Decision log</strong><span>Record decisions and rationale</span></span></button>
+              <button class="template-card" id="browseTemplates" type="button"><span><strong>Browse all templates</strong><span>See the complete starter library</span></span><svg class="icon small"><use href="#i-chevron-right"/></svg></button>
+            </div>
+          </section>
+        </section>
+        <aside class="library-side" id="librarySide" aria-label="Document details"></aside>
+      </div>
+      <div class="menu new-menu" id="newMenu" role="menu" hidden>
+        <button type="button" data-create="blank"><svg class="icon"><use href="#i-file"/></svg><span>Blank document</span></button>
+        <button type="button" data-create="template"><svg class="icon"><use href="#i-heading"/></svg><span>From a template</span></button>
+        <button type="button" data-create="diagram"><svg class="icon"><use href="#i-diagram"/></svg><span>Blank diagram</span></button>
+      </div>
+    </section>
+
+    <section class="screen" id="editorScreen" hidden>
+      <header class="editor-header">
+        <button class="editor-back" data-go-library type="button" aria-label="Back to Docs"><svg class="icon"><use href="#i-arrow-left"/></svg><span>Docs</span></button>
+        <div class="editor-title"><span id="editorHeaderTitle">Weekly product brief</span><svg class="icon small"><use href="#i-edit"/></svg></div>
+        <div class="editor-actions">
+          <span class="save-state" id="saveState">Saved just now</span>
+          <button class="button share-button" type="button" data-toast="Private link copied">Share</button>
+          <button class="button accent" id="startCooper" type="button" aria-label="Start with Cooper"><svg class="icon mobile-only"><use href="#i-spark"/></svg><span>Start with Cooper</span></button>
+          <button class="icon-button overflow-trigger" id="editorOverflow" type="button" aria-label="More document actions" aria-haspopup="menu" aria-expanded="false"><svg class="icon"><use href="#i-more"/></svg></button>
+        </div>
+      </header>
+      <div class="editor-shell">
+        <section class="editor-main">
+          <div class="tool-strip" role="toolbar" aria-label="Document formatting">
+            <button class="tool-button" data-command="undo" type="button" aria-label="Undo"><svg class="icon"><use href="#i-undo"/></svg></button><button class="tool-button" data-command="redo" type="button" aria-label="Redo"><svg class="icon"><use href="#i-redo"/></svg></button>
+            <span class="tool-divider"></span>
+            <select class="tool-select" id="blockStyle" aria-label="Text style"><option value="p">Paragraph</option><option value="h1">Heading 1</option><option value="h2">Heading 2</option><option value="blockquote">Quote</option></select>
+            <span class="tool-divider"></span>
+            <button class="tool-button" data-command="bold" type="button" aria-label="Bold"><svg class="icon"><use href="#i-bold"/></svg></button><button class="tool-button" data-command="italic" type="button" aria-label="Italic"><svg class="icon"><use href="#i-italic"/></svg></button><button class="tool-button" data-command="underline" type="button" aria-label="Underline"><svg class="icon"><use href="#i-underline"/></svg></button>
+            <span class="tool-divider"></span>
+            <button class="tool-button" data-command="insertUnorderedList" type="button" aria-label="Bulleted list"><svg class="icon"><use href="#i-list"/></svg></button><button class="tool-button" data-command="insertOrderedList" type="button" aria-label="Numbered list"><svg class="icon"><use href="#i-list-ordered"/></svg></button><button class="tool-button" id="linkButton" type="button" aria-label="Add link"><svg class="icon"><use href="#i-link"/></svg></button><button class="tool-button" data-toast="Comment anchored to selection" type="button" aria-label="Add comment"><svg class="icon"><use href="#i-comment"/></svg></button>
+          </div>
+          <div class="document-stage">
+            <article class="document-page" id="documentPage" contenteditable="true" spellcheck="true" aria-label="Editable document">
+              <h1>Weekly product brief</h1>
+              <p class="date">Thursday, July 16</p>
+              <h2>What changed</h2>
+              <p>We shipped the bulk export improvement and <span class="inline-highlight">rolled out the new invite flow to 25% of users.</span></p>
+              <ul><li>Bulk export now includes filters and saved views</li><li>Invite flow conversion is up 12% in the early cohort</li><li>Fixed the role-permission issue on shared folders</li></ul>
+              <h2>What we learned</h2>
+              <p>Users value speed and clarity in data exports more than custom formatting.</p>
+              <aside class="insight-block"><strong>Key insight</strong><p>Simpler export options lead to higher completion and fewer support tickets.</p></aside>
+              <h2>Decisions</h2>
+              <ul><li>Roll out the invite flow to 100% next week</li><li>Defer custom export formatting to Q3</li><li>Prioritize performance tuning for large datasets</li></ul>
+              <h2>Next week</h2>
+              <p>We will focus on performance improvements and begin user testing for the dashboard refresh. Research sessions are scheduled with five customers.</p>
+            </article>
+          </div>
+        </section>
+        <aside class="utility-rail" id="editorRail" aria-label="Document tools">
+          <div class="rail-tabs" role="tablist" aria-label="Document tool panels">
+            <button class="rail-tab active" data-editor-tab="format" role="tab" aria-selected="true" type="button">Format</button><button class="rail-tab" data-editor-tab="blocks" role="tab" aria-selected="false" type="button">Blocks</button><button class="rail-tab" data-editor-tab="details" role="tab" aria-selected="false" type="button">Details</button>
+          </div>
+          <section class="rail-panel" id="formatPanel">
+            <div class="field-group"><label for="railTextStyle">Text style</label><select class="field-control" id="railTextStyle"><option>Paragraph</option><option>Heading 1</option><option>Heading 2</option><option>Quote</option></select><p class="field-help">Body text for general content.</p></div>
+            <div class="field-group"><span class="field-label">Alignment</span><div class="segmented"><button class="active" data-command="justifyLeft" type="button" aria-label="Align left"><svg class="icon"><use href="#i-align-left"/></svg></button><button data-command="justifyCenter" type="button" aria-label="Align center"><svg class="icon"><use href="#i-align-center"/></svg></button><button data-command="justifyRight" type="button" aria-label="Align right"><svg class="icon"><use href="#i-align-right"/></svg></button></div></div>
+            <div class="field-group"><span class="field-label">Spacing</span><select class="field-control"><option>Comfortable · 1.6</option><option>Compact · 1.4</option><option>Open · 1.8</option></select><p class="field-help">Applies to the current paragraph.</p></div>
+            <div class="field-group"><span class="field-label">Page width</span><div class="segmented"><button type="button">S</button><button class="active" type="button">M</button><button type="button">L</button></div><p class="field-help">Optimized for readability.</p></div>
+            <div class="privacy-note"><strong>Document context</strong><div class="privacy-line" id="privacyLine"><svg class="icon small"><use href="#i-lock"/></svg><span>Private draft — not available to Cooper.</span></div></div>
+          </section>
+          <section class="rail-panel" id="blocksPanel" hidden>
+            <div class="block-list">
+              <button class="block-button" data-insert="heading" type="button"><svg class="icon"><use href="#i-heading"/></svg><span><strong>Section heading</strong><span>Add a titled section</span></span></button>
+              <button class="block-button" data-insert="callout" type="button"><svg class="icon"><use href="#i-callout"/></svg><span><strong>Callout</strong><span>Highlight an insight or decision</span></span></button>
+              <button class="block-button" data-insert="list" type="button"><svg class="icon"><use href="#i-list"/></svg><span><strong>Bullet list</strong><span>Capture related points</span></span></button>
+              <button class="block-button" data-insert="table" type="button"><svg class="icon"><use href="#i-table"/></svg><span><strong>Simple table</strong><span>Compare options or owners</span></span></button>
+            </div>
+          </section>
+          <section class="rail-panel" id="detailsPanel" hidden>
+            <div class="detail-stack"><div class="detail-line"><span>Owner</span><span>Michael Moll</span></div><div class="detail-line"><span>Visibility</span><span id="visibilityValue">Private</span></div><div class="detail-line"><span>Project</span><span>Product</span></div><div class="detail-line"><span>Version</span><span>v8 · Current</span></div><div class="detail-line"><span>Format</span><span>Structured document + Markdown</span></div><div class="detail-line"><span>Retrieval</span><span id="retrievalValue">Not indexed</span></div></div>
+            <button class="button" style="width:100%;margin-top:22px" data-toast="Version history opened" type="button">View version history</button>
+          </section>
+        </aside>
+      </div>
+      <button class="ask-cooper" id="askCooper" type="button"><svg class="icon spark"><use href="#i-spark"/></svg><span>Ask Cooper</span><svg class="icon small"><use href="#i-chevron-down"/></svg></button>
+      <button class="icon-button rail-close" id="railClose" type="button" aria-label="Close side panel"><svg class="icon"><use href="#i-x"/></svg></button>
+      <div class="menu overflow-menu" id="overflowMenu" role="menu" hidden><button type="button" data-toast="Export options opened"><svg class="icon"><use href="#i-share"/></svg><span>Export</span></button><button type="button" data-toast="Duplicate created"><svg class="icon"><use href="#i-copy"/></svg><span>Duplicate</span></button><button type="button" id="openDiagramAction"><svg class="icon"><use href="#i-diagram"/></svg><span>Open diagram example</span></button></div>
+    </section>
+
+    <section class="screen" id="diagramScreen" hidden>
+      <header class="editor-header">
+        <button class="editor-back" data-go-library type="button" aria-label="Back to Docs"><svg class="icon"><use href="#i-arrow-left"/></svg><span>Docs</span></button>
+        <div class="editor-title"><span>Discovery map</span></div>
+        <div class="editor-actions"><span class="save-state">Saved just now</span><button class="button share-button" data-toast="Diagram link copied" type="button">Share</button><button class="button accent diagram-start" type="button" aria-label="Start with Cooper"><svg class="icon mobile-only"><use href="#i-spark"/></svg><span>Start with Cooper</span></button><button class="icon-button overflow-trigger" type="button" aria-label="More diagram actions"><svg class="icon"><use href="#i-more"/></svg></button></div>
+      </header>
+      <div class="diagram-shell">
+        <section class="diagram-main">
+          <div class="diagram-toolbar" role="toolbar" aria-label="Diagram tools"><button class="tool-button active" type="button" aria-label="Select"><svg class="icon"><use href="#i-cursor"/></svg></button><button class="tool-button" type="button" aria-label="Pan"><svg class="icon"><use href="#i-hand"/></svg></button><span class="tool-divider"></span><button class="button small" id="addNode" type="button"><svg class="icon small"><use href="#i-plus"/></svg><span>Add node</span></button><button class="button small" type="button"><svg class="icon small"><use href="#i-connector"/></svg><span>Connector</span></button><button class="button small" type="button"><svg class="icon small"><use href="#i-text"/></svg><span>Text</span></button><span class="tool-divider"></span><button class="tool-button" type="button" aria-label="Undo"><svg class="icon"><use href="#i-undo"/></svg></button><button class="tool-button" type="button" aria-label="Redo"><svg class="icon"><use href="#i-redo"/></svg></button><span class="tool-divider"></span><button class="tool-button" type="button" aria-label="Zoom out">−</button><span>100%</span><button class="tool-button" type="button" aria-label="Zoom in">+</button></div>
+          <div class="diagram-canvas">
+            <div class="diagram-stage" id="diagramStage">
+              <div class="group signals"><h3>Signals</h3></div><div class="group synthesis"><h3>Synthesis</h3></div><div class="group decisions"><h3>Decisions</h3></div>
+              <svg class="connections" viewBox="0 0 980 520" preserveAspectRatio="none" aria-hidden="true"><defs><marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 8 4 0 8z" fill="#2d2c2d"/></marker></defs><path d="M214 202 C275 202 305 202 365 202"/><path d="M214 338 C275 338 305 338 365 338"/><path d="M470 234 C470 258 470 280 470 306"/><path d="M575 202 C630 202 655 202 710 202"/><path d="M575 338 C635 338 650 308 710 308"/><path d="M575 338 C635 338 650 414 710 414"/></svg>
+              <button class="node n1" type="button"><span class="node-icon"><svg class="icon"><use href="#i-comment"/></svg></span>Customer calls</button><button class="node n2" type="button"><span class="node-icon"><svg class="icon"><use href="#i-comment"/></svg></span>Support themes</button><button class="node n3" type="button"><span class="node-icon"><svg class="icon"><use href="#i-search"/></svg></span>Core problem</button><button class="node n4 selected" type="button"><span class="node-icon"><svg class="icon"><use href="#i-spark"/></svg></span>Opportunity</button><button class="node n5" type="button"><span class="node-icon"><svg class="icon"><use href="#i-heading"/></svg></span>Design principle</button><button class="node n6" type="button"><span class="node-icon"><svg class="icon"><use href="#i-plus"/></svg></span>Next experiment</button><button class="node n7" type="button"><span class="node-icon"><svg class="icon"><use href="#i-comment"/></svg></span>Open question</button>
+            </div>
+            <div class="canvas-controls"><button class="button small" type="button"><svg class="icon small"><use href="#i-fit"/></svg><span>Fit view</span></button><div class="mini-map"><div class="mini-map-inner"><i></i><i></i><i></i></div></div></div>
+          </div>
+        </section>
+        <aside class="utility-rail" id="diagramRail" aria-label="Diagram tools">
+          <div class="rail-tabs" role="tablist" aria-label="Diagram tool panels"><button class="rail-tab active" type="button">Properties</button><button class="rail-tab" type="button">Layers</button><button class="rail-tab" type="button">Details</button></div>
+          <section class="rail-panel"><div class="field-group"><span class="field-label">Node style</span><select class="field-control"><option>Rounded rectangle</option><option>Rectangle</option><option>Ellipse</option></select></div><div class="field-group"><span class="field-label">Fill</span><select class="field-control"><option>#FFFFFF</option><option>#FFF9CB</option></select></div><div class="field-group"><span class="field-label">Border</span><select class="field-control"><option>#F0DE4A · 2 px</option><option>#2D2C2D · 1 px</option></select></div><div class="field-group"><span class="field-label">Text</span><select class="field-control"><option>Inter · 14 px</option><option>Inter medium · 14 px</option></select></div><div class="privacy-note"><strong>Knowledge representation</strong><div class="ready-line"><span class="status-dot"></span><span>Text snapshot ready</span></div><button class="button" style="width:100%" id="viewSummary" type="button">View agent-readable summary</button></div></section>
+        </aside>
+      </div>
+      <button class="ask-cooper diagram-ask" type="button"><svg class="icon spark"><use href="#i-spark"/></svg><span>Ask Cooper</span><svg class="icon small"><use href="#i-chevron-down"/></svg></button>
+    </section>
+  </main>
+
+  <div class="modal-scrim" id="createModal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="createTitle">
+      <header class="modal-head"><div><h2 id="createTitle">Create something new</h2><p>Start with a blank page or a useful structure.</p></div><button class="icon-button" id="closeCreate" type="button" aria-label="Close create dialog"><svg class="icon"><use href="#i-x"/></svg></button></header>
+      <div class="modal-body"><div class="create-options"><button class="create-option" data-modal-create="blank" type="button"><span class="doc-icon"><svg class="icon large"><use href="#i-file"/></svg></span><strong>Blank document</strong><span>A private page with no structure and no active Cooper session.</span></button><button class="create-option" data-modal-create="brief" type="button"><span class="doc-icon"><svg class="icon large"><use href="#i-heading"/></svg></span><strong>Project brief</strong><span>Goals, context, decisions, risks, and next steps.</span></button><button class="create-option" data-modal-create="meeting" type="button"><span class="doc-icon"><svg class="icon large"><use href="#i-list"/></svg></span><strong>Meeting notes</strong><span>Agenda, notes, decisions, owners, and follow-up.</span></button><button class="create-option" data-modal-create="diagram" type="button"><span class="doc-icon"><svg class="icon large"><use href="#i-diagram"/></svg></span><strong>Blank diagram</strong><span>A node canvas with an agent-readable text representation.</span></button></div></div>
+    </section>
+  </div>
+  <div class="modal-scrim" id="summaryModal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="summaryTitle"><header class="modal-head"><div><h2 id="summaryTitle">Agent-readable diagram summary</h2><p>Derived from the node graph; stored beside the visual source.</p></div><button class="icon-button" id="closeSummary" type="button" aria-label="Close summary"><svg class="icon"><use href="#i-x"/></svg></button></header><div class="modal-body"><p><strong>Flow:</strong> Customer calls and support themes surface a core problem and an opportunity. The synthesis informs a design principle, next experiment, and open question.</p><p><strong>Nodes:</strong> 7 &nbsp; <strong>Edges:</strong> 6 &nbsp; <strong>Snapshot:</strong> Ready for indexing</p><p style="color:var(--muted);line-height:1.6">This text is a retrieval derivative. The React Flow-style JSON remains the editable source of truth.</p></div></section>
+  </div>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script>
+    const docs = [
+      { id: "weekly", title: "Weekly product brief", excerpt: "Goals, wins, challenges, and priorities for the week ahead.", type: "document", author: "You", date: "Today at 9:12 AM", published: false, project: "Product", visibility: "Private" },
+      { id: "onboarding", title: "Customer onboarding principles", excerpt: "Core principles and guidelines for a consistent onboarding experience.", type: "document", author: "Ava Patel", date: "Yesterday at 4:37 PM", published: true, project: "Customer experience", visibility: "Team" },
+      { id: "architecture", title: "Architecture decision log", excerpt: "Key architecture decisions, context, and outcomes.", type: "document", author: "Michael Chen", date: "Jul 14, 2026", published: false, project: "Platform", visibility: "Team" },
+      { id: "daily", title: "Daily Catch Up", excerpt: "Editable daily alignment, decisions, and focus.", type: "document", author: "You", date: "Jul 13, 2026", published: true, project: "Daily work", visibility: "Team" },
+      { id: "discovery", title: "Discovery map", excerpt: "Explore user needs, problems, and opportunities.", type: "diagram", author: "Sarah Kim", date: "Jul 12, 2026", published: false, project: "Research", visibility: "Team" },
+      { id: "blank", title: "Blank thinking note", excerpt: "Start with a blank page to capture and organize ideas.", type: "document", author: "You", date: "Jul 10, 2026", published: false, project: "Personal", visibility: "Private" }
+    ];
+    let selectedDocId = "weekly";
+    let activeFilter = "all";
+    let sessionActive = false;
+    let toastTimer;
+    const el = (id) => document.getElementById(id);
+    const icon = (name, cls) => '<svg class="icon ' + (cls || '') + '"><use href="#i-' + name + '"></use></svg>';
+    const editorRailTemplate = el("editorRail").innerHTML;
+
+    function setWorkspaceNavigation(open) {
+      document.body.classList.toggle("workspace-nav-open", open);
+      el("workspaceLauncher").setAttribute("aria-expanded", String(open));
+      el("workspaceDrawer").setAttribute("aria-hidden", String(!open));
+      if (open) el("workspaceDrawerClose").focus();
+      else if (!el("libraryScreen").hidden) el("workspaceLauncher").focus();
+    }
+
+    function showScreen(name) {
+      ["library", "editor", "diagram"].forEach((screen) => { el(screen + "Screen").hidden = screen !== name; });
+      document.body.classList.remove("rail-open", "workspace-nav-open");
+      el("workspaceLauncher").setAttribute("aria-expanded", "false");
+      el("workspaceDrawer").setAttribute("aria-hidden", "true");
+      window.scrollTo(0, 0);
+      location.hash = name;
+    }
+
+    function filteredDocs() {
+      const query = el("docSearch").value.trim().toLowerCase();
+      return docs.filter((doc) => {
+        const matchesQuery = !query || (doc.title + " " + doc.excerpt + " " + doc.project).toLowerCase().includes(query);
+        const matchesFilter = activeFilter === "all" || doc.type === activeFilter || (activeFilter === "published" && doc.published) || (activeFilter === "mine" && doc.author === "You");
+        return matchesQuery && matchesFilter;
+      });
+    }
+
+    function renderDocs() {
+      const list = el("docList");
+      const rows = filteredDocs();
+      list.innerHTML = rows.length ? rows.map((doc) => '<button class="doc-row ' + (doc.id === selectedDocId ? 'selected' : '') + '" data-doc-id="' + doc.id + '" type="button"><span class="doc-main"><span class="doc-icon">' + icon(doc.type === 'diagram' ? 'diagram' : 'file', 'large') + '</span><span class="doc-copy"><strong>' + doc.title + '</strong><span>' + doc.excerpt + '</span></span></span><span class="doc-meta doc-type">' + icon(doc.type === 'diagram' ? 'diagram' : 'file', 'small') + '<span>' + (doc.type === 'diagram' ? 'Diagram' : 'Document') + '</span></span><span class="doc-meta doc-author">' + doc.author + '</span><span class="doc-meta doc-date">' + doc.date + (doc.published ? '<span class="published"><span class="status-dot"></span>Published</span>' : '') + '</span></button>').join('') : '<p style="padding:36px 8px;color:var(--muted)">No documents match this search.</p>';
+      list.querySelectorAll("[data-doc-id]").forEach((row) => row.addEventListener("click", () => {
+        selectedDocId = row.dataset.docId;
+        const doc = docs.find((item) => item.id === selectedDocId);
+        if (window.innerWidth <= 860 && doc) openDocument(doc);
+        else { renderDocs(); renderDetails(); }
+      }));
+    }
+
+    function renderDetails() {
+      const doc = docs.find((item) => item.id === selectedDocId) || docs[0];
+      el("librarySide").innerHTML = '<div class="side-icon">' + icon(doc.type === 'diagram' ? 'diagram' : 'file', 'large') + '</div><h2 class="side-title">' + doc.title + '</h2><dl class="detail-list"><div class="detail-item"><dt>Owner</dt><dd>' + doc.author + '</dd></div><div class="detail-item"><dt>Last updated</dt><dd>' + doc.date + '</dd></div><div class="detail-item"><dt>Project</dt><dd>' + doc.project + '</dd></div><div class="detail-item"><dt>Visibility</dt><dd>' + doc.visibility + '</dd></div></dl><section class="versions"><h3>Recent versions</h3><div class="version-row"><span>Today at 9:12 AM</span><span>You</span><span class="current-tag">Current</span></div><div class="version-row"><span>Jul 15 at 3:48 PM</span><span>You</span><span></span></div><div class="version-row"><span>Jul 14 at 9:05 AM</span><span>Ava Patel</span><span></span></div></section><div class="side-actions"><button class="button accent" id="openSelected" type="button"><span>Open ' + (doc.type === 'diagram' ? 'diagram' : 'document') + '</span>' + icon('chevron-right', 'small') + '</button><button class="button" data-toast="Link copied" type="button">' + icon('copy', 'small') + '<span>Copy link</span></button></div>';
+      el("openSelected").addEventListener("click", () => openDocument(doc));
+      el("librarySide").querySelectorAll("[data-toast]").forEach(bindToast);
+    }
+
+    function openDocument(doc) {
+      if (doc.type === "diagram") { showScreen("diagram"); return; }
+      el("editorHeaderTitle").textContent = doc.title;
+      const page = el("documentPage");
+      if (doc.id === "blank") page.innerHTML = '<h1>Blank thinking note</h1><p class="date">Private draft</p><p>Start writing…</p>';
+      else if (doc.id === "daily") page.innerHTML = '<h1>Daily Catch Up</h1><p class="date">Thursday, July 16</p><h2>1. Calendar</h2><ul><li>4 meetings today, including Daily Team Stand Up at 9:30 AM</li><li>Next open focus window begins after the morning stand-up</li></ul><h2>2. Sprint</h2><ul><li>13 open tickets across the current sprint</li><li>4 need date attention</li></ul><h2>3. Needs attention</h2><ul><li>Resolve Feature Request: Intracorp Lease reporting</li><li>Advance AWS: review EC2 CPU/RAM utilization and rightsize per customer</li></ul><h2>4. Focus</h2><p>What do you want to tackle first?</p>';
+      showScreen("editor");
+    }
+
+    function showToast(message) {
+      clearTimeout(toastTimer); const toast = el("toast"); toast.innerHTML = icon('spark', 'small') + '<span>' + message + '</span>'; toast.hidden = false; toastTimer = setTimeout(() => { toast.hidden = true; }, 2400);
+    }
+    function bindToast(node) { node.addEventListener("click", () => showToast(node.dataset.toast)); }
+    document.querySelectorAll("[data-toast]").forEach(bindToast);
+
+    el("workspaceLauncher").addEventListener("click", () => setWorkspaceNavigation(true));
+    el("workspaceDrawerClose").addEventListener("click", () => setWorkspaceNavigation(false));
+    el("workspaceNavScrim").addEventListener("click", () => setWorkspaceNavigation(false));
+    el("drawerNew").addEventListener("click", () => { setWorkspaceNavigation(false); el("newButton").click(); });
+    document.querySelectorAll("[data-workspace-destination]").forEach((button) => button.addEventListener("click", () => {
+      const destination = button.dataset.workspaceDestination;
+      setWorkspaceNavigation(false);
+      if (destination !== "Docs") showToast(destination + " is represented as a navigation destination in this prototype");
+    }));
+    document.addEventListener("keydown", (event) => { if (event.key === "Escape" && document.body.classList.contains("workspace-nav-open")) setWorkspaceNavigation(false); });
+
+    el("docSearch").addEventListener("input", renderDocs);
+    document.querySelectorAll(".filter-tab").forEach((tab) => tab.addEventListener("click", () => { activeFilter = tab.dataset.filter; document.querySelectorAll(".filter-tab").forEach((item) => item.classList.toggle("active", item === tab)); renderDocs(); }));
+    el("newButton").addEventListener("click", () => { const menu = el("newMenu"); menu.hidden = !menu.hidden; el("newButton").setAttribute("aria-expanded", String(!menu.hidden)); });
+    el("newMenu").querySelectorAll("[data-create]").forEach((button) => button.addEventListener("click", () => { el("newMenu").hidden = true; if (button.dataset.create === "blank") openDocument(docs.find((doc) => doc.id === "blank")); else if (button.dataset.create === "diagram") showScreen("diagram"); else el("createModal").hidden = false; }));
+    document.querySelectorAll(".template-card[data-template]").forEach((button) => button.addEventListener("click", () => { el("createModal").hidden = false; showToast(button.dataset.template + " selected"); }));
+    el("browseTemplates").addEventListener("click", () => { el("createModal").hidden = false; });
+    el("closeCreate").addEventListener("click", () => { el("createModal").hidden = true; });
+    el("createModal").addEventListener("click", (event) => { if (event.target === el("createModal")) el("createModal").hidden = true; });
+    document.querySelectorAll("[data-modal-create]").forEach((button) => button.addEventListener("click", () => { el("createModal").hidden = true; if (button.dataset.modalCreate === "diagram") showScreen("diagram"); else { openDocument(docs.find((doc) => doc.id === "blank")); if (button.dataset.modalCreate !== "blank") { el("editorHeaderTitle").textContent = button.querySelector("strong").textContent; el("documentPage").innerHTML = '<h1>' + button.querySelector("strong").textContent + '</h1><p class="date">Private draft</p><h2>Context</h2><p>Start writing…</p>'; } } }));
+
+    document.querySelectorAll("[data-go-library]").forEach((button) => button.addEventListener("click", () => showScreen("library")));
+    el("editorOverflow").addEventListener("click", () => { const menu = el("overflowMenu"); menu.hidden = !menu.hidden; el("editorOverflow").setAttribute("aria-expanded", String(!menu.hidden)); });
+    el("openDiagramAction").addEventListener("click", () => { el("overflowMenu").hidden = true; showScreen("diagram"); });
+
+    function setEditorTab(name) {
+      document.querySelectorAll("[data-editor-tab]").forEach((tab) => { const active = tab.dataset.editorTab === name; tab.classList.toggle("active", active); tab.setAttribute("aria-selected", String(active)); });
+      el("formatPanel").hidden = name !== "format"; el("blocksPanel").hidden = name !== "blocks"; el("detailsPanel").hidden = name !== "details";
+      if (window.innerWidth <= 860) document.body.classList.add("rail-open");
+    }
+    document.querySelectorAll("[data-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setEditorTab(tab.dataset.editorTab)));
+    el("askCooper").addEventListener("click", openChat);
+    el("railClose").addEventListener("click", () => document.body.classList.remove("rail-open"));
+
+    function openChat() {
+      const rail = el("editorRail");
+      rail.innerHTML = '<section class="chat-panel"><header class="chat-head"><div class="chat-head-row"><h2>Cooper</h2><button class="icon-button" id="closeChat" type="button" aria-label="Close Cooper">' + icon('x') + '</button></div><div class="chat-status"><span class="status-dot"></span><span>' + (sessionActive ? 'Session active · current draft shared' : 'Available when you are ready') + '</span></div></header><div class="chat-body"><div class="chat-intro"><strong>' + (sessionActive ? 'I can work with this draft.' : 'This draft is still private.') + '</strong><p>' + (sessionActive ? 'Ask me to revise, challenge, summarize, or connect this writing to your other published knowledge.' : 'Starting Cooper is an explicit choice. Until then, this document is not available for retrieval or session context.') + '</p></div><div class="chat-message"><strong>Cooper</strong><p>' + (sessionActive ? 'Where would you like a second mind?' : 'Take the private moment. I will be here when you want me.') + '</p></div></div><footer class="chat-compose"><div class="chat-input"><textarea id="chatText" placeholder="' + (sessionActive ? 'Ask about this document' : 'Start Cooper to send a message') + '" ' + (sessionActive ? '' : 'disabled') + '></textarea><div class="chat-input-actions"><span></span><button class="icon-button" id="sendChat" type="button" aria-label="Send message" ' + (sessionActive ? '' : 'disabled') + '>' + icon('send') + '</button></div></div></footer></section>';
+      el("askCooper").hidden = true; document.body.classList.add("rail-open");
+      el("closeChat").addEventListener("click", restoreEditorRail);
+      if (sessionActive) el("sendChat").addEventListener("click", () => { const value = el("chatText").value.trim(); if (!value) return; const message = document.createElement("div"); message.className = "chat-message user"; message.innerHTML = '<strong>You</strong><p>' + value.replace(/[<>]/g, '') + '</p>'; rail.querySelector(".chat-body").appendChild(message); el("chatText").value = ""; showToast("Message added to this document session"); });
+    }
+    function syncDocumentContextState() {
+      if (!el("privacyLine")) return;
+      el("privacyLine").className = "privacy-line " + (sessionActive ? "shared" : "");
+      el("privacyLine").innerHTML = sessionActive ? '<span class="status-dot"></span><span>Shared with the current Cooper session. Still not published.</span>' : icon('lock', 'small') + '<span>Private draft — not available to Cooper.</span>';
+      el("visibilityValue").textContent = sessionActive ? "Session-only" : "Private";
+      el("retrievalValue").textContent = sessionActive ? "Current draft sent directly" : "Not indexed";
+    }
+    function addDocumentBlock(button) {
+      const type = button.dataset.insert;
+      const html = type === "heading" ? '<h2>New section</h2><p>Start writing…</p>' : type === "callout" ? '<aside class="insight-block"><strong>Key point</strong><p>Add the idea that should stand out.</p></aside>' : type === "table" ? '<p><strong>Option A</strong> — Owner — Next step</p><p><strong>Option B</strong> — Owner — Next step</p>' : '<ul><li>First point</li><li>Second point</li></ul>';
+      el("documentPage").insertAdjacentHTML("beforeend", html);
+      showToast(button.querySelector("strong").textContent + " added");
+    }
+    function bindRestoredEditorRail() {
+      el("editorRail").querySelectorAll("[data-editor-tab]").forEach((tab) => tab.addEventListener("click", () => setEditorTab(tab.dataset.editorTab)));
+      el("editorRail").querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => { el("documentPage").focus(); document.execCommand(button.dataset.command, false, null); }));
+      el("editorRail").querySelectorAll("[data-insert]").forEach((button) => button.addEventListener("click", () => addDocumentBlock(button)));
+      el("editorRail").querySelectorAll("[data-toast]").forEach(bindToast);
+    }
+    function restoreEditorRail() {
+      el("editorRail").innerHTML = editorRailTemplate;
+      el("askCooper").hidden = false;
+      document.body.classList.remove("rail-open");
+      bindRestoredEditorRail();
+      syncDocumentContextState();
+    }
+
+    el("startCooper").addEventListener("click", () => { sessionActive = !sessionActive; el("startCooper").querySelector("span").textContent = sessionActive ? "End session" : "Start with Cooper"; el("startCooper").setAttribute("aria-label", sessionActive ? "End session" : "Start with Cooper"); el("startCooper").classList.toggle("dark", sessionActive); syncDocumentContextState(); openChat(); showToast(sessionActive ? "Cooper started with this document" : "Cooper session ended"); });
+
+    document.querySelectorAll("[data-command]").forEach((button) => button.addEventListener("click", () => { el("documentPage").focus(); document.execCommand(button.dataset.command, false, null); }));
+    el("blockStyle").addEventListener("change", () => { el("documentPage").focus(); document.execCommand("formatBlock", false, el("blockStyle").value); });
+    el("linkButton").addEventListener("click", () => { const url = prompt("Paste a link"); if (url) { el("documentPage").focus(); document.execCommand("createLink", false, url); } });
+    el("documentPage").addEventListener("input", () => { el("saveState").textContent = "Saving…"; clearTimeout(window.saveTimer); window.saveTimer = setTimeout(() => { el("saveState").textContent = "Saved just now"; }, 700); });
+    document.querySelectorAll("[data-insert]").forEach((button) => button.addEventListener("click", () => addDocumentBlock(button)));
+
+    document.querySelectorAll(".node").forEach((node) => node.addEventListener("click", () => { document.querySelectorAll(".node").forEach((item) => item.classList.remove("selected")); node.classList.add("selected"); showToast(node.textContent.trim() + " selected"); }));
+    el("addNode").addEventListener("click", () => { const node = document.createElement("button"); node.className = "node selected"; node.type = "button"; node.style.cssText = "left:39%;top:420px;width:210px"; node.innerHTML = '<span class="node-icon">' + icon('plus') + '</span>New idea'; el("diagramStage").appendChild(node); document.querySelectorAll(".node").forEach((item) => item.classList.remove("selected")); node.classList.add("selected"); showToast("New node added"); });
+    el("viewSummary").addEventListener("click", () => { el("summaryModal").hidden = false; });
+    el("closeSummary").addEventListener("click", () => { el("summaryModal").hidden = true; });
+    el("summaryModal").addEventListener("click", (event) => { if (event.target === el("summaryModal")) el("summaryModal").hidden = true; });
+    document.querySelectorAll(".diagram-start, .diagram-ask").forEach((button) => button.addEventListener("click", () => showToast("Cooper started with the diagram and its text snapshot")));
+
+    renderDocs(); renderDetails();
+    if (location.hash === "#editor") showScreen("editor"); else if (location.hash === "#diagram") showScreen("diagram");
+    window.addEventListener("hashchange", () => {
+      if (location.hash === "#diagram" && el("diagramScreen").hidden) showScreen("diagram");
+      else if (location.hash === "#editor" && el("editorScreen").hidden) showScreen("editor");
+      else if (!location.hash && el("libraryScreen").hidden) showScreen("library");
+    });
+  </script>
+</body>
+</html>

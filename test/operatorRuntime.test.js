@@ -152,6 +152,34 @@ test("operator task preserves linked Cooper work jobs and artifact kinds", () =>
   assert.deepEqual(publicTask.jobIds, ["job-1"]);
 });
 
+test("Codex tasks persist the durable app-server routing state", () => {
+  const task = createOperatorTask({
+    skill: "codex_app_server",
+    goal: "Implement the approved voice task",
+    workspacePath: "/tmp/cooper-project",
+    codexModel: "gpt-5"
+  }, "2026-07-16T12:00:00.000Z");
+  const recovered = hydrateOperatorTask({
+    ...task,
+    runtime: {
+      ...task.runtime,
+      transportMode: "detached-socket",
+      connectionStatus: "reconnecting",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      lastReconciledAt: "2026-07-16T12:01:00.000Z"
+    }
+  });
+
+  assert.equal(recovered.workspacePath, "/tmp/cooper-project");
+  assert.equal(recovered.codexModel, "gpt-5");
+  assert.equal(recovered.runtime.adapter, "codex_app_server");
+  assert.equal(recovered.runtime.transportMode, "detached-socket");
+  assert.equal(recovered.runtime.connectionStatus, "reconnecting");
+  assert.equal(recovered.runtime.threadId, "thread-1");
+  assert.equal(recovered.runtime.turnId, "turn-1");
+});
+
 test("Cooper Operator exposes a status query tool for delegated work", () => {
   const tool = operatorToolDefinitions.find((definition) => definition.name === "get_operator_task_status");
 

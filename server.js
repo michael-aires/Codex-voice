@@ -8,11 +8,22 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
 import Arcade from "@arcadeai/arcadejs";
 import { PDFParse } from "pdf-parse";
 import { renderArtifactDocx } from "./server/docxArtifact.js";
 import { renderArtifactPptx, renderArtifactXlsx } from "./server/officeArtifact.js";
 import { renderArtifactPdf } from "./server/pdfArtifact.js";
+import {
+  DOCUMENT_PIPELINE_STAGES,
+  applyDocumentJobControl,
+  nextArtifactVersion,
+  normalizeJobPriority,
+  pipelineStageForJob,
+  qualityRepairInstruction,
+  qualityReportForArtifact,
+  sortDocumentQueue
+} from "./server/documentPipeline.js";
 import { cooperInstructions } from "./cooperPrompt.js";
 import { cooperToolDefinitions, cooperToolNames } from "./cooperTools.js";
 import {
@@ -42,6 +53,13 @@ import {
   operatorRuntimeInfo,
   operatorTaskPublic
 } from "./server/operatorRuntime.js";
+import {
+  CodexAppServerClient,
+  codexApprovalFromServerRequest,
+  codexApprovalResponse,
+  codexTaskStatusFromThread,
+  latestCodexAgentMessage
+} from "./server/codexAppServerClient.js";
 import {
   buildPushToTalkComputerTaskInput,
   classifyPushToTalkCommand,
@@ -119,6 +137,23 @@ import {
   contextPacketsForCall,
   contextSourceCountForCall
 } from "./server/sessionContextLineage.js";
+import {
+  activeKnowledgeIndexRecord,
+  addKnowledgeMessage,
+  createKnowledgeIndexRecord,
+  createStoredKnowledgeDocument,
+  findKnowledgeDocument,
+  hydrateKnowledgeState,
+  knowledgeLibrary,
+  publicKnowledgeDocument,
+  restoreStoredKnowledgeVersion,
+  setKnowledgeSession,
+  setKnowledgeSessionResponse,
+  updateKnowledgeIndexRecord,
+  updateStoredKnowledgeDocument
+} from "./server/knowledgeStore.js";
+import { createKnowledgeOpenAIClient, KnowledgeOpenAIError } from "./server/knowledgeOpenAI.js";
+import { canRetrieveKnowledgeDocument } from "./src/knowledgeStudioModel.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === "production";
@@ -133,6 +168,9 @@ const fallbackWorkModel = process.env.COOPER_FALLBACK_WORK_MODEL || "";
 const jobDelayMs = Number(process.env.COOPER_JOB_DELAY_MS || 15000);
 const jobMaxAttempts = Number(process.env.COOPER_JOB_MAX_ATTEMPTS || 3);
 const jobMaxOutputTokens = Number(process.env.COOPER_JOB_MAX_OUTPUT_TOKENS || 9000);
+const jobQualityGateEnabled = process.env.COOPER_JOB_QUALITY_GATE !== "false";
+const jobQualityMinimumScore = Math.max(0, Math.min(100, Number(process.env.COOPER_JOB_QUALITY_MIN_SCORE || 80)));
+const jobQualityRepairAttempts = Math.max(0, Math.min(2, Number(process.env.COOPER_JOB_QUALITY_REPAIR_ATTEMPTS || 1)));
 const chatModel = process.env.COOPER_CHAT_MODEL || workModel;
 const chatMaxOutputTokens = Number(process.env.COOPER_CHAT_MAX_OUTPUT_TOKENS || 1800);
 const chatMaxToolRounds = Math.max(1, Number(process.env.COOPER_CHAT_MAX_TOOL_ROUNDS || 8));
@@ -209,6 +247,7 @@ const mcpAppServers = parseMcpAppServers(
 const zoomSdkKey = process.env.ZOOM_SDK_KEY || process.env.ZOOM_CLIENT_ID || process.env.ZOOM_MEETING_SDK_KEY || "";
 const zoomSdkSecret = process.env.ZOOM_SDK_SECRET || process.env.ZOOM_CLIENT_SECRET || process.env.ZOOM_MEETING_SDK_SECRET || "";
 const zoomHostRoleEnabled = process.env.ZOOM_ENABLE_HOST_ROLE === "true";
+const knowledgeOpenAI = createKnowledgeOpenAIClient();
 
 const app = express();
 const upload = multer({
@@ -221,6 +260,11 @@ const pushToTalkUpload = multer({
 });
 const eventClients = new Set();
 const operatorTimers = new Map();
+const codexTaskLaunches = new Map();
+const codexClient = new CodexAppServerClient({
+  cwd: process.cwd(),
+  preferDaemon: process.env.COOPER_CODEX_DAEMON !== "false"
+});
 const activeSessionChats = new Set();
 let writeQueue = Promise.resolve();
 let workerActive = false;
@@ -233,6 +277,24 @@ let dailyBriefRefresh = null;
 let dailyBriefTimer = null;
 let mobilePushTimer = null;
 let mobilePushWorkerActive = false;
+let codexReconnectPromise = null;
+let codexReconnectTimer = null;
+
+codexClient.on("request", (message) => {
+  void handleCodexServerRequest(message).catch((error) => {
+    console.error("Codex approval routing failed:", error);
+  });
+});
+codexClient.on("notification", (message) => {
+  void handleCodexNotification(message).catch((error) => {
+    console.error("Codex event persistence failed:", error);
+  });
+});
+codexClient.on("disconnected", ({ error }) => {
+  void markCodexTasksDisconnected(error).finally(() => {
+    scheduleCodexReconnect(1500);
+  });
+});
 
 app.use(express.text({ type: ["application/sdp", "text/plain"], limit: "2mb" }));
 app.use(express.json({ limit: "24mb" }));
@@ -334,6 +396,10 @@ app.get("/prototypes/session-context-overview", (_req, res) => {
   res.sendFile(join(__dirname, "docs", "cooper-session-context-overview-prototype.html"));
 });
 
+app.get("/prototypes/session-preparation-flow", (_req, res) => {
+  res.sendFile(join(__dirname, "docs", "cooper-session-preparation-flow-prototype.html"));
+});
+
 app.get("/prototypes/chat-micro-ui", (_req, res) => {
   res.sendFile(join(__dirname, "docs", "cooper-chat-micro-ui-prototype.html"));
 });
@@ -426,6 +492,41 @@ const artifactRecipes = {
       "Extract the product opportunity, target user, problem statement, success criteria, and open questions from the transcript.",
       "Write a practical PRD in Markdown with Background, Goals, Non-goals, User Stories, Functional Requirements, Edge Cases, Data/Integration Needs, Analytics, Rollout, and Acceptance Criteria.",
       "Add a prototype brief section that Cooper can use to produce a mobile-first HTML prototype, including screens, states, content hierarchy, and interaction notes."
+    ]
+  },
+  architecture_decision_record: {
+    title: "Architecture decision record",
+    outputType: "markdown",
+    steps: [
+      "Extract the architectural decision, forces, constraints, systems, data boundaries, security concerns, and unresolved technical questions from the selected evidence. Separate sourced facts from assumptions.",
+      "Compare the credible options with tradeoffs across delivery speed, maintainability, reliability, security, cost, operability, migration risk, and developer experience. Recommend one option and state what evidence could reverse it.",
+      "Write a durable Markdown ADR with Status, Context, Decision Drivers, Options Considered, Decision, Consequences, Risks, Validation Plan, Rollback or Revisit Trigger, and References. Never invent measurements, owners, or commitments."
+    ]
+  },
+  sprint_recap: {
+    title: "Sprint recap",
+    outputType: "markdown",
+    steps: [
+      "Distill sprint evidence from the meeting, selected Notion or GitHub context, completed work, active work, blockers, customer signal, and QA outcomes. Clearly distinguish observed evidence from missing data.",
+      "Analyze outcomes against intended sprint goals. Identify shipped value, carryover, scope movement, quality signals, decisions, operational debt, and the highest-leverage learning.",
+      "Write an executive Markdown sprint recap with Goals, Outcomes, Shipped, In Progress, Carryover, Quality and Evidence, Decisions, Risks, Learnings, and Recommended Next Sprint Focus. Include source notes and do not invent ticket state."
+    ]
+  },
+  decision_log: {
+    title: "Decision log",
+    outputType: "markdown",
+    steps: [
+      "Extract every explicit or strongly implied decision from the selected evidence. For each, capture the decision, rationale, alternatives mentioned, owner if named, date if known, dependencies, and unresolved follow-up without inventing facts.",
+      "Write a concise Markdown decision log ordered by impact. Separate Confirmed Decisions, Proposed Decisions, Revisit Triggers, and Open Questions. Add source notes so a future session can recover why each decision was made."
+    ]
+  },
+  release_brief: {
+    title: "Release brief",
+    outputType: "markdown",
+    steps: [
+      "Extract the release scope, user-visible change, affected personas, dependencies, migrations, permissions, data behavior, risks, rollout constraints, support implications, and known gaps from the selected evidence.",
+      "Build a release-readiness view covering acceptance evidence, QA status, observability, rollback, communications, ownership, and go/no-go questions. Mark missing proof explicitly.",
+      "Write a practical Markdown release brief with Summary, User Impact, Scope, Readiness, QA Evidence, Rollout, Rollback, Monitoring, Support Notes, Known Issues, and Go/No-Go Checklist."
     ]
   },
   pdf_brief: {
@@ -592,6 +693,324 @@ app.get("/api/state", async (_req, res) => {
   res.json(publicState(db));
 });
 
+app.get("/api/knowledge/documents", async (req, res) => {
+  const db = await readDb();
+  res.json({
+    documents: knowledgeLibrary(db, {
+      query: cleanText(req.query.query),
+      filter: cleanText(req.query.filter) || "all",
+      sort: cleanText(req.query.sort) || "updated"
+    }),
+    retrieval: {
+      configured: knowledgeOpenAI.configured,
+      vectorStoreConfigured: Boolean(db.knowledgeConfig?.vectorStoreId || knowledgeOpenAI.vectorStoreId),
+      model: knowledgeOpenAI.model
+    }
+  });
+});
+
+app.post("/api/knowledge/documents", async (req, res) => {
+  const document = await updateDb((db) => createStoredKnowledgeDocument(db, {
+    templateId: cleanText(req.body?.templateId),
+    type: cleanText(req.body?.type),
+    title: cleanText(req.body?.title),
+    project: cleanText(req.body?.project) || "Personal",
+    owner: "You"
+  }));
+  res.status(201).json({ document });
+});
+
+app.get("/api/knowledge/documents/:id", async (req, res) => {
+  const db = await readDb();
+  const document = findKnowledgeDocument(db, req.params.id);
+  if (!document) {
+    res.status(404).json({ error: "Document not found." });
+    return;
+  }
+  res.json({ document: publicKnowledgeDocument(db, document) });
+});
+
+app.patch("/api/knowledge/documents/:id", async (req, res) => {
+  const patch = knowledgeDocumentPatch(req.body);
+  let conflict = null;
+  const expectedVersionId = cleanText(req.body?.expectedVersionId);
+  const document = await updateDb((db) => {
+    const current = findKnowledgeDocument(db, req.params.id);
+    if (current && expectedVersionId && current.currentVersionId !== expectedVersionId) {
+      conflict = publicKnowledgeDocument(db, current);
+      return null;
+    }
+    return updateStoredKnowledgeDocument(db, req.params.id, patch, {
+      actor: "You",
+      saveVersion: req.body?.saveVersion !== false
+    });
+  });
+  if (conflict) {
+    res.status(409).json({ error: "This document changed in another tab. Reloaded the newest saved version.", document: conflict });
+    return;
+  }
+  if (!document) {
+    res.status(404).json({ error: "Document not found." });
+    return;
+  }
+  res.json({ document });
+});
+
+app.delete("/api/knowledge/documents/:id", async (req, res) => {
+  const before = await readDb();
+  const current = findKnowledgeDocument(before, req.params.id);
+  const record = current ? activeKnowledgeIndexRecord(before, current.id) : null;
+  const document = await updateDb((db) => updateStoredKnowledgeDocument(db, req.params.id, {
+    lifecycle: "archived",
+    visibility: "private",
+    sessionId: "",
+    indexStatus: record ? "removing" : "not-indexed",
+    indexError: ""
+  }, { actor: "You", saveVersion: true }));
+  if (!document) {
+    res.status(404).json({ error: "Document not found." });
+    return;
+  }
+  if (!record) {
+    res.json({ document });
+    return;
+  }
+  try {
+    await knowledgeOpenAI.removeIndexedVersion({ record, currentVectorStoreId: before.knowledgeConfig?.vectorStoreId || "" });
+    const updated = await updateDb((db) => {
+      createKnowledgeIndexRecord(db, { ...record, documentId: req.params.id, versionId: record.versionId, status: "removed" });
+      return publicKnowledgeDocument(db, findKnowledgeDocument(db, req.params.id));
+    });
+    res.json({ document: updated });
+  } catch (error) {
+    const updated = await updateDb((db) => {
+      createKnowledgeIndexRecord(db, { ...record, documentId: req.params.id, versionId: record.versionId, status: "remove-failed", error: error.message });
+      return publicKnowledgeDocument(db, findKnowledgeDocument(db, req.params.id));
+    });
+    res.status(202).json({ document: updated, warning: "The document is archived and blocked from retrieval; provider cleanup will need retrying." });
+  }
+});
+
+app.post("/api/knowledge/documents/:id/versions/:versionId/restore", async (req, res) => {
+  const document = await updateDb((db) => restoreStoredKnowledgeVersion(db, req.params.id, req.params.versionId, { actor: "You" }));
+  if (!document) {
+    res.status(404).json({ error: "Document or version not found." });
+    return;
+  }
+  res.json({ document });
+});
+
+app.post("/api/knowledge/documents/:id/session", async (req, res) => {
+  const active = req.body?.active !== false;
+  const document = await updateDb((db) => setKnowledgeSession(db, req.params.id, active));
+  if (!document) {
+    res.status(404).json({ error: "Document not found." });
+    return;
+  }
+  res.json({ document });
+});
+
+app.post("/api/knowledge/documents/:id/chat", async (req, res) => {
+  const message = cleanText(req.body?.message).slice(0, 12_000);
+  if (!message) {
+    res.status(400).json({ error: "A message is required." });
+    return;
+  }
+  const db = await readDb();
+  const document = findKnowledgeDocument(db, req.params.id);
+  const session = document && db.knowledgeSessions.find((item) => item.id === document.sessionId && item.status === "active");
+  const version = document && db.knowledgeVersions.find((item) => item.id === document.currentVersionId);
+  if (!document) {
+    res.status(404).json({ error: "Document not found." });
+    return;
+  }
+  if (!session) {
+    res.status(409).json({ error: "Start Cooper with this document before sending a message." });
+    return;
+  }
+  await updateDb((nextDb) => addKnowledgeMessage(nextDb, {
+    documentId: document.id,
+    sessionId: session.id,
+    role: "user",
+    text: message
+  }));
+  try {
+    const response = await knowledgeOpenAI.chat({
+      document,
+      version,
+      message,
+      previousResponseId: session.previousResponseId,
+      currentVectorStoreId: db.knowledgeConfig?.vectorStoreId || "",
+      authorizedDocumentIds: db.knowledgeDocuments.filter(canRetrieveKnowledgeDocument).map((item) => item.id)
+    });
+    const updated = await updateDb((nextDb) => {
+      addKnowledgeMessage(nextDb, {
+        documentId: document.id,
+        sessionId: session.id,
+        role: "assistant",
+        text: response.text,
+        citations: response.citations,
+        responseId: response.id
+      });
+      setKnowledgeSessionResponse(nextDb, session.id, response.id);
+      return publicKnowledgeDocument(nextDb, findKnowledgeDocument(nextDb, document.id));
+    });
+    res.json({ document: updated, response: { id: response.id, text: response.text, citations: response.citations } });
+  } catch (error) {
+    const status = error instanceof KnowledgeOpenAIError ? error.status : 500;
+    res.status(status).json({ error: error.message || "Cooper could not respond to this document." });
+  }
+});
+
+app.post("/api/knowledge/documents/:id/publish", async (req, res) => {
+  const publishing = req.body?.published !== false;
+  const before = await readDb();
+  const current = findKnowledgeDocument(before, req.params.id);
+  if (!current) {
+    res.status(404).json({ error: "Document not found." });
+    return;
+  }
+  if (!publishing) {
+    const record = activeKnowledgeIndexRecord(before, current.id);
+    const document = await updateDb((db) => updateStoredKnowledgeDocument(db, current.id, {
+      lifecycle: req.body?.visibility === "private" ? "private" : "shared",
+      visibility: ["private", "team", "workspace"].includes(req.body?.visibility) ? req.body.visibility : "team",
+      indexStatus: record ? "removing" : "not-indexed",
+      indexError: "",
+      indexRecordId: record?.id || ""
+    }, { actor: "You", saveVersion: true }));
+    try {
+      if (record) await knowledgeOpenAI.removeIndexedVersion({
+        record,
+        currentVectorStoreId: before.knowledgeConfig?.vectorStoreId || ""
+      });
+      const updated = await updateDb((db) => {
+        const next = updateStoredKnowledgeDocument(db, current.id, { indexStatus: "not-indexed", indexError: "", indexRecordId: "" }, { actor: "You", saveVersion: false });
+        if (record) createKnowledgeIndexRecord(db, {
+          documentId: current.id,
+          versionId: current.currentVersionId,
+          status: "removed",
+          vectorStoreId: before.knowledgeConfig?.vectorStoreId || "",
+          fileId: record.fileId,
+          vectorStoreFileId: record.vectorStoreFileId
+        });
+        return next;
+      });
+      res.json({ document: updated });
+    } catch (error) {
+      const updated = await updateDb((db) => updateStoredKnowledgeDocument(db, current.id, { indexStatus: "remove-failed", indexError: error.message }, { actor: "You", saveVersion: false }));
+      res.status(202).json({ document: updated || document, warning: "The document is already blocked from retrieval; provider cleanup will need retrying." });
+    }
+    return;
+  }
+
+  const prepared = await updateDb((db) => updateStoredKnowledgeDocument(db, current.id, {
+    lifecycle: "published",
+    visibility: ["team", "workspace"].includes(req.body?.visibility) ? req.body.visibility : "workspace",
+    indexStatus: knowledgeOpenAI.configured ? "indexing" : "not-configured",
+    indexError: ""
+  }, { actor: "You", saveVersion: true }));
+  const indexDb = await readDb();
+  const source = findKnowledgeDocument(indexDb, current.id);
+  const version = indexDb.knowledgeVersions.find((item) => item.id === source.currentVersionId);
+  try {
+    const result = await knowledgeOpenAI.indexVersion({
+      document: source,
+      version,
+      currentVectorStoreId: indexDb.knowledgeConfig?.vectorStoreId || ""
+    });
+    const document = await updateDb((db) => {
+      createKnowledgeIndexRecord(db, {
+        documentId: source.id,
+        versionId: version.id,
+        status: result.status,
+        vectorStoreId: result.vectorStoreId,
+        fileId: result.fileId,
+        vectorStoreFileId: result.vectorStoreFileId
+      });
+      return publicKnowledgeDocument(db, findKnowledgeDocument(db, source.id));
+    });
+    res.json({ document });
+  } catch (error) {
+    const document = await updateDb((db) => {
+      createKnowledgeIndexRecord(db, {
+        documentId: source.id,
+        versionId: version.id,
+        status: "failed",
+        vectorStoreId: indexDb.knowledgeConfig?.vectorStoreId || "",
+        error: error.message
+      });
+      return publicKnowledgeDocument(db, findKnowledgeDocument(db, source.id));
+    });
+    res.status(502).json({ error: error.message || "Could not index the published document.", document });
+  }
+});
+
+app.get("/api/knowledge/documents/:id/index-status", async (req, res) => {
+  const before = await readDb();
+  const current = findKnowledgeDocument(before, req.params.id);
+  if (!current) {
+    res.status(404).json({ error: "Document not found." });
+    return;
+  }
+  const record = activeKnowledgeIndexRecord(before, current.id);
+  if (current.lifecycle !== "published" || !record || record.status !== "indexing") {
+    res.json({ document: publicKnowledgeDocument(before, current) });
+    return;
+  }
+  try {
+    const result = await knowledgeOpenAI.getIndexStatus({
+      record,
+      currentVectorStoreId: before.knowledgeConfig?.vectorStoreId || ""
+    });
+    const document = await updateDb((db) => updateKnowledgeIndexRecord(db, record.id, result));
+    res.json({ document: document || publicKnowledgeDocument(before, current) });
+  } catch (error) {
+    const document = await updateDb((db) => updateKnowledgeIndexRecord(db, record.id, { status: "failed", error: error.message }));
+    res.status(502).json({ error: error.message || "Could not refresh retrieval status.", document });
+  }
+});
+
+app.get("/api/knowledge/documents/:id/export", async (req, res) => {
+  const db = await readDb();
+  const document = findKnowledgeDocument(db, req.params.id);
+  if (!document) {
+    res.status(404).json({ error: "Document not found." });
+    return;
+  }
+  const format = cleanText(req.query.format) || "markdown";
+  const filename = `${document.title.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "document"}`;
+  if (format === "html" && document.type === "document") {
+    res.setHeader("Content-Disposition", `attachment; filename=\"${filename}.html\"`);
+    res.type("html").send(`<!doctype html><html><head><meta charset=\"utf-8\"><title>${escapeHtml(document.title)}</title></head><body>${document.html}</body></html>`);
+    return;
+  }
+  if (format === "pdf") {
+    try {
+      const buffer = await renderArtifactPdf({
+        title: document.title,
+        content: document.markdown,
+        createdAt: document.updatedAt,
+        label: "KNOWLEDGE DOCUMENT",
+        subject: "Exported Cooper knowledge document"
+      });
+      res.setHeader("Content-Disposition", `attachment; filename=\"${filename}.pdf\"`);
+      res.type("application/pdf").send(buffer);
+    } catch (error) {
+      console.error("Knowledge PDF export failed:", error);
+      res.status(500).json({ error: "Could not export this document as PDF." });
+    }
+    return;
+  }
+  if (format === "text") {
+    res.setHeader("Content-Disposition", `attachment; filename=\"${filename}.txt\"`);
+    res.type("text/plain").send(document.plainText);
+    return;
+  }
+  res.setHeader("Content-Disposition", `attachment; filename=\"${filename}.md\"`);
+  res.type("text/markdown").send(document.markdown);
+});
+
 app.get("/api/today", async (req, res) => {
   try {
     const db = await readDb();
@@ -753,6 +1172,8 @@ app.post("/api/operator/tasks", async (req, res) => {
     artifactKinds: req.body?.artifactKinds,
     templateIds: req.body?.templateIds,
     computerIntent: req.body?.computerIntent,
+    workspacePath: req.body?.workspacePath || req.body?.workspace_path,
+    codexModel: req.body?.codexModel || req.body?.codex_model,
     budgets: req.body?.budgets
   });
 
@@ -766,14 +1187,49 @@ app.post("/api/operator/tasks", async (req, res) => {
 });
 
 app.post("/api/operator/tasks/:id/approve", async (req, res) => {
-  const result = await updateDb(async (db) => {
+  const approvalId = cleanText(req.body?.approvalId);
+  const snapshot = await readDb();
+  const snapshotTask = snapshot.operatorTasks?.find((item) => item.id === req.params.id);
+  if (!snapshotTask) {
+    res.status(404).json({ error: "Operator task not found." });
+    return;
+  }
+  const snapshotApproval = approvalId
+    ? snapshotTask.approvals.find((item) => item.id === approvalId)
+    : snapshotTask.approvals.find((item) => item.status === "pending");
+  if (!snapshotApproval) {
+    res.status(400).json({ error: "No pending approval found.", task: operatorTaskPublic(snapshotTask) });
+    return;
+  }
+
+  if (snapshotApproval.runtimeMethod && (snapshotApproval.runtimeRequestId === null || snapshotApproval.runtimeRequestId === undefined)) {
+    res.status(409).json({
+      error: "Codex is reconnecting this approval request. Try again when the task connection is restored.",
+      task: operatorTaskPublic(snapshotTask)
+    });
+    return;
+  }
+
+  if (snapshotApproval.runtimeRequestId !== null && snapshotApproval.runtimeRequestId !== undefined) {
+    try {
+      await codexClient.connect();
+      codexClient.respond(snapshotApproval.runtimeRequestId, codexApprovalResponse(snapshotApproval));
+    } catch (error) {
+      res.status(502).json({
+        error: `Codex approval could not be delivered yet: ${error.message}`,
+        task: operatorTaskPublic(snapshotTask)
+      });
+      return;
+    }
+  }
+
+  const result = await updateDb((db) => {
     const task = db.operatorTasks?.find((item) => item.id === req.params.id);
     if (!task) return null;
-    const approvalId = cleanText(req.body?.approvalId);
     const approval = approvalId
       ? task.approvals.find((item) => item.id === approvalId)
       : task.approvals.find((item) => item.status === "pending");
-    if (!approval) return { task, error: "No pending approval found." };
+    if (!approval || approval.status !== "pending") return { task, error: "No pending approval found." };
     const now = new Date().toISOString();
     approval.status = "approved";
     approval.resolvedAt = now;
@@ -792,11 +1248,18 @@ app.post("/api/operator/tasks/:id/approve", async (req, res) => {
     return;
   }
 
-  scheduleOperatorTask(result.task.id, 250);
+  if (!snapshotApproval.runtimeMethod) scheduleOperatorTask(result.task.id, 250);
   res.json({ task: operatorTaskPublic(result.task) });
 });
 
 app.post("/api/operator/tasks/:id/cancel", async (req, res) => {
+  const cancelSnapshot = await readDb();
+  const cancelTask = cancelSnapshot.operatorTasks?.find((item) => item.id === req.params.id);
+  if (cancelTask?.skill === "codex_app_server") {
+    await interruptCodexTask(cancelTask).catch((error) => {
+      console.warn("Codex interrupt failed during task cancellation:", error.message);
+    });
+  }
   const task = await updateDb((db) => {
     const item = db.operatorTasks?.find((candidate) => candidate.id === req.params.id);
     if (!item) return null;
@@ -824,6 +1287,10 @@ app.post("/api/operator/tasks/:id/cancel", async (req, res) => {
 });
 
 app.post("/api/operator/stop-all", async (_req, res) => {
+  const stopSnapshot = await readDb();
+  const codexTasks = (stopSnapshot.operatorTasks || [])
+    .filter((task) => task.skill === "codex_app_server" && isOperatorTaskActive(task));
+  await Promise.all(codexTasks.map((task) => interruptCodexTask(task).catch(() => null)));
   const stopped = await updateDb((db) => {
     const now = new Date().toISOString();
     const tasks = (db.operatorTasks || []).filter(isOperatorTaskActive);
@@ -844,6 +1311,67 @@ app.post("/api/operator/stop-all", async (_req, res) => {
   });
 
   res.json({ stopped: stopped.map(operatorTaskPublic) });
+});
+
+app.get("/api/codex/runtime", async (_req, res) => {
+  if (!codexClient.connected) {
+    await codexClient.connect().catch(() => null);
+  }
+  const db = await readDb();
+  const tasks = sortByDate(db.operatorTasks || [])
+    .filter((task) => task.skill === "codex_app_server")
+    .map((task) => publicOperatorTask(task, db));
+  res.json({
+    connected: codexClient.connected,
+    transportMode: codexClient.transportMode,
+    lastError: codexClient.lastError,
+    durableDaemon: ["daemon-proxy", "detached-socket"].includes(codexClient.transportMode),
+    tasks
+  });
+});
+
+app.post("/api/codex/tasks/:id/continue", async (req, res) => {
+  const prompt = cleanText(req.body?.prompt);
+  if (!prompt) {
+    res.status(400).json({ error: "A follow-up prompt is required." });
+    return;
+  }
+  const db = await readDb();
+  const task = db.operatorTasks?.find((item) => item.id === req.params.id && item.skill === "codex_app_server");
+  if (!task) {
+    res.status(404).json({ error: "Codex task not found." });
+    return;
+  }
+  if (!task.runtime?.threadId) {
+    res.status(409).json({ error: "This Codex task does not have a thread yet." });
+    return;
+  }
+
+  try {
+    await codexClient.resumeThread(task.runtime.threadId, { includeTurns: false });
+    const turn = await codexClient.startTurn(task.runtime.threadId, prompt, {
+      cwd: task.workspacePath || task.runtime.cwd || resolveCodexWorkspace(""),
+      model: task.codexModel || task.runtime.model || undefined
+    });
+    const updated = await updateDb((nextDb) => {
+      const item = nextDb.operatorTasks?.find((candidate) => candidate.id === task.id);
+      if (!item) return null;
+      const now = new Date().toISOString();
+      item.status = "running";
+      item.completedAt = null;
+      item.error = "";
+      item.runtime.turnId = cleanText(turn?.turn?.id);
+      item.runtime.threadStatus = "active";
+      item.runtime.connectionStatus = "connected";
+      item.runtime.lastEventAt = now;
+      item.updatedAt = now;
+      item.logs.push(createOperatorLog("codex.turn.started", "Codex follow-up started", prompt, now));
+      return item;
+    });
+    res.status(202).json({ task: operatorTaskPublic(updated) });
+  } catch (error) {
+    res.status(502).json({ error: `Could not continue Codex task: ${error.message}` });
+  }
 });
 
 app.post("/api/computer-use/tool-log", (req, res) => {
@@ -981,7 +1509,8 @@ app.post("/api/projects/:id/sources", async (req, res) => {
     sourceType: cleanText(req.body?.sourceType) || "paste",
     mimeType: "text/plain",
     originalName: "",
-    content
+    content,
+    externalId: cleanText(req.body?.externalId)
   });
 
   if (!source) {
@@ -1775,7 +2304,44 @@ app.post("/api/calls/:id/artifacts", async (req, res) => {
   const customPrompt = cleanText(req.body?.customPrompt || "");
   const result = await enqueueArtifactJob(req.params.id, kind, customPrompt, {
     title: cleanText(req.body?.title),
-    workstream: cleanText(req.body?.workstream)
+    workstream: cleanText(req.body?.workstream),
+    priority: cleanText(req.body?.priority),
+    pipelineId: cleanText(req.body?.pipelineId)
+  });
+
+  if (!result.ok) {
+    res.status(result.status || 400).json({ error: result.error });
+    return;
+  }
+
+  res.status(202).json({ job: publicJob(result.job) });
+});
+
+app.post("/api/artifacts/:id/revise", async (req, res) => {
+  const db = await readDb();
+  const artifact = db.artifacts.find((item) => item.id === req.params.id);
+  if (!artifact) {
+    res.status(404).json({ error: "Artifact not found." });
+    return;
+  }
+
+  const sourceJob = db.jobs.find((item) => item.id === artifact.jobId);
+  const instruction = cleanText(req.body?.instruction);
+  if (!instruction) {
+    res.status(400).json({ error: "A revision instruction is required." });
+    return;
+  }
+
+  const priorDraft = cleanText(sourceJob?.draft).slice(-120000);
+  const result = await enqueueArtifactJob(artifact.callId, artifact.kind, [
+    `Revision requested for ${artifact.title} version ${Number(artifact.version || 1)}:\n${instruction}`,
+    priorDraft ? `Existing artifact source to revise:\n${priorDraft}` : ""
+  ].filter(Boolean).join("\n\n"), {
+    allowEmptyTranscript: true,
+    title: cleanText(req.body?.title) || artifact.title,
+    priority: cleanText(req.body?.priority) || "high",
+    workstream: "artifact_revision",
+    supersedesArtifactId: artifact.id
   });
 
   if (!result.ok) {
@@ -1826,6 +2392,40 @@ app.post("/api/jobs/:id/retry", async (req, res) => {
   res.json({ job: publicJob(result) });
 });
 
+app.get("/api/jobs/:id", async (req, res) => {
+  const db = await readDb();
+  const job = db.jobs.find((item) => item.id === req.params.id);
+  if (!job) {
+    res.status(404).json({ error: "Job not found." });
+    return;
+  }
+  res.json({ job: publicJob(job) });
+});
+
+app.post("/api/jobs/:id/:action(pause|resume|cancel)", async (req, res) => {
+  const action = cleanText(req.params.action);
+  const result = await updateDb((db) => {
+    const job = db.jobs.find((item) => item.id === req.params.id);
+    if (!job) return null;
+    const transition = applyDocumentJobControl(job, action);
+    if (!transition.ok) return { error: transition.message, status: 409, job };
+    Object.assign(job, transition.job, { updatedAt: new Date().toISOString() });
+    appendJobLog(job, action, transition.message);
+    return { job };
+  });
+
+  if (!result) {
+    res.status(404).json({ error: "Job not found." });
+    return;
+  }
+  if (result.error) {
+    res.status(result.status || 409).json({ error: result.error, job: publicJob(result.job) });
+    return;
+  }
+  if (action === "resume") queueWorker();
+  res.json({ job: publicJob(result.job) });
+});
+
 async function enqueueArtifactJob(callId, kind, customPrompt = "", options = {}) {
   const now = new Date().toISOString();
   const recipe = artifactRecipes[kind];
@@ -1852,18 +2452,24 @@ function enqueueArtifactJobInDb(db, callId, kind, customPrompt = "", options = {
   const recipe = artifactRecipes[kind];
   if (!recipe) return { error: "Unknown artifact kind.", status: 400 };
 
+  const call = db.calls.find((item) => item.id === callId) || {};
+  const jobId = randomUUID();
   const maxOutputTokens = outputTokenBudget(recipe);
   const title = cleanText(options.title) || recipe.title;
   const queued = {
-    id: randomUUID(),
+    id: jobId,
     callId,
     kind,
     title,
     workstream: cleanText(options.workstream) || null,
+    pipelineId: cleanText(options.pipelineId) || cleanText(options.requirementsRunId) || jobId,
     requirementsRunId: cleanText(options.requirementsRunId) || null,
     templateId: cleanText(options.templateId) || null,
     requirementsStage: cleanText(options.requirementsStage) || null,
     sequence: Number(options.sequence || 0) || null,
+    priority: normalizeJobPriority(options.priority),
+    pipelineStage: "capture",
+    pipeline: DOCUMENT_PIPELINE_STAGES,
     status: "queued",
     customPrompt,
     stepIndex: 0,
@@ -1885,6 +2491,25 @@ function enqueueArtifactJobInDb(db, callId, kind, customPrompt = "", options = {
     draftCharCount: 0,
     draft: "",
     artifactId: null,
+    supersedesArtifactId: cleanText(options.supersedesArtifactId) || null,
+    sourceManifest: {
+      capturedAt: now,
+      callId,
+      projectId: cleanText(call.projectId) || null,
+      transcriptTurnCount: Array.isArray(call.transcript) ? call.transcript.length : 0,
+      contextPacketIds: contextPacketIdsForCall(call),
+      contextSourceCount: contextSourceCountForCall(db, call),
+      instructionCharCount: cleanText(customPrompt).length
+    },
+    quality: {
+      status: "pending",
+      score: 0,
+      minimumScore: jobQualityMinimumScore,
+      checks: [],
+      warnings: [],
+      summary: "Quality validation has not run yet."
+    },
+    qualityRepairAttempts: 0,
     error: null,
     retryAt: null,
     progress: "Queued.",
@@ -1916,7 +2541,7 @@ async function processQueue() {
   try {
     while (true) {
       const db = await readDb();
-      const queued = db.jobs.filter((item) => item.status === "queued");
+      const queued = sortDocumentQueue(db.jobs.filter((item) => item.status === "queued"));
       const now = Date.now();
       const job = queued.find((item) => !item.retryAt || new Date(item.retryAt).getTime() <= now);
       const nextRetryAt = queued
@@ -1952,6 +2577,7 @@ async function runJob(jobId) {
     if (job) {
       job.status = "running";
       job.progress = "Starting.";
+      job.pipelineStage = pipelineStageForJob(job, artifactRecipes[job.kind]);
       appendJobLog(job, "start", "Cooper picked up the job.");
       job.updatedAt = new Date().toISOString();
     }
@@ -1968,6 +2594,38 @@ async function runJob(jobId) {
         throw new Error("Job context disappeared.");
       }
 
+      if (job.cancelRequested || job.status === "canceling") {
+        await updateDb((nextDb) => {
+          const nextJob = nextDb.jobs.find((item) => item.id === jobId);
+          if (!nextJob) return;
+          nextJob.status = "canceled";
+          nextJob.apiStatus = "canceled";
+          nextJob.cancelRequested = false;
+          nextJob.canceledAt = new Date().toISOString();
+          nextJob.progress = "Canceled after the last safe checkpoint.";
+          appendJobLog(nextJob, "canceled", "Cooper stopped at a safe checkpoint. No additional model step will run.");
+          nextJob.updatedAt = new Date().toISOString();
+        });
+        break;
+      }
+
+      if (job.pauseRequested || job.status === "pausing") {
+        await updateDb((nextDb) => {
+          const nextJob = nextDb.jobs.find((item) => item.id === jobId);
+          if (!nextJob) return;
+          nextJob.status = "paused";
+          nextJob.apiStatus = "paused";
+          nextJob.pauseRequested = false;
+          nextJob.pausedAt = new Date().toISOString();
+          nextJob.progress = `Paused before step ${Number(nextJob.stepIndex || 0) + 1}.`;
+          appendJobLog(nextJob, "paused", "Cooper paused at a safe checkpoint. Resume will continue from the saved draft.");
+          nextJob.updatedAt = new Date().toISOString();
+        });
+        break;
+      }
+
+      if (["paused", "canceled"].includes(job.status)) break;
+
       if (job.stepIndex >= recipe.steps.length) {
         await completeArtifact(job, call);
         break;
@@ -1979,6 +2637,7 @@ async function runJob(jobId) {
         if (!nextJob) return;
         const stepSummary = summarizeStep(recipe.steps[nextJob.stepIndex]);
         nextJob.attempts = attempt;
+        nextJob.pipelineStage = pipelineStageForJob(nextJob, recipe);
         nextJob.progress = `Running step ${nextJob.stepIndex + 1} of ${nextJob.stepCount}.`;
         nextJob.apiStatus = "preparing_request";
         nextJob.activeStepSummary = stepSummary;
@@ -2045,6 +2704,7 @@ async function runJob(jobId) {
           `OpenAI response received in ${formatRetryDelay(responseResult.durationMs)} with ${output.length.toLocaleString()} characters${responseResult.usage ? `, ${responseResult.usage.totalTokens.toLocaleString()} tokens, $${responseResult.usage.costUsd.toFixed(4)}` : ""}.`
         );
         nextJob.stepIndex += 1;
+        nextJob.pipelineStage = pipelineStageForJob(nextJob, recipe);
         nextJob.apiStatus = nextJob.stepIndex >= nextJob.stepCount ? "finalizing" : "waiting_between_steps";
         nextJob.progress = nextJob.stepIndex >= nextJob.stepCount ? "Finalizing artifact file." : `Waiting before step ${nextJob.stepIndex + 1}.`;
         appendJobLog(
@@ -2068,6 +2728,11 @@ async function runJob(jobId) {
     await updateDb((db) => {
       const job = db.jobs.find((item) => item.id === jobId);
       if (job) {
+        if (["paused", "pausing", "canceled", "canceling"].includes(job.status)) {
+          appendJobLog(job, "checkpoint", `Worker stopped while the job was ${job.status}.`);
+          job.updatedAt = new Date().toISOString();
+          return;
+        }
         job.error = error.message;
         job.failures = Number(job.failures || 0) + 1;
         if (error.retryable && Number(job.failures || 0) < Number(job.maxAttempts || jobMaxAttempts)) {
@@ -2099,9 +2764,100 @@ async function completeArtifact(job, call) {
   const outputType = recipe.outputType || "markdown";
   const extension = defaultArtifactExtension(outputType);
   const mimeType = defaultArtifactMimeType(outputType);
-  const sourceContent = outputType === "html"
+  let sourceContent = outputType === "html"
     ? normalizeHtml(extractHtmlDocument(job.draft) || prototypeFallbackHtml(safeTitle, job.draft))
     : normalizeMarkdown(`# ${safeTitle}\n\n${job.draft}`);
+
+  await updateDb((db) => {
+    const nextJob = db.jobs.find((item) => item.id === job.id);
+    if (!nextJob) return;
+    nextJob.pipelineStage = "validate";
+    nextJob.apiStatus = "validating";
+    nextJob.progress = "Running artifact quality checks.";
+    appendJobLog(nextJob, "quality_check", "Cooper is checking structure, source lineage, completeness, and output safety.");
+    nextJob.updatedAt = new Date().toISOString();
+  });
+
+  let quality = qualityReportForArtifact({
+    kind: job.kind,
+    outputType,
+    content: sourceContent,
+    sourceManifest: job.sourceManifest,
+    minimumScore: jobQualityMinimumScore
+  });
+
+  let repairAttempts = Number(job.qualityRepairAttempts || 0);
+  while (
+    jobQualityGateEnabled
+    && quality.status === "needs_review"
+    && quality.repairable
+    && repairAttempts < jobQualityRepairAttempts
+  ) {
+    repairAttempts += 1;
+    await updateDb((db) => {
+      const nextJob = db.jobs.find((item) => item.id === job.id);
+      if (!nextJob) return;
+      nextJob.apiStatus = "repairing";
+      nextJob.quality = quality;
+      nextJob.qualityRepairAttempts = repairAttempts;
+      nextJob.progress = `Repairing quality issues (${repairAttempts}/${jobQualityRepairAttempts}).`;
+      appendJobLog(nextJob, "quality_repair", quality.summary);
+      nextJob.updatedAt = new Date().toISOString();
+    });
+
+    const repairInstruction = qualityRepairInstruction(quality, { kind: job.kind, outputType });
+    const repairResult = await createResponse([{
+      role: "user",
+      content: [{
+        type: "input_text",
+        text: `${repairInstruction}\n\nCurrent artifact:\n${sourceContent}`
+      }]
+    }], {
+      attempt: Math.max(1, Number(job.attempts || 1)),
+      outputType,
+      maxOutputTokens: outputTokenBudget(recipe)
+    });
+    const repairedContent = outputType === "html"
+      ? extractHtmlDocument(repairResult.output)
+      : repairResult.output;
+    if (cleanText(repairedContent)) {
+      sourceContent = outputType === "html"
+        ? normalizeHtml(repairedContent)
+        : normalizeMarkdown(repairedContent);
+    }
+    quality = qualityReportForArtifact({
+      kind: job.kind,
+      outputType,
+      content: sourceContent,
+      sourceManifest: job.sourceManifest,
+      minimumScore: jobQualityMinimumScore
+    });
+
+    await updateDb((db) => {
+      const nextJob = db.jobs.find((item) => item.id === job.id);
+      if (!nextJob) return;
+      nextJob.draft = [
+        nextJob.draft,
+        `\n\n<!-- Cooper quality repair ${repairAttempts}: ${new Date().toISOString()} -->\n\n${repairResult.output}`
+      ].join("").trim();
+      nextJob.draftCharCount = nextJob.draft.length;
+      nextJob.quality = quality;
+      nextJob.qualityRepairAttempts = repairAttempts;
+      if (repairResult.usage) {
+        nextJob.responseUsage = addResponsesApiUsage(nextJob.responseUsage, repairResult.usage, {
+          model: repairResult.model,
+          at: repairResult.completedAt
+        });
+        nextJob.outputTokens = nextJob.responseUsage.outputTokens;
+        nextJob.costUsd = nextJob.responseUsage.costUsd;
+      }
+      appendJobLog(nextJob, "quality_result", quality.summary);
+      nextJob.updatedAt = new Date().toISOString();
+    });
+  }
+
+  const prePublishDb = await readDb();
+  const version = nextArtifactVersion(prePublishDb.artifacts, job);
   const content = outputType === "pdf"
     ? await renderArtifactPdf({ title: safeTitle, content: sourceContent, createdAt: now })
     : outputType === "docx"
@@ -2131,6 +2887,11 @@ async function completeArtifact(job, call) {
       requirementsRunId: job.requirementsRunId || null,
       templateId: job.templateId || null,
       requirementsStage: job.requirementsStage || null,
+      pipelineId: job.pipelineId || job.id,
+      version,
+      supersedesArtifactId: job.supersedesArtifactId || null,
+      sourceManifest: job.sourceManifest || null,
+      quality,
       outputType,
       extension,
       mimeType,
@@ -2139,15 +2900,22 @@ async function completeArtifact(job, call) {
     };
 
     db.artifacts.push(artifact);
+    if (artifact.supersedesArtifactId) {
+      const previousArtifact = db.artifacts.find((item) => item.id === artifact.supersedesArtifactId);
+      if (previousArtifact) previousArtifact.supersededByArtifactId = artifact.id;
+    }
     if (nextJob) {
       nextJob.status = "completed";
       nextJob.apiStatus = "completed";
+      nextJob.pipelineStage = "publish";
       nextJob.artifactId = artifactId;
+      nextJob.quality = quality;
+      nextJob.qualityRepairAttempts = repairAttempts;
       nextJob.completedAt = now;
-      nextJob.progress = "Artifact ready.";
+      nextJob.progress = quality.status === "passed" ? "Artifact ready and quality checked." : "Artifact ready with quality warnings.";
       nextJob.activeStepSummary = "";
       nextJob.draftCharCount = nextJob.draft?.length || 0;
-      appendJobLog(nextJob, "completed", `${artifactOutputLabel(outputType)} saved: ${safeTitle}.`);
+      appendJobLog(nextJob, "published", `${artifactOutputLabel(outputType)} version ${version} saved: ${safeTitle}. ${quality.summary}`);
       nextJob.updatedAt = now;
     }
     if (nextCall) {
@@ -2424,6 +3192,11 @@ Source priority:
 - If Michael provided an additional instruction or pasted source context, treat it as the primary source of truth for this artifact.
 - Use the transcript and attached session evidence only as supporting context.
 - If the sources conflict, follow Michael's additional instruction or pasted source context.
+- Never invent owners, dates, metrics, customer claims, ticket state, code behavior, or approvals. Mark consequential gaps as assumptions or open questions.
+- Preserve decisions and vivid source phrases, but do not expose private model reasoning.
+
+Captured source manifest:
+${JSON.stringify(job.sourceManifest || {}, null, 2)}
 
 Primary instruction/source context from Michael:
 ${job.customPrompt || "(none)"}
@@ -2475,6 +3248,10 @@ async function executeCooperTool(name, args, context = {}) {
 
   if (name === "create_canvas_artifact") {
     return executeCanvasArtifactTool(args, context);
+  }
+
+  if (name === "create_document_artifact") {
+    return executeDocumentArtifactTool(args, context);
   }
 
   if (name === "render_mcp_app") {
@@ -2613,6 +3390,56 @@ async function executeCanvasArtifactTool(args, context = {}) {
     title: result.job.title,
     jobId: result.job.id,
     message: `${result.job.title} is running in Cooper's canvas.`
+  };
+}
+
+async function executeDocumentArtifactTool(args, context = {}) {
+  const callId = cleanText(context.callId);
+  const requestedKind = cleanText(args.kind);
+  const kind = artifactRecipes[requestedKind] ? requestedKind : "post_call_kit";
+  const title = cleanText(args.title);
+  const instruction = cleanText(args.instruction);
+  const supportingContext = cleanText(args.context);
+  const priority = cleanText(args.priority) || "normal";
+
+  if (!callId) {
+    return {
+      status: "error",
+      tool: "create_document_artifact",
+      message: "No active session is available for the document pipeline.",
+      retryable: false
+    };
+  }
+
+  const customPrompt = [
+    instruction ? `Document outcome requested by Michael:\n${instruction}` : "",
+    supportingContext ? `Priority source context:\n${supportingContext}` : ""
+  ].filter(Boolean).join("\n\n");
+  const result = await enqueueArtifactJob(callId, kind, customPrompt, {
+    allowEmptyTranscript: Boolean(customPrompt),
+    title,
+    priority,
+    workstream: "document_pipeline"
+  });
+
+  if (!result.ok) {
+    return {
+      status: "error",
+      tool: "create_document_artifact",
+      message: result.error || "Could not queue document generation.",
+      retryable: false
+    };
+  }
+
+  return {
+    status: "queued",
+    tool: "create_document_artifact",
+    kind,
+    title: result.job.title,
+    jobId: result.job.id,
+    pipeline: DOCUMENT_PIPELINE_STAGES,
+    message: `${result.job.title} is running in Cooper's document pipeline.`,
+    voice_summary: `I started ${result.job.title}. Capture, generation, quality validation, and publishing will continue in the background while we talk.`
   };
 }
 
@@ -4497,7 +5324,9 @@ function arcadeToolBaseName(value) {
 async function ensureDataStore() {
   await mkdir(artifactsDir, { recursive: true });
   if (!existsSync(dbPath)) {
-    await writeFile(dbPath, JSON.stringify({ calls: [], artifacts: [], jobs: [], toolCalls: [], gstackRuns: [], arcadeAuthorizations: [], projects: [], projectSources: [], contextPackets: [], operatorTasks: [], dailyBriefs: [], mobilePushDevices: [], mobilePushEvents: [] }, null, 2), "utf8");
+    const initial = { calls: [], artifacts: [], jobs: [], toolCalls: [], gstackRuns: [], arcadeAuthorizations: [], projects: [], projectSources: [], contextPackets: [], operatorTasks: [], dailyBriefs: [], mobilePushDevices: [], mobilePushEvents: [] };
+    hydrateKnowledgeState(initial);
+    await writeFile(dbPath, JSON.stringify(initial, null, 2), "utf8");
   }
 }
 
@@ -4510,7 +5339,8 @@ async function readDbRaw() {
   await ensureDataStore();
   const raw = await readFile(dbPath, "utf8");
   const parsed = JSON.parse(raw || "{}");
-  return {
+  const needsKnowledgeMigration = !Array.isArray(parsed.knowledgeDocuments) || !Array.isArray(parsed.knowledgeVersions);
+  const db = {
     calls: Array.isArray(parsed.calls) ? parsed.calls : [],
     artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
     jobs: Array.isArray(parsed.jobs) ? parsed.jobs : [],
@@ -4523,8 +5353,17 @@ async function readDbRaw() {
     operatorTasks: Array.isArray(parsed.operatorTasks) ? parsed.operatorTasks : [],
     dailyBriefs: Array.isArray(parsed.dailyBriefs) ? parsed.dailyBriefs : [],
     mobilePushDevices: Array.isArray(parsed.mobilePushDevices) ? parsed.mobilePushDevices : [],
-    mobilePushEvents: Array.isArray(parsed.mobilePushEvents) ? parsed.mobilePushEvents : []
+    mobilePushEvents: Array.isArray(parsed.mobilePushEvents) ? parsed.mobilePushEvents : [],
+    knowledgeDocuments: Array.isArray(parsed.knowledgeDocuments) ? parsed.knowledgeDocuments : [],
+    knowledgeVersions: Array.isArray(parsed.knowledgeVersions) ? parsed.knowledgeVersions : [],
+    knowledgeSessions: Array.isArray(parsed.knowledgeSessions) ? parsed.knowledgeSessions : [],
+    knowledgeMessages: Array.isArray(parsed.knowledgeMessages) ? parsed.knowledgeMessages : [],
+    knowledgeIndexRecords: Array.isArray(parsed.knowledgeIndexRecords) ? parsed.knowledgeIndexRecords : [],
+    knowledgeConfig: parsed.knowledgeConfig && typeof parsed.knowledgeConfig === "object" ? parsed.knowledgeConfig : {}
   };
+  hydrateKnowledgeState(db);
+  if (needsKnowledgeMigration) await writeFile(dbPath, JSON.stringify(db, null, 2), "utf8");
+  return db;
 }
 
 async function updateDb(mutator) {
@@ -4566,7 +5405,8 @@ function publicState(db) {
       kind,
       title: recipe.title,
       outputType: recipe.outputType || "markdown",
-      stepCount: recipe.steps.length
+      stepCount: recipe.steps.length,
+      pipeline: DOCUMENT_PIPELINE_STAGES
     })),
     limits: {
       jobDelayMs,
@@ -4574,6 +5414,9 @@ function publicState(db) {
       fallbackWorkModel,
       jobMaxAttempts,
       jobMaxOutputTokens,
+      jobQualityGateEnabled,
+      jobQualityMinimumScore,
+      jobQualityRepairAttempts,
       gstackModel: process.env.COOPER_GSTACK_MODEL || workModel,
       gstackMaxOutputTokens: Number(process.env.COOPER_GSTACK_MAX_OUTPUT_TOKENS || 2200)
     }
@@ -4648,8 +5491,17 @@ function publicMobilePushEvent(event) {
 
 function publicOperatorState(db) {
   const tasks = sortByDate(db.operatorTasks || []).map((task) => publicOperatorTask(task, db));
+  const runtime = operatorRuntimeInfo(process.env);
   return {
-    runtime: operatorRuntimeInfo(process.env),
+    runtime: {
+      ...runtime,
+      codexConnection: {
+        connected: codexClient.connected,
+        transportMode: codexClient.transportMode,
+        durableDaemon: ["daemon-proxy", "detached-socket"].includes(codexClient.transportMode),
+        lastError: codexClient.lastError
+      }
+    },
     presets: OPERATOR_PRESETS,
     tasks,
     activeTask: tasks.find(isOperatorTaskActive) || tasks[0] || null,
@@ -4682,22 +5534,30 @@ async function addProjectSource(projectId, input) {
     const project = db.projects.find((item) => item.id === projectId);
     if (!project) return null;
 
-    const source = {
+    const externalId = cleanText(input.externalId);
+    const existing = externalId
+      ? db.projectSources.find((item) => item.projectId === projectId && item.externalId === externalId)
+      : null;
+    const source = existing || {
       id: randomUUID(),
       projectId,
+      createdAt: now,
+      updatedAt: now
+    };
+    Object.assign(source, {
       title: cleanText(input.title) || "Project context",
       sourceType: cleanText(input.sourceType) || "paste",
       mimeType: cleanText(input.mimeType),
       originalName: cleanText(input.originalName),
+      externalId,
       text: limited.text,
       charCount: content.length,
       storedCharCount: limited.text.length,
       truncated: limited.truncated,
-      createdAt: now,
       updatedAt: now
-    };
+    });
 
-    db.projectSources.push(source);
+    if (!existing) db.projectSources.push(source);
     project.updatedAt = now;
     for (const call of db.calls.filter((item) => item.status === "active" && item.projectId === projectId)) {
       syncCallProjectContext(db, call, now);
@@ -5112,6 +5972,7 @@ function sameTranscriptTurn(left, right) {
 function toolRiskLevel(name) {
   if (name === "create_followup_action") return "write";
   if (name === "create_canvas_artifact") return "advisory";
+  if (name === "create_document_artifact") return "advisory";
   if (name === "render_mcp_app") return "advisory";
   if (name === "present_aires_example") return "advisory";
   if (name === "generate_aires_template_artifact") return "advisory";
@@ -5138,6 +5999,7 @@ function toolLabel(name) {
     get_customer_context: "Customer context",
     inspect_engineering_context: "Engineering context",
     create_followup_action: "Follow-up actions",
+    create_document_artifact: "Document pipeline",
     render_mcp_app: "MCP App canvas",
     present_aires_example: "AIRES example canvas",
     generate_aires_template_artifact: "AIRES template generator",
@@ -5411,6 +6273,19 @@ function safeToolArguments(name, args) {
     };
   }
 
+  if (name === "create_document_artifact") {
+    const instruction = cleanText(args.instruction);
+    const context = cleanText(args.context);
+    return {
+      kind: cleanText(args.kind),
+      title: cleanText(args.title),
+      priority: cleanText(args.priority) || "normal",
+      instructionLength: instruction.length,
+      contextLength: context.length,
+      inputRedacted: containsSensitiveText(instruction) || containsSensitiveText(context)
+    };
+  }
+
   if (name === "render_mcp_app") {
     const html = cleanText(args.html);
     return {
@@ -5614,6 +6489,19 @@ function prototypeFallbackHtml(title, draft) {
 </html>`;
 }
 
+function knowledgeDocumentPatch(value = {}) {
+  const patch = {};
+  if (typeof value.title === "string") patch.title = value.title;
+  if (typeof value.html === "string") patch.html = value.html;
+  if (value.graph && typeof value.graph === "object") patch.graph = value.graph;
+  if (["document", "diagram"].includes(value.type)) patch.type = value.type;
+  if (["private", "session-only", "shared", "published", "archived"].includes(value.lifecycle)) patch.lifecycle = value.lifecycle;
+  if (["private", "team", "workspace"].includes(value.visibility)) patch.visibility = value.visibility;
+  if (typeof value.project === "string") patch.project = value.project;
+  if (typeof value.excerpt === "string") patch.excerpt = value.excerpt;
+  return patch;
+}
+
 function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -5766,7 +6654,7 @@ function clearOperatorTimer(taskId) {
 async function queueOperatorWorker() {
   const db = await readDb();
   for (const task of db.operatorTasks || []) {
-    if (["queued", "running"].includes(task.status)) {
+    if (task.status === "queued" || (task.status === "running" && task.skill !== "codex_app_server")) {
       scheduleOperatorTask(task.id, 350);
     }
   }
@@ -5862,7 +6750,429 @@ async function processMobilePushOutbox() {
   if (shouldRetry) scheduleMobilePushWorker(60000);
 }
 
+async function runCodexOperatorTask(taskId) {
+  if (codexTaskLaunches.has(taskId)) return codexTaskLaunches.get(taskId);
+  const launch = launchCodexOperatorTask(taskId).finally(() => {
+    codexTaskLaunches.delete(taskId);
+  });
+  codexTaskLaunches.set(taskId, launch);
+  return launch;
+}
+
+async function launchCodexOperatorTask(taskId) {
+  const db = await readDb();
+  const task = db.operatorTasks?.find((item) => item.id === taskId);
+  if (!task || !["queued", "running", "waiting_approval"].includes(task.status)) return;
+
+  const bridgeApproval = task.approvals?.find((approval) => approval.type === "local_bridge");
+  if (!bridgeApproval) {
+    await updateDb((nextDb) => {
+      const item = nextDb.operatorTasks?.find((candidate) => candidate.id === taskId);
+      if (!item || !["queued", "running"].includes(item.status)) return;
+      const now = new Date().toISOString();
+      const approval = createOperatorApproval({
+        type: "local_bridge",
+        title: "Start durable Codex session",
+        description: "Approve starting the persistent local Codex app-server. The Codex thread will survive Cooper restarts, and Cooper will reconnect to it when the app returns."
+      }, now);
+      item.status = "waiting_approval";
+      item.approvals.push(approval);
+      item.runtime = item.runtime || {};
+      item.runtime.adapter = "codex_app_server";
+      item.runtime.connectionStatus = "disconnected";
+      item.updatedAt = now;
+      item.logs.push(createOperatorLog("approval.required", approval.title, approval.description, now));
+    });
+    return;
+  }
+  if (bridgeApproval.status !== "approved") return;
+
+  if (task.runtime?.threadId) {
+    await reconcileCodexTask(taskId);
+    return;
+  }
+
+  const workspace = resolveCodexWorkspace(task.workspacePath || task.runtime?.cwd);
+  await mkdir(workspace, { recursive: true });
+  await updateDb((nextDb) => {
+    const item = nextDb.operatorTasks?.find((candidate) => candidate.id === taskId);
+    if (!item) return;
+    const now = new Date().toISOString();
+    item.status = "running";
+    item.startedAt = item.startedAt || now;
+    item.stepIndex = 1;
+    item.runtime = item.runtime || {};
+    Object.assign(item.runtime, {
+      adapter: "codex_app_server",
+      connectionStatus: "connecting",
+      cwd: workspace,
+      model: item.codexModel || "",
+      error: ""
+    });
+    item.updatedAt = now;
+    item.logs.push(createOperatorLog("codex.connecting", "Connecting to Codex", `Preparing a durable app-server session in ${workspace}.`, now));
+  });
+
+  try {
+    const threadResponse = await codexClient.startThread({
+      cwd: workspace,
+      name: task.title,
+      model: task.codexModel || undefined
+    });
+    const threadId = cleanText(threadResponse?.thread?.id);
+    if (!threadId) throw new Error("Codex did not return a thread ID.");
+
+    await updateDb((nextDb) => {
+      const item = nextDb.operatorTasks?.find((candidate) => candidate.id === taskId);
+      if (!item) return;
+      const now = new Date().toISOString();
+      item.runtime = item.runtime || {};
+      Object.assign(item.runtime, {
+        threadId,
+        transportMode: codexClient.transportMode,
+        connectionStatus: "connected",
+        threadStatus: threadResponse.thread?.status?.type || "idle",
+        cwd: workspace,
+        model: cleanText(threadResponse?.model || item.codexModel),
+        lastEventAt: now,
+        error: ""
+      });
+      item.codexInvocations = Number(item.codexInvocations || 0) + 1;
+      item.updatedAt = now;
+      item.logs.push(createOperatorLog("codex.thread.started", "Codex thread started", `Thread ${threadId} is persisted by the local Codex runtime.`, now));
+    });
+
+    const turnResponse = await codexClient.startTurn(threadId, codexTaskPrompt(task, workspace), {
+      cwd: workspace,
+      model: task.codexModel || undefined
+    });
+    const turnId = cleanText(turnResponse?.turn?.id);
+    await updateDb((nextDb) => {
+      const item = nextDb.operatorTasks?.find((candidate) => candidate.id === taskId);
+      if (!item) return;
+      const now = new Date().toISOString();
+      item.status = "running";
+      item.stepIndex = 2;
+      item.runtime = item.runtime || {};
+      Object.assign(item.runtime, {
+        turnId,
+        threadStatus: "active",
+        connectionStatus: "connected",
+        transportMode: codexClient.transportMode,
+        lastEventAt: now
+      });
+      item.updatedAt = now;
+      item.logs.push(createOperatorLog("codex.turn.started", "Codex work started", `Turn ${turnId || "started"}. Cooper will keep this thread address across restarts.`, now));
+    });
+  } catch (error) {
+    await updateDb((nextDb) => {
+      const item = nextDb.operatorTasks?.find((candidate) => candidate.id === taskId);
+      if (!item) return;
+      const now = new Date().toISOString();
+      item.status = "failed";
+      item.error = cleanText(error.message) || "Codex app-server failed.";
+      item.runtime = item.runtime || {};
+      item.runtime.connectionStatus = "disconnected";
+      item.runtime.error = item.error;
+      item.updatedAt = now;
+      item.logs.push(createOperatorLog("codex.failed", "Codex session failed", item.error, now));
+    });
+  }
+}
+
+async function reconcileCodexTask(taskId) {
+  const db = await readDb();
+  const task = db.operatorTasks?.find((item) => item.id === taskId);
+  const threadId = cleanText(task?.runtime?.threadId);
+  if (!task || !threadId) return;
+
+  await updateDb((nextDb) => {
+    const item = nextDb.operatorTasks?.find((candidate) => candidate.id === taskId);
+    if (!item) return;
+    item.runtime = item.runtime || {};
+    item.runtime.connectionStatus = "reconnecting";
+    item.updatedAt = new Date().toISOString();
+  });
+
+  try {
+    const response = await codexClient.resumeThread(threadId, { includeTurns: true });
+    const thread = response?.thread || {};
+    const reconciledStatus = codexTaskStatusFromThread(thread);
+    const turns = Array.isArray(thread.turns) ? thread.turns : [];
+    const lastTurn = turns[turns.length - 1] || null;
+    const lastMessage = latestCodexAgentMessage(thread);
+    await updateDb((nextDb) => {
+      const item = nextDb.operatorTasks?.find((candidate) => candidate.id === taskId);
+      if (!item) return;
+      const now = new Date().toISOString();
+      const hasPendingApproval = item.approvals?.some((approval) => approval.status === "pending" && approval.runtimeMethod);
+      item.status = hasPendingApproval ? "waiting_approval" : reconciledStatus;
+      item.runtime = item.runtime || {};
+      Object.assign(item.runtime, {
+        transportMode: codexClient.transportMode,
+        connectionStatus: "connected",
+        threadStatus: thread.status?.type || "idle",
+        turnId: cleanText(lastTurn?.id || item.runtime.turnId),
+        model: cleanText(response?.model || item.runtime.model),
+        lastMessage: cleanText(lastMessage || item.runtime.lastMessage),
+        lastReconciledAt: now,
+        lastEventAt: now,
+        error: ""
+      });
+      item.updatedAt = now;
+      if (reconciledStatus === "completed") {
+        completeCodexTaskRecord(item, lastMessage, now);
+      } else if (reconciledStatus === "failed") {
+        item.error = cleanText(lastTurn?.error?.message) || "The Codex turn failed.";
+      }
+      item.logs.push(createOperatorLog("codex.reconnected", "Codex session reconnected", `Recovered thread ${threadId} with status ${item.status}.`, now));
+      item.logs = item.logs.slice(-200);
+    });
+  } catch (error) {
+    await updateDb((nextDb) => {
+      const item = nextDb.operatorTasks?.find((candidate) => candidate.id === taskId);
+      if (!item) return;
+      const now = new Date().toISOString();
+      item.runtime = item.runtime || {};
+      item.runtime.connectionStatus = "disconnected";
+      item.runtime.error = cleanText(error.message);
+      item.updatedAt = now;
+      item.logs.push(createOperatorLog("codex.reconnect_failed", "Codex reconnect pending", error.message, now));
+      item.logs = item.logs.slice(-200);
+    });
+  }
+}
+
+async function reconnectCodexTasks() {
+  if (codexReconnectPromise) return codexReconnectPromise;
+  codexReconnectPromise = (async () => {
+    const db = await readDb();
+    const taskIds = (db.operatorTasks || [])
+      .filter((task) => task.skill === "codex_app_server" && task.runtime?.threadId && isOperatorTaskActive(task))
+      .map((task) => task.id);
+    for (const taskId of taskIds) await reconcileCodexTask(taskId);
+  })().finally(() => {
+    codexReconnectPromise = null;
+  });
+  return codexReconnectPromise;
+}
+
+function scheduleCodexReconnect(delayMs = 5000) {
+  if (codexReconnectTimer) return;
+  codexReconnectTimer = setTimeout(async () => {
+    codexReconnectTimer = null;
+    const db = await readDb().catch(() => null);
+    const needsReconnect = (db?.operatorTasks || []).some((task) => (
+      task.skill === "codex_app_server" &&
+      task.runtime?.threadId &&
+      task.runtime?.connectionStatus !== "connected" &&
+      isOperatorTaskActive(task)
+    ));
+    if (!needsReconnect) return;
+
+    await reconnectCodexTasks().catch((error) => {
+      console.warn("Codex reconnect attempt failed:", error.message);
+    });
+    const refreshed = await readDb().catch(() => null);
+    const stillDisconnected = (refreshed?.operatorTasks || []).some((task) => (
+      task.skill === "codex_app_server" &&
+      task.runtime?.threadId &&
+      task.runtime?.connectionStatus !== "connected" &&
+      isOperatorTaskActive(task)
+    ));
+    if (stillDisconnected) scheduleCodexReconnect(Math.min(Math.max(delayMs * 2, 5000), 30000));
+  }, Math.max(0, delayMs));
+  codexReconnectTimer.unref?.();
+}
+
+async function handleCodexServerRequest(message) {
+  const mapped = codexApprovalFromServerRequest(message);
+  if (!mapped) return;
+  await updateDb((db) => {
+    const task = (db.operatorTasks || []).find((item) => item.runtime?.threadId === mapped.runtimePayload?.threadId);
+    if (!task) return;
+    const now = new Date().toISOString();
+    const itemId = cleanText(mapped.runtimePayload?.itemId);
+    const existing = task.approvals?.find((approval) => (
+      approval.status === "pending" &&
+      approval.runtimeMethod === mapped.runtimeMethod &&
+      cleanText(approval.runtimePayload?.itemId) === itemId
+    ));
+    if (existing) {
+      existing.runtimeRequestId = mapped.runtimeRequestId;
+      existing.runtimePayload = mapped.runtimePayload;
+      existing.description = mapped.description;
+      existing.requestedAt = now;
+    } else {
+      task.approvals.push(createOperatorApproval(mapped, now));
+    }
+    task.status = "waiting_approval";
+    task.runtime.turnId = cleanText(mapped.runtimePayload?.turnId || task.runtime.turnId);
+    task.runtime.lastEventAt = now;
+    task.updatedAt = now;
+    task.logs.push(createOperatorLog("codex.approval.required", mapped.title, mapped.description, now));
+    task.logs = task.logs.slice(-200);
+  });
+}
+
+async function handleCodexNotification(message) {
+  const method = cleanText(message?.method);
+  const params = message?.params || {};
+  const threadId = cleanText(params.threadId);
+  if (!threadId) return;
+  if (!["thread/status/changed", "turn/started", "turn/completed", "item/started", "item/completed", "error"].includes(method)) return;
+
+  await updateDb((db) => {
+    const task = (db.operatorTasks || []).find((item) => item.runtime?.threadId === threadId);
+    if (!task) return;
+    const now = new Date().toISOString();
+    task.runtime = task.runtime || {};
+    task.runtime.connectionStatus = "connected";
+    task.runtime.transportMode = codexClient.transportMode;
+    task.runtime.lastEventAt = now;
+    task.updatedAt = now;
+
+    if (method === "thread/status/changed") {
+      task.runtime.threadStatus = cleanText(params.status?.type);
+      return;
+    }
+    if (method === "turn/started") {
+      task.status = "running";
+      task.runtime.turnId = cleanText(params.turn?.id);
+      task.runtime.threadStatus = "active";
+      task.logs.push(createOperatorLog("codex.turn.started", "Codex turn started", `Turn ${task.runtime.turnId || "active"}.`, now));
+    }
+    if (method === "item/started") {
+      const item = params.item || {};
+      const summary = codexItemSummary(item, true);
+      if (summary) task.logs.push(createOperatorLog(`codex.${item.type}.started`, summary.title, summary.detail, now));
+    }
+    if (method === "item/completed") {
+      const item = params.item || {};
+      const summary = codexItemSummary(item, false);
+      if (summary) task.logs.push(createOperatorLog(`codex.${item.type}.completed`, summary.title, summary.detail, now));
+      if (item.type === "agentMessage" && item.text) task.runtime.lastMessage = cleanText(item.text);
+    }
+    if (method === "turn/completed") {
+      const turn = params.turn || {};
+      task.runtime.turnId = cleanText(turn.id || task.runtime.turnId);
+      task.runtime.threadStatus = "idle";
+      if (turn.status === "completed") {
+        const finalMessage = latestCodexAgentMessage({ turns: [turn] }) || task.runtime.lastMessage;
+        completeCodexTaskRecord(task, finalMessage, now);
+      } else if (turn.status === "interrupted") {
+        if (!['cancelled', 'stopped'].includes(task.status)) task.status = "cancelled";
+        task.stoppedAt = task.stoppedAt || now;
+        task.logs.push(createOperatorLog("codex.turn.interrupted", "Codex turn interrupted", `Turn ${task.runtime.turnId} stopped safely.`, now));
+      } else if (turn.status === "failed") {
+        task.status = "failed";
+        task.error = cleanText(turn.error?.message) || "The Codex turn failed.";
+        task.logs.push(createOperatorLog("codex.turn.failed", "Codex turn failed", task.error, now));
+      }
+    }
+    task.logs = task.logs.slice(-200);
+  });
+}
+
+async function markCodexTasksDisconnected(error) {
+  const db = await readDb();
+  if (!(db.operatorTasks || []).some((task) => task.skill === "codex_app_server" && isOperatorTaskActive(task))) return;
+  await updateDb((nextDb) => {
+    const now = new Date().toISOString();
+    (nextDb.operatorTasks || [])
+      .filter((task) => task.skill === "codex_app_server" && isOperatorTaskActive(task))
+      .forEach((task) => {
+        task.runtime = task.runtime || {};
+        if (task.runtime.connectionStatus !== "reconnecting") {
+          task.logs.push(createOperatorLog("codex.disconnected", "Codex connection interrupted", "The durable thread remains addressable; Cooper will reconnect automatically.", now));
+        }
+        task.runtime.connectionStatus = "reconnecting";
+        task.runtime.error = cleanText(error);
+        task.updatedAt = now;
+        task.logs = task.logs.slice(-200);
+      });
+  });
+}
+
+async function interruptCodexTask(task) {
+  const threadId = cleanText(task?.runtime?.threadId);
+  const turnId = cleanText(task?.runtime?.turnId);
+  if (!threadId || !turnId) return;
+  await codexClient.connect();
+  await codexClient.resumeThread(threadId, { includeTurns: false }).catch(() => null);
+  await codexClient.interruptTurn(threadId, turnId);
+}
+
+function completeCodexTaskRecord(task, finalMessage, now) {
+  task.status = "completed";
+  task.stepIndex = task.steps?.length || 5;
+  task.completedAt = task.completedAt || now;
+  task.error = "";
+  task.runtime.lastMessage = cleanText(finalMessage || task.runtime.lastMessage);
+  const hasSummary = task.artifacts?.some((artifact) => artifact.type === "codex_summary");
+  if (!hasSummary && task.runtime.lastMessage) {
+    task.artifacts.push(createOperatorArtifact({
+      type: "codex_summary",
+      title: `${task.title} · Codex result`,
+      content: task.runtime.lastMessage
+    }, now));
+  }
+  task.logs.push(createOperatorLog("codex.turn.completed", "Codex task completed", task.runtime.lastMessage || "The Codex turn completed.", now));
+}
+
+function codexItemSummary(item, starting) {
+  if (item.type === "commandExecution") {
+    return {
+      title: starting ? "Command started" : `Command ${item.status || "completed"}`,
+      detail: limitCodexText([item.command, item.aggregatedOutput].filter(Boolean).join(" · "), 700)
+    };
+  }
+  if (item.type === "fileChange") {
+    const paths = (item.changes || []).map((change) => change.path).filter(Boolean).join(", ");
+    return { title: starting ? "File change started" : "File change completed", detail: limitCodexText(paths || item.status, 700) };
+  }
+  if (item.type === "mcpToolCall") {
+    return { title: `${item.server || "MCP"} · ${item.tool || "tool"}`, detail: item.status || (starting ? "started" : "completed") };
+  }
+  if (!starting && item.type === "agentMessage") {
+    return { title: "Codex update", detail: limitCodexText(item.text, 700) };
+  }
+  if (!starting && item.type === "plan") {
+    return { title: "Codex plan updated", detail: limitCodexText(item.text, 700) };
+  }
+  return null;
+}
+
+function codexTaskPrompt(task, workspace) {
+  return [
+    task.goal,
+    "",
+    `Work in: ${workspace}`,
+    "",
+    "Complete the requested outcome end to end. Keep progress observable through plans, tool calls, command output, and a concise final summary. Ask for approval through the Codex approval system before any action that crosses the configured sandbox or approval policy. Do not push, publish, deploy, send external messages, or perform destructive actions without explicit user approval. Verify the result proportionally before finishing."
+  ].join("\n");
+}
+
+function resolveCodexWorkspace(value) {
+  const configured = cleanText(value || process.env.COOPER_OPERATOR_WORKSPACE || process.cwd());
+  if (configured === "~") return homedir();
+  if (configured.startsWith("~/")) return resolve(homedir(), configured.slice(2));
+  return resolve(configured);
+}
+
+function limitCodexText(value, max = 700) {
+  const text = cleanText(value);
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+}
+
 async function runOperatorTaskStep(taskId) {
+  const snapshot = await readDb();
+  const snapshotTask = snapshot.operatorTasks?.find((item) => item.id === taskId);
+  if (snapshotTask?.skill === "codex_app_server") {
+    await runCodexOperatorTask(taskId);
+    return;
+  }
+
   const result = await updateDb(async (db) => {
     const task = db.operatorTasks?.find((item) => item.id === taskId);
     if (!task || !["queued", "running"].includes(task.status)) {
@@ -6415,6 +7725,9 @@ await updateDb((db) => {
     artifact.extension = artifact.extension || defaultArtifactExtension(artifact.outputType);
     artifact.mimeType = artifact.mimeType || defaultArtifactMimeType(artifact.outputType);
     artifact.file = artifact.file || `data/artifacts/${artifact.id}.${artifact.extension}`;
+    artifact.version = Math.max(1, Number(artifact.version || 1));
+    artifact.quality = artifact.quality || null;
+    artifact.sourceManifest = artifact.sourceManifest || null;
   });
   db.jobs.forEach((job) => {
     const recipe = artifactRecipes[job.kind] || {};
@@ -6425,6 +7738,27 @@ await updateDb((db) => {
     job.outputTokens = Number(job.outputTokens || job.responseUsage?.outputTokens || 0);
     job.costUsd = Number(job.costUsd || job.responseUsage?.costUsd || 0);
     job.reasoningEffort = cleanText(job.reasoningEffort) || "medium";
+    job.priority = normalizeJobPriority(job.priority);
+    job.pipelineId = cleanText(job.pipelineId) || cleanText(job.requirementsRunId) || job.id;
+    job.pipeline = DOCUMENT_PIPELINE_STAGES;
+    job.pipelineStage = cleanText(job.pipelineStage) || pipelineStageForJob(job, recipe);
+    job.sourceManifest = job.sourceManifest || {
+      capturedAt: job.createdAt || new Date().toISOString(),
+      callId: job.callId,
+      transcriptTurnCount: 0,
+      contextPacketIds: [],
+      contextSourceCount: 0,
+      instructionCharCount: cleanText(job.customPrompt).length
+    };
+    job.quality = job.quality || {
+      status: job.status === "completed" ? "not_scored" : "pending",
+      score: 0,
+      minimumScore: jobQualityMinimumScore,
+      checks: [],
+      warnings: [],
+      summary: job.status === "completed" ? "Created before document quality scoring was enabled." : "Quality validation has not run yet."
+    };
+    job.qualityRepairAttempts = Number(job.qualityRepairAttempts || 0);
     job.apiStatus = cleanText(job.apiStatus) || (job.status === "completed" ? "completed" : job.status === "failed" ? "failed" : "queued");
     job.activeStepSummary = cleanText(job.activeStepSummary);
     job.lastActivityAt = job.lastActivityAt || job.updatedAt || job.createdAt || new Date().toISOString();
@@ -6432,16 +7766,39 @@ await updateDb((db) => {
     if (!Array.isArray(job.logs) || job.logs.length === 0) {
       appendJobLog(job, job.status || "state", `Recovered existing ${job.title || "job"} in ${job.status || "unknown"} state.`);
     }
-    if (job.status === "running") {
+    if (["running", "validating", "repairing"].includes(job.status) || ["validating", "repairing"].includes(job.apiStatus)) {
       job.status = "queued";
       job.apiStatus = "queued";
       job.progress = "Recovered after restart.";
       appendJobLog(job, "recovered", "Server restarted while this job was running. Cooper queued it again.");
       job.updatedAt = new Date().toISOString();
+    } else if (job.status === "pausing") {
+      job.status = "paused";
+      job.apiStatus = "paused";
+      job.pauseRequested = false;
+      job.progress = "Paused safely after restart.";
+      appendJobLog(job, "recovered", "Server restarted while a pause was pending. The job is now paused safely.");
+    } else if (job.status === "canceling") {
+      job.status = "canceled";
+      job.apiStatus = "canceled";
+      job.cancelRequested = false;
+      job.progress = "Canceled safely after restart.";
+      appendJobLog(job, "recovered", "Server restarted while canceling. No additional model step will run.");
     }
   });
   db.operatorTasks = db.operatorTasks.map((task) => {
     const hydrated = hydrateOperatorTask(task);
+    if (hydrated.skill === "codex_app_server" && hydrated.runtime.threadId) {
+      hydrated.runtime.connectionStatus = isOperatorTaskActive(hydrated) ? "reconnecting" : "disconnected";
+      if (isOperatorTaskActive(hydrated)) {
+        hydrated.approvals.forEach((approval) => {
+          if (approval.status === "pending" && approval.runtimeMethod) approval.runtimeRequestId = null;
+        });
+        hydrated.logs.push(createOperatorLog("recovered", "Recovering durable Codex session", `Cooper will reconnect to thread ${hydrated.runtime.threadId}.`, new Date().toISOString()));
+        hydrated.updatedAt = new Date().toISOString();
+        return hydrated;
+      }
+    }
     if (hydrated.status === "running") {
       hydrated.status = "queued";
       hydrated.logs.push(createOperatorLog("recovered", "Task recovered after restart", "Server restarted while this local Operator task was running. It was queued safely.", new Date().toISOString()));
@@ -6452,6 +7809,8 @@ await updateDb((db) => {
 });
 queueWorker();
 await queueOperatorWorker();
+await reconnectCodexTasks();
+scheduleCodexReconnect();
 scheduleMobilePushWorker(500);
 
 if (isProduction) {

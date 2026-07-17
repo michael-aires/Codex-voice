@@ -49,3 +49,22 @@ test("host renderer creates a readable multi-page PDF binary", async () => {
     await parser.destroy();
   }
 });
+
+test("PDF renderer can label a Knowledge Studio document export", async () => {
+  const buffer = await renderArtifactPdf({
+    title: "Customer onboarding principles",
+    content: "# Start with the customer\n\nBuild the plan around the outcome they need.",
+    createdAt: "2026-07-16T07:30:00Z",
+    label: "KNOWLEDGE DOCUMENT",
+    subject: "Exported Cooper knowledge document"
+  });
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const result = await parser.getText();
+    assert.match(result.text, /KNOWLEDGE DOCUMENT/);
+    assert.match(result.text, /Customer onboarding principles/);
+    assert.match(result.text, /Build the plan around the outcome they need/);
+  } finally {
+    await parser.destroy();
+  }
+});

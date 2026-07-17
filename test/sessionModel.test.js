@@ -11,12 +11,13 @@ test("Session OS navigation maps the legacy views without losing routes", () => 
   assert.equal(sessionNavKey("today-detail"), "today");
   assert.equal(sessionNavKey("library"), "sessions");
   assert.equal(sessionNavKey("projects"), "projects");
-  assert.equal(sessionNavKey("artifacts"), "library");
+  assert.equal(sessionNavKey("docs"), "docs");
+  assert.equal(sessionNavKey("artifacts"), "today");
   assert.equal(sessionNavKey("settings"), "settings");
 
   assert.equal(legacyViewForSessionNav("today"), "home");
   assert.equal(legacyViewForSessionNav("sessions"), "library");
-  assert.equal(legacyViewForSessionNav("library"), "artifacts");
+  assert.equal(legacyViewForSessionNav("docs"), "docs");
 });
 
 test("Session Memory derives Brief, Debate, Decision, and Build from persisted public state", () => {

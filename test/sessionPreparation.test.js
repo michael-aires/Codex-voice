@@ -5,7 +5,10 @@ import {
   buildSessionPreparationPrompt,
   createSessionPresentation,
   createPreparedSessionOverview,
+  createManualPreparationPlan,
+  deriveSessionPreparationState,
   normalizePreparationKinds,
+  recommendSessionPreparation,
   SESSION_PREPARATION_OPTIONS
 } from "../src/sessionPreparation.js";
 
@@ -14,7 +17,66 @@ test("normalizes preparation selections to supported recipes without duplicates"
     normalizePreparationKinds(["executive_report", "qa_checklist", "executive_report", "unknown"]),
     ["executive_report", "qa_checklist"]
   );
-  assert.equal(SESSION_PREPARATION_OPTIONS.length, 4);
+  assert.equal(SESSION_PREPARATION_OPTIONS.length, 6);
+  assert.deepEqual(SESSION_PREPARATION_OPTIONS.slice(-2).map((option) => option.kind), [
+    "architecture_decision_record",
+    "html_prototype"
+  ]);
+});
+
+test("Cooper recommends a bounded document set from the session evidence", () => {
+  const plan = recommendSessionPreparation({
+    focus: { title: "Permissions UI bug", description: "Review an API permission failure and prototype the missing settings page." },
+    sessionContext: "The room needs QA evidence and an architecture decision for the role guard."
+  });
+  assert.equal(plan.mode, "cooper");
+  assert.ok(plan.kinds.includes("executive_report"));
+  assert.ok(plan.kinds.includes("aires_requirements"));
+  assert.ok(plan.kinds.includes("qa_checklist"));
+  assert.ok(plan.kinds.includes("architecture_decision_record"));
+  assert.ok(plan.kinds.includes("html_prototype"));
+  assert.ok(plan.kinds.length <= 5);
+});
+
+test("manual preparation preserves an explicit no-document choice", () => {
+  assert.deepEqual(createManualPreparationPlan([]), {
+    mode: "manual",
+    kinds: [],
+    reasons: {},
+    rationale: "No documents were requested before entry."
+  });
+});
+
+test("session readiness waits for required outputs but lets optional work continue", () => {
+  const jobs = [
+    { id: "brief", callId: "call-1", kind: "executive_report", workstream: "session_preparation", status: "completed" },
+    { id: "requirements", callId: "call-1", kind: "aires_requirements", workstream: "session_preparation", status: "completed" },
+    { id: "qa", callId: "call-1", kind: "qa_checklist", workstream: "session_preparation", status: "running" }
+  ];
+  const artifacts = [
+    { id: "brief-artifact", jobId: "brief", callId: "call-1", kind: "executive_report", workstream: "session_preparation" },
+    { id: "requirements-artifact", jobId: "requirements", callId: "call-1", kind: "aires_requirements", workstream: "session_preparation" }
+  ];
+  const readiness = deriveSessionPreparationState({
+    callId: "call-1",
+    kinds: ["executive_report", "aires_requirements", "qa_checklist"],
+    jobs,
+    artifacts
+  });
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.completedCount, 2);
+  assert.equal(readiness.outputs.find((output) => output.kind === "qa_checklist").status, "running");
+});
+
+test("failed required work produces a degraded but enterable session", () => {
+  const readiness = deriveSessionPreparationState({
+    callId: "call-1",
+    kinds: ["executive_report"],
+    jobs: [{ id: "brief", callId: "call-1", kind: "executive_report", workstream: "session_preparation", status: "failed" }]
+  });
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.degraded, true);
+  assert.equal(readiness.failedCount, 1);
 });
 
 test("builds a prepared overview from the bounded context packet", () => {

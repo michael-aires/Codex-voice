@@ -57,8 +57,10 @@ import {
   sessionNavKey
 } from "./sessionModel.js";
 import { SessionMemory, SessionOsTopbar } from "./sessionOs.jsx";
+import { KnowledgeStudio, SessionKnowledgeCanvas } from "./knowledgeStudio.jsx";
 import { SessionContextCheckpoint } from "./contextCheckpoint.jsx";
 import { PreparedSessionOverview } from "./preparedSession.jsx";
+import { SessionPreparationFlow } from "./sessionPreparationFlow.jsx";
 import {
   buildSessionPresentationVoicePrompt,
   buildSessionPreparationPrompt,
@@ -66,6 +68,10 @@ import {
   normalizePreparationKinds,
   SESSION_PREPARATION_OPTIONS
 } from "./sessionPreparation.js";
+import {
+  realtimeReconnectDelay,
+  shouldReconnectRealtime
+} from "./realtimeConnection.js";
 import {
   Activity,
   AlertTriangle,
@@ -83,6 +89,7 @@ import {
   FolderKanban,
   Hash,
   Library,
+  ListChecks,
   LockKeyhole,
   LogIn,
   LogOut,
@@ -90,6 +97,7 @@ import {
   Monitor,
   MonitorSmartphone,
   Mic,
+  Pause,
   Phone,
   PhoneOff,
   Play,
@@ -109,6 +117,8 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import "./session-os.css";
+import "./aires-redesign.css";
+import "./knowledge-studio.css";
 
 let mermaidLoader = null;
 
@@ -371,38 +381,19 @@ const realtimeSession = {
 };
 
 const operatorInstructions = `
-You are Cooper Operator, Michael's voice-controlled local task orchestrator.
+You are Cooper Codex, Michael's voice-controlled local Codex orchestrator.
 
-You are not the meeting notetaker workspace. You are the operator layer that helps Michael start, watch, approve, and stop local browser/Codex tasks.
+This is the Codex session mode, not the meeting workspace and not Computer Use. Turn Michael's spoken coding outcomes and approved action items into durable local Codex tasks that can continue while the Cooper UI is closed and reconnect after it restarts.
 
-When Michael asks you to run work, start a supervised local Operator task with start_operator_task. Choose:
-- operator_document_suite when Michael wants Cooper to create multiple work artifacts from the conversation.
-- aires_template_suite when Michael asks for all AIRES templates, all requirement docs, or the full document set.
-- landing_page when Michael asks for a landing page, marketing page, website, or product page.
-- mini_app when Michael asks for a small app, calculator, internal tool, dashboard, or interactive single-file prototype.
-- large_report when Michael asks for a large report, executive report, board-style report, or polished long-form writeup.
-- html_prototype for product prototypes, clickable UI mockups, or mobile-first prototypes.
-- aires_requirements for scoped requirements, acceptance criteria, slices, and AIRES requirements artifacts.
-- product_requirements for PRDs.
-- mermaid_diagram for diagrams, architecture maps, workflows, system maps, or flowcharts.
-- codex_local_planning for general Codex tasks, implementation planning, coding plans, skill creation, repo work, or "run Codex" requests.
-- github_repo_debug for read-only GitHub/code debugging and repo inspection.
-- sendgrid_sender_auth for SendGrid sender authentication setup.
-- computer_use_browser when Michael wants you to operate a website, SaaS UI, or visible browser workflow with OpenAI Computer Use.
-- computer_use_desktop when Michael wants supervised desktop app work outside the browser. Do not use this to click around Codex itself.
-- codex_app_server when Michael wants you to control Codex through a supported local Codex app-server, JSONL CLI, or event bridge.
-- codex_mcp_agent when Michael wants multi-agent Codex work through MCP or Agents SDK style orchestration.
-- openai_tool_stack_plan when Michael asks what OpenAI tools, agents, MCP, Computer Use, Codex, or sandbox architecture should power a workflow.
+When Michael asks you to build, implement, fix, inspect, debug, plan, test, review, or otherwise run Codex work, call start_operator_task immediately with skill codex_app_server. Include the complete outcome and success criteria in goal. Include workspace_path when Michael names a repository or local folder; otherwise omit it so Cooper uses the configured workspace. Do not choose browser, document-generation, Computer Use, MCP, or simulated planning skills in this mode.
 
-Default to taking action by tool call when Michael asks you to build, generate, create, run, draft, produce, inspect, or debug something. Keep spoken responses short. Say what you are starting, what Michael will see in the Operator workspace, and where approvals will be required.
+Tell Michael that the task will first ask for approval to start the durable local Codex session. After approval, Cooper persists the Codex thread and turn IDs, streams progress and command/file events, surfaces Codex approval requests, and reconnects after restart.
 
-For Codex work, use the supported Codex bridge lanes rather than claiming you can control Codex Desktop by clicking its UI. For Computer Use work, make clear that the app runs a supervised screenshot/action harness with approval gates.
+If Michael says stop, cancel, kill it, pause all work, or stop Codex, call stop_operator_tasks immediately.
 
-If Michael says stop, kill it, cancel everything, stop Operator, or pause all work, call stop_operator_tasks immediately.
+When Michael asks for an update, why work is stuck, what Codex changed, whether it finished, or what approval is waiting, call get_operator_task_status before answering. Report the actual status, latest checkpoint, pending approval, result, and next action. Never claim completion unless the task state says completed.
 
-When Michael asks what happened, where the work is, why it is stuck, what the delegated Codex agent did, what the result was, or whether an Operator task is done, call get_operator_task_status before answering. Explain the actual status, latest checkpoint, pending approval, artifact/result, and next action. If the task only says queued or waiting, say that precisely and identify the next visible step.
-
-Never claim that a task is finished unless the tool result or visible Operator state says it is finished. Do not perform destructive or external write actions yourself; the Operator task runner will pause for approval.
+Keep spoken replies concise. Never claim to click the Codex desktop UI; this mode uses the supported local Codex app-server protocol. Destructive actions, sandbox escapes, external writes, commits, pushes, publishing, and deployment remain approval-gated.
 `;
 
 const operatorRealtimeSession = {
@@ -415,7 +406,7 @@ const operatorRealtimeSession = {
       noise_reduction: { type: "far_field" },
       transcription: {
         model: "gpt-4o-mini-transcribe",
-        prompt: "Voice commands for Cooper Operator, local browser automation, Codex tasks, GitHub debugging, SendGrid setup, approvals, stop all."
+        prompt: "Voice commands for Cooper Codex, local repositories, durable Codex tasks, coding, debugging, testing, approvals, status updates, and stop all."
       },
       turn_detection: {
         type: "semantic_vad",
@@ -528,17 +519,25 @@ function buildComputerUseSessionUpdate() {
   };
 }
 
+function normalizeWorkspaceMode(value) {
+  if (value === "operator") return "codex";
+  return ["cooper", "codex", "computer"].includes(value) ? value : "";
+}
+
 function App() {
   const [deepLinkedCallId] = React.useState(() => (
     new URLSearchParams(window.location.search).get("call")?.trim() || ""
   ));
   const [entered, setEntered] = React.useState(() => localStorage.getItem("cooper.entered") === "true");
-  const [workspace, setWorkspace] = React.useState(() => localStorage.getItem("cooper.workspace") || "");
+  const [workspace, setWorkspace] = React.useState(() => normalizeWorkspaceMode(localStorage.getItem("cooper.workspace")));
   const [authChecked, setAuthChecked] = React.useState(false);
   const [authenticated, setAuthenticated] = React.useState(false);
   const [authBusy, setAuthBusy] = React.useState(false);
   const [authError, setAuthError] = React.useState("");
-  const [view, setView] = React.useState("home");
+  const [view, setView] = React.useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("view") === "docs" || params.has("document") ? "docs" : "home";
+  });
   const [state, setState] = React.useState({ calls: [], projects: [], artifacts: [], jobs: [], recipes: [], limits: {}, arcade: emptyArcadeState(), pushToTalk: emptyPushToTalkState(), mcpApps: { servers: [] } });
   const [arcadeDiscovery, setArcadeDiscovery] = React.useState(emptyArcadeDiscoveryState);
   const [operatorState, setOperatorState] = React.useState(emptyOperatorState);
@@ -568,6 +567,13 @@ function App() {
   const [contextCheckpointOpen, setContextCheckpointOpen] = React.useState(false);
   const [contextCheckpointSeed, setContextCheckpointSeed] = React.useState(null);
   const [contextCheckpointBusy, setContextCheckpointBusy] = React.useState(false);
+  const [sessionPreparation, setSessionPreparation] = React.useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem("cooper.sessionPreparation") || "null");
+    } catch {
+      return null;
+    }
+  });
   const [artifactContent, setArtifactContent] = React.useState("");
   const selectedArtifactContentType = artifactOutputTypeFromMetadata(
     state.artifacts.find((artifact) => artifact.id === selectedArtifactId)
@@ -589,6 +595,12 @@ function App() {
   const dcRef = React.useRef(null);
   const audioRef = React.useRef(null);
   const streamRef = React.useRef(null);
+  const connectPromiseRef = React.useRef(null);
+  const reconnectTimerRef = React.useRef(null);
+  const reconnectAttemptsRef = React.useRef(0);
+  const transportGenerationRef = React.useRef(0);
+  const manualCallEndRef = React.useRef(false);
+  const voiceTransportStartedAtRef = React.useRef(null);
   const activeCallRef = React.useRef(null);
   const activeCallCreationRef = React.useRef(null);
   const callStartedAtRef = React.useRef(null);
@@ -624,6 +636,12 @@ function App() {
   const operatorPersistedResponseIdsRef = React.useRef(new Set());
 
   React.useEffect(() => {
+    if (localStorage.getItem("cooper.workspace") === "operator") {
+      localStorage.setItem("cooper.workspace", "codex");
+    }
+  }, []);
+
+  React.useEffect(() => {
     selectedCallIdRef.current = selectedCallId;
   }, [selectedCallId]);
 
@@ -634,6 +652,31 @@ function App() {
   React.useEffect(() => {
     selectedArtifactIdRef.current = selectedArtifactId;
   }, [selectedArtifactId]);
+
+  React.useEffect(() => {
+    if (sessionPreparation) {
+      sessionStorage.setItem("cooper.sessionPreparation", JSON.stringify(sessionPreparation));
+    } else {
+      sessionStorage.removeItem("cooper.sessionPreparation");
+    }
+  }, [sessionPreparation]);
+
+  React.useEffect(() => {
+    if (!authenticated || !entered || workspace !== "cooper" || !sessionPreparation?.callId) return;
+    const call = state.calls.find((item) => item.id === sessionPreparation.callId);
+    if (!call || call.status !== "active") return;
+    activeCallRef.current = call;
+    callStartedAtRef.current ||= Date.parse(call.startedAt || "") || Date.now();
+    sessionContextPacketRef.current = {
+      packet: sessionPreparation.packet,
+      sessionContext: sessionPreparation.sessionContext,
+      preparationKinds: sessionPreparation.kinds,
+      preparationPlan: sessionPreparation.plan
+    };
+    sessionFocusRef.current = sessionPreparation.focus || null;
+    setSessionFocus(sessionPreparation.focus || null);
+    if (view === "home") setView("call");
+  }, [authenticated, entered, sessionPreparation, state.calls, view, workspace]);
 
   React.useEffect(() => {
     if (!authenticated || !deepLinkedCallId || deepLinkHandledRef.current) return;
@@ -668,7 +711,7 @@ function App() {
 
   React.useEffect(() => {
     if (!authenticated || !entered || !workspace) return;
-    if (workspace === "operator" || workspace === "computer") {
+    if (workspace === "codex" || workspace === "computer") {
       refreshOperatorState();
       const id = window.setInterval(refreshOperatorState, 3000);
       return () => window.clearInterval(id);
@@ -723,7 +766,7 @@ function App() {
     if (!authenticated || !entered || !workspace || !("EventSource" in window)) return undefined;
     const source = new EventSource("/api/events", { withCredentials: true });
     source.addEventListener("state.updated", () => {
-      if (workspace === "operator" || workspace === "computer") {
+      if (workspace === "codex" || workspace === "computer") {
         refreshOperatorState();
       } else {
         refreshState();
@@ -1004,7 +1047,7 @@ function App() {
     setEntered(true);
     setWorkspace(nextWorkspace);
     setView("home");
-    if (nextWorkspace === "operator" || nextWorkspace === "computer") {
+    if (nextWorkspace === "codex" || nextWorkspace === "computer") {
       refreshOperatorState();
     } else {
       refreshState();
@@ -1016,7 +1059,7 @@ function App() {
     window.scrollTo({ top: 0, left: 0 });
     setWorkspace(nextWorkspace);
     setView("home");
-    if (nextWorkspace === "operator" || nextWorkspace === "computer") {
+    if (nextWorkspace === "codex" || nextWorkspace === "computer") {
       refreshOperatorState();
     } else {
       refreshState();
@@ -1055,7 +1098,15 @@ function App() {
 
   function navigateSessionOs(destination) {
     window.scrollTo({ top: 0, left: 0 });
-    setView(legacyViewForSessionNav(destination));
+    const nextView = legacyViewForSessionNav(destination);
+    const url = new URL(window.location.href);
+    if (nextView === "docs") url.searchParams.set("view", "docs");
+    else {
+      url.searchParams.delete("view");
+      url.searchParams.delete("document");
+    }
+    window.history.replaceState({}, "", url);
+    setView(nextView);
   }
 
   function returnToCooper(destination = "today") {
@@ -1408,19 +1459,100 @@ function App() {
     }
   }
 
-  async function connect() {
+  function cleanupRealtimeTransport({ invalidate = true } = {}) {
+    if (invalidate) transportGenerationRef.current += 1;
+    const dc = dcRef.current;
+    const pc = pcRef.current;
+    if (dc) {
+      dc.onopen = null;
+      dc.onmessage = null;
+      dc.onclose = null;
+      try { dc.close(); } catch {}
+    }
+    if (pc) {
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
+      pc.oniceconnectionstatechange = null;
+      try { pc.close(); } catch {}
+    }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    if (audioRef.current) audioRef.current.srcObject = null;
+    dcRef.current = null;
+    pcRef.current = null;
+    streamRef.current = null;
+    audioRef.current = null;
+  }
+
+  function scheduleRealtimeReconnect(error, generation) {
+    if (generation !== transportGenerationRef.current || manualCallEndRef.current) return;
+    const attempt = reconnectAttemptsRef.current;
+    if (!shouldReconnectRealtime({ manual: manualCallEndRef.current, attempt, error })) {
+      cleanupRealtimeTransport();
+      setConnecting(false);
+      setConnected(false);
+      setStatus("Voice unavailable");
+      setCallStartupError(describeConnectionError(error));
+      return;
+    }
+
+    const nextAttempt = attempt + 1;
+    reconnectAttemptsRef.current = nextAttempt;
+    const delay = realtimeReconnectDelay(nextAttempt);
+    cleanupRealtimeTransport();
+    setConnected(false);
     setConnecting(true);
-    setStatus("Starting");
     setSpeaking(false);
     setHearing(false);
-    setEvents([]);
+    setStatus(`Reconnecting voice ${nextAttempt}/3`);
+    setCallStartupError("");
+    addEvent("Connection", `Voice interrupted. Cooper's session is safe; reconnecting in ${Math.ceil(delay / 1000)}s.`);
+    window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null;
+      void connect({ reconnect: true });
+    }, delay);
+  }
+
+  function assertCurrentTransport(generation) {
+    if (generation !== transportGenerationRef.current || manualCallEndRef.current) {
+      const error = new Error("Realtime connection attempt was superseded.");
+      error.name = "AbortError";
+      throw error;
+    }
+  }
+
+  function connect(options = {}) {
+    if (connectPromiseRef.current) return connectPromiseRef.current;
+    const task = connectRealtime(options).finally(() => {
+      if (connectPromiseRef.current === task) connectPromiseRef.current = null;
+    });
+    connectPromiseRef.current = task;
+    return task;
+  }
+
+  async function connectRealtime({ reconnect = false } = {}) {
+    manualCallEndRef.current = false;
+    window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = null;
+    const generation = transportGenerationRef.current + 1;
+    transportGenerationRef.current = generation;
+    cleanupRealtimeTransport({ invalidate: false });
+    if (!reconnect) {
+      reconnectAttemptsRef.current = 0;
+      voiceTransportStartedAtRef.current = Date.now();
+    }
+    setConnecting(true);
+    setStatus(reconnect ? "Reconnecting voice" : "Starting");
+    setSpeaking(false);
+    setHearing(false);
+    if (!reconnect) setEvents([]);
     setCallStartupError("");
     const existingTranscript = activeCallRef.current?.transcript?.length
       ? activeCallRef.current.transcript
       : transcriptsRef.current;
     setTranscripts(existingTranscript);
     transcriptsRef.current = existingTranscript;
-    realtimeUsageRef.current = createEmptyRealtimeUsage();
+    if (!reconnect) realtimeUsageRef.current = createEmptyRealtimeUsage();
     outputTranscriptBuffersRef.current = new Map();
     textTranscriptBuffersRef.current = new Map();
     persistedResponseIdsRef.current = new Set();
@@ -1437,6 +1569,7 @@ function App() {
           autoGainControl: true
         }
       });
+      assertCurrentTransport(generation);
       streamRef.current = stream;
 
       const projectId = selectedProject?.id || "";
@@ -1445,6 +1578,7 @@ function App() {
       const checkpointContext = sessionContextPacketRef.current?.sessionContext || "";
       activeProjectContextRef.current = [focusContext, projectContext, checkpointContext].filter(Boolean).join("\n\n");
       const call = await ensureActiveSessionCall(projectId);
+      assertCurrentTransport(generation);
       activeCallRef.current = call;
       callStartedAtRef.current = Date.now();
       let authoritativeRealtimeSession = null;
@@ -1458,6 +1592,7 @@ function App() {
         authoritativeRealtimeSession = liveContext.realtimeSession || null;
         if (liveContext.call) activeCallRef.current = liveContext.call;
       }
+      assertCurrentTransport(generation);
 
       const pc = new RTCPeerConnection();
       pcRef.current = pc;
@@ -1466,7 +1601,20 @@ function App() {
       audio.autoplay = true;
       audioRef.current = audio;
       pc.ontrack = (event) => {
+        if (generation !== transportGenerationRef.current) return;
         audio.srcObject = event.streams[0];
+      };
+      pc.onconnectionstatechange = () => {
+        if (generation !== transportGenerationRef.current || manualCallEndRef.current) return;
+        if (["failed", "closed"].includes(pc.connectionState)) {
+          scheduleRealtimeReconnect(new Error(`WebRTC ${pc.connectionState}.`), generation);
+        }
+      };
+      pc.oniceconnectionstatechange = () => {
+        if (generation !== transportGenerationRef.current || manualCallEndRef.current) return;
+        if (pc.iceConnectionState === "failed") {
+          scheduleRealtimeReconnect(new Error("WebRTC ICE negotiation failed."), generation);
+        }
       };
 
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -1474,6 +1622,10 @@ function App() {
       const dc = pc.createDataChannel("oai-events");
       dcRef.current = dc;
       dc.onopen = () => {
+        if (generation !== transportGenerationRef.current || manualCallEndRef.current) return;
+        if (Date.now() - Number(voiceTransportStartedAtRef.current || Date.now()) > 30000) {
+          reconnectAttemptsRef.current = 0;
+        }
         setConnected(true);
         setConnecting(false);
         setStatus("Configuring");
@@ -1482,6 +1634,7 @@ function App() {
           : buildSessionUpdate(activeProjectContextRef.current));
       };
       dc.onmessage = (message) => {
+        if (generation !== transportGenerationRef.current) return;
         try {
           handleServerEvent(JSON.parse(message.data));
         } catch {
@@ -1489,9 +1642,8 @@ function App() {
         }
       };
       dc.onclose = () => {
-        setConnected(false);
-        setSpeaking(false);
-        setHearing(false);
+        if (generation !== transportGenerationRef.current || manualCallEndRef.current) return;
+        scheduleRealtimeReconnect(new Error("Realtime data channel closed unexpectedly."), generation);
       };
 
       const offer = await pc.createOffer();
@@ -1512,6 +1664,7 @@ function App() {
         });
 
         answerSdp = await sdpResponse.text();
+        assertCurrentTransport(generation);
         if (sdpResponse.ok) break;
 
         if (sdpResponse.status === 429 && attempt < 3) {
@@ -1524,14 +1677,20 @@ function App() {
         throw new Error(describeSessionHttpError(sdpResponse.status, answerSdp));
       }
 
+      assertCurrentTransport(generation);
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
       addEvent("Connected", "WebRTC established.");
+      return true;
     } catch (error) {
+      if (error?.name === "AbortError") {
+        cleanupRealtimeTransport();
+        setConnecting(false);
+        return false;
+      }
       const detail = describeConnectionError(error);
-      setStatus("Failed");
-      setCallStartupError(detail);
       addEvent("Connection", detail);
-      await endCall({ failed: true });
+      scheduleRealtimeReconnect(error, generation);
+      return false;
     }
   }
 
@@ -1541,10 +1700,11 @@ function App() {
 
   function openTodayItem(itemId) {
     setSelectedTodayItemId(itemId);
-    setView("today-detail");
+    setView("home");
   }
 
   function closeTodayDetail() {
+    setSelectedTodayItemId("");
     setView("home");
   }
 
@@ -1599,24 +1759,35 @@ function App() {
     setContextCheckpointOpen(true);
   }
 
-  async function startContextCheckpointSession({ meeting, packet, sessionContext, preparationKinds = [] }) {
+  async function startContextCheckpointSession({ meeting, packet, sessionContext, preparationKinds = [], preparationPlan = null }) {
     setContextCheckpointBusy(true);
     try {
       setContextCheckpointOpen(false);
-      const contextPacket = { packet, sessionContext, preparationKinds: normalizePreparationKinds(preparationKinds) };
-      openCallWorkspace(meeting, contextPacket);
+      const kinds = normalizePreparationKinds(preparationKinds);
+      const contextPacket = { packet, sessionContext, preparationKinds: kinds, preparationPlan };
+      openCallWorkspace(meeting, contextPacket, { preservePreparation: true });
+      setSessionPreparation({
+        callId: "",
+        packet,
+        sessionContext,
+        focus: meeting,
+        kinds,
+        plan: preparationPlan,
+        queueError: "",
+        entered: false,
+        queuedKinds: []
+      });
       pendingSessionOpeningPromptRef.current = buildSessionPresentationVoicePrompt({ packet, sessionContext, focus: meeting });
-      if (contextPacket.preparationKinds.length) {
-        void prepareContextCheckpointSession({
-          meeting,
-          contextPacket,
-          preparationKinds: contextPacket.preparationKinds
-        }).catch((error) => {
-          const message = error.message || "The session opened, but its prepared documents could not be queued.";
-          setChatError(message);
-          addEvent("Preparation", message);
-        });
-      }
+      void prepareContextCheckpointSession({
+        meeting,
+        contextPacket,
+        preparationKinds: contextPacket.preparationKinds
+      }).catch((error) => {
+        const message = error.message || "The session opened, but its prepared documents could not be queued.";
+        setSessionPreparation((current) => current ? { ...current, queueError: message } : current);
+        setChatError(message);
+        addEvent("Preparation", message);
+      });
     } finally {
       setContextCheckpointBusy(false);
     }
@@ -1624,16 +1795,22 @@ function App() {
 
   async function prepareContextCheckpointSession({ meeting = sessionFocusRef.current, contextPacket = sessionContextPacketRef.current, preparationKinds = [] } = {}) {
     const kinds = normalizePreparationKinds(preparationKinds);
-    if (!kinds.length || !contextPacket?.packet?.id) return;
+    if (!contextPacket?.packet?.id) return;
 
     const projectId = selectedProject?.id || "";
     const call = await ensureActiveSessionCall(projectId, {
       title: `Prepared session: ${meeting?.title || "Cooper collaboration"}`,
       contextPacketId: contextPacket.packet.id
     });
+    setSessionPreparation((current) => current ? { ...current, callId: call.id } : current);
 
     const focusContext = meeting ? todayItemContext(meeting) : "";
     activeProjectContextRef.current = [focusContext, contextPacket.sessionContext].filter(Boolean).join("\n\n");
+    if (!kinds.length) {
+      addEvent("Preparation", "Durable session created. No documents were requested before entry.");
+      await refreshState();
+      return call;
+    }
     addEvent("Preparation", `${kinds.length} session artifacts queued from the selected context.`);
 
     for (const kind of kinds) {
@@ -1645,14 +1822,23 @@ function App() {
         {
           stay: true,
           title: option?.title || artifactLabel(kind),
-          workstream: "session_preparation"
+          workstream: "session_preparation",
+          priority: option?.requiredByDefault ? "high" : "normal",
+          pipelineId: `session-preparation-${call.id}`,
+          throwOnError: true
         }
       );
+      setSessionPreparation((current) => current ? {
+        ...current,
+        queuedKinds: [...new Set([...(current.queuedKinds || []), kind])]
+      } : current);
     }
     await refreshState();
+    return call;
   }
 
-  function openCallWorkspace(item = null, contextPacket = null) {
+  function openCallWorkspace(item = null, contextPacket = null, { preservePreparation = false } = {}) {
+    if (!preservePreparation) setSessionPreparation(null);
     sessionContextPacketRef.current = contextPacket;
     sessionFocusRef.current = item;
     setSessionFocus(item);
@@ -1680,6 +1866,21 @@ function App() {
     setConnecting(false);
     setConnected(false);
     setView("call");
+  }
+
+  function enterPreparedSession() {
+    setSessionPreparation((current) => current ? { ...current, entered: true } : current);
+  }
+
+  async function enterPreparedSessionWithVoice() {
+    enterPreparedSession();
+    await connect();
+  }
+
+  async function cancelSessionPreparation() {
+    setSessionPreparation(null);
+    await endCall();
+    setView("home");
   }
 
   async function createCall(projectId = "", options = {}) {
@@ -1886,13 +2087,10 @@ function App() {
   }
 
   async function endCall({ failed = false } = {}) {
-    dcRef.current?.close();
-    pcRef.current?.close();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    dcRef.current = null;
-    pcRef.current = null;
-    streamRef.current = null;
-    audioRef.current = null;
+    manualCallEndRef.current = true;
+    window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = null;
+    cleanupRealtimeTransport();
     chatAbortControllerRef.current?.abort();
     chatAbortControllerRef.current = null;
 
@@ -1915,9 +2113,13 @@ function App() {
 
     activeCallRef.current = null;
     activeCallCreationRef.current = null;
+    connectPromiseRef.current = null;
+    reconnectAttemptsRef.current = 0;
+    voiceTransportStartedAtRef.current = null;
     callStartedAtRef.current = null;
     activeProjectContextRef.current = "";
     sessionContextPacketRef.current = null;
+    setSessionPreparation(null);
     pendingSessionOpeningPromptRef.current = "";
     dailyBriefPlaybackActiveRef.current = false;
     setDailyBriefPlaybackActive(false);
@@ -2032,7 +2234,7 @@ function App() {
   }
 
   function operatorAgentLabel() {
-    return workspace === "computer" ? "Cooper Computer Use" : "Cooper Operator";
+    return workspace === "computer" ? "Cooper Computer Use" : "Cooper Codex";
   }
 
   function sendOperatorEvent(event) {
@@ -2124,10 +2326,10 @@ function App() {
         setOperatorCallStatus("Configuring");
         sendOperatorEvent(computerMode ? buildComputerUseSessionUpdate() : buildOperatorSessionUpdate());
         addOperatorMessage(
-          computerMode ? "Cooper Computer Use" : "Cooper Operator",
+          computerMode ? "Cooper Computer Use" : "Cooper Codex",
           computerMode
             ? "Computer Use is online. Tell me what app, website, download, or desktop task to run. I will pause for approvals."
-            : "Operator is online. Tell me what local task to start, or say stop all to halt active work.",
+            : "Codex orchestration is online. Tell me what Codex should build, fix, inspect, or verify, or ask for an update on a running task.",
           { source: "system" }
         );
       };
@@ -2147,7 +2349,7 @@ function App() {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const sdpResponse = await fetch(`/session?workspace=${computerMode ? "computer" : "operator"}`, {
+      const sdpResponse = await fetch(`/session?workspace=${computerMode ? "computer" : "codex"}`, {
         method: "POST",
         body: offer.sdp,
         headers: {
@@ -2434,6 +2636,8 @@ function App() {
           skill: args.skill || "codex_local_planning",
           goal: args.goal || "Run a supervised local Codex task.",
           targetUrl: args.target_url || args.targetUrl || "",
+          workspacePath: args.workspace_path || args.workspacePath || "",
+          codexModel: args.codex_model || args.codexModel || "",
           allowedDomains: args.allowed_domains || args.allowedDomains || [],
           artifactKinds: args.artifact_kinds || args.artifactKinds || [],
           templateIds: args.template_ids || args.templateIds || []
@@ -2512,22 +2716,27 @@ function App() {
         kind,
         customPrompt,
         title: options.title || "",
-        workstream: options.workstream || ""
+        workstream: options.workstream || "",
+        priority: options.priority || "",
+        pipelineId: options.pipelineId || ""
       })
     });
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       addEvent("Artifact", payload.error || "Could not queue Cooper work.");
-      return;
+      if (options.throwOnError) throw new Error(payload.error || "Could not queue Cooper work.");
+      return null;
     }
 
+    const payload = await response.json().catch(() => ({}));
     await refreshState();
     if (options.stay) {
       addEvent("Canvas", `${artifactLabel(kind)} queued.`);
     } else {
       setView("artifacts");
     }
+    return payload.job || null;
   }
 
   function logRealtimeToolCall(name, args) {
@@ -2671,7 +2880,7 @@ function App() {
     return context;
   }
 
-  async function addLiveContext({ title, content }) {
+  async function addLiveContext({ title, content, externalId = "" }) {
     const text = String(content || "").trim();
     if (!text) return;
 
@@ -2684,7 +2893,8 @@ function App() {
         body: JSON.stringify({
           title: title || "Live call context",
           content: text,
-          sourceType: "live_call"
+          sourceType: "live_call",
+          externalId
         })
       });
       const payload = await response.json().catch(() => ({}));
@@ -2726,6 +2936,23 @@ function App() {
       return;
     }
     await refreshState();
+  }
+
+  async function reviseArtifact(artifactId, instruction) {
+    const response = await fetch(`/api/artifacts/${artifactId}/revise`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ instruction })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      addEvent("Revision", payload.error || "Could not queue the artifact revision.");
+      return false;
+    }
+    addEvent("Revision", `${payload.job?.title || "Artifact"} revision queued.`);
+    await refreshState();
+    return true;
   }
 
   async function createProject({ title, description }) {
@@ -2864,7 +3091,7 @@ function App() {
   const selectedProject = resolveSelectedProject(state.projects, selectedProjectId);
   const selectedArtifact = state.artifacts.find((artifact) => artifact.id === selectedArtifactId) || state.artifacts[0] || null;
   const latestCall = state.calls.find((call) => call.status === "ended") || state.calls[0] || null;
-  const activeJobs = state.jobs.filter((job) => ["queued", "running"].includes(job.status));
+  const activeJobs = state.jobs.filter((job) => ["queued", "running", "pausing", "canceling"].includes(job.status));
   const selectedOperatorTask = operatorState.tasks.find((task) => task.id === operatorSelectedTaskId) || operatorState.activeTask || operatorState.tasks[0] || null;
   const liveTodayItems = [
     ...(todayFeed.meetings || []),
@@ -2900,12 +3127,17 @@ function App() {
     return <Splash onSelectWorkspace={enterWorkspace} />;
   }
 
-  if (workspace === "operator") {
+  if (workspace === "codex") {
+    const codexTasks = operatorState.tasks.filter((task) => task.skill === "codex_app_server");
+    const selectedCodexTask = codexTasks.find((task) => task.id === operatorSelectedTaskId)
+      || codexTasks.find((task) => ["queued", "running", "waiting_approval"].includes(task.status))
+      || codexTasks[0]
+      || null;
     return (
       <OperatorWorkspace
-        variant="operator"
-        state={operatorState}
-        selectedTask={selectedOperatorTask}
+        variant="codex"
+        state={{ ...operatorState, tasks: codexTasks, activeTask: selectedCodexTask }}
+        selectedTask={selectedCodexTask}
         events={events}
         chatStreaming={chatStreaming}
         chatError={chatError}
@@ -2927,7 +3159,7 @@ function App() {
         onCancelTask={cancelOperatorTask}
         onStopAll={stopAllOperatorTasks}
         onSwitchWorkspace={() => switchWorkspace("cooper")}
-        onSwitchOperator={() => switchWorkspace("operator")}
+        onSwitchOperator={() => switchWorkspace("codex")}
         onSwitchComputer={() => switchWorkspace("computer")}
         onNavigateCooper={returnToCooper}
         onNewSession={startCooperSessionFromCapability}
@@ -2966,12 +3198,21 @@ function App() {
         onCancelTask={cancelOperatorTask}
         onStopAll={stopComputerUseTasks}
         onSwitchWorkspace={() => switchWorkspace("cooper")}
-        onSwitchOperator={() => switchWorkspace("operator")}
+        onSwitchOperator={() => switchWorkspace("codex")}
         onSwitchComputer={() => switchWorkspace("computer")}
         onNavigateCooper={returnToCooper}
         onNewSession={startCooperSessionFromCapability}
         onResetWorkspace={resetWorkspaceChoice}
         onLogout={logout}
+      />
+    );
+  }
+
+  if (view === "docs" && !connected && !connecting) {
+    return (
+      <KnowledgeStudio
+        onNavigate={navigateSessionOs}
+        onNewSession={startBlankCall}
       />
     );
   }
@@ -2999,7 +3240,7 @@ function App() {
           onStartItem={startTodaySession}
           onOpenSource={openTodaySource}
           onNavigate={navigateSessionOs}
-          onSwitchOperator={() => switchWorkspace("operator")}
+          onSwitchOperator={() => switchWorkspace("codex")}
           onSwitchComputer={() => switchWorkspace("computer")}
           onLogout={logout}
         />
@@ -3015,6 +3256,20 @@ function App() {
           />
         )}
       </>
+    );
+  }
+
+  if (view === "call" && sessionPreparation && !sessionPreparation.entered && !connected && !connecting) {
+    return (
+      <SessionPreparationFlow
+        preparation={sessionPreparation}
+        jobs={state.jobs}
+        artifacts={state.artifacts}
+        onEnter={enterPreparedSession}
+        onEnterWithVoice={enterPreparedSessionWithVoice}
+        onRetry={retryJob}
+        onCancel={cancelSessionPreparation}
+      />
     );
   }
 
@@ -3072,7 +3327,7 @@ function App() {
         }}
         onOpenOperator={async () => {
           await endCall();
-          switchWorkspace("operator");
+          switchWorkspace("codex");
         }}
         onOpenComputer={async () => {
           await endCall();
@@ -3094,7 +3349,7 @@ function App() {
           active={sessionNavKey(view)}
           onNavigate={navigateSessionOs}
           onNewSession={startBlankCall}
-          onOpenOperator={() => switchWorkspace("operator")}
+          onOpenOperator={() => switchWorkspace("codex")}
           onOpenComputer={() => switchWorkspace("computer")}
           onLogout={logout}
         />
@@ -3136,6 +3391,7 @@ function App() {
           onGenerate={generateArtifact}
           onRefresh={refreshState}
           onRetryJob={retryJob}
+          onReviseArtifact={reviseArtifact}
         />
       )}
 
@@ -3164,17 +3420,17 @@ function Splash({ onSelectWorkspace }) {
         <div className="splash-mark logo-mark"><img src="/assets/aires/logo-symbol-white.svg" alt="" /></div>
         <p className="eyebrow">AIRES</p>
         <h1>Cooper</h1>
-        <p className="splash-line">Choose the workspace for the session. Cooper handles meetings; Operator delegates local work; Computer Use controls browser and desktop tasks with approvals.</p>
+        <p className="splash-line">Choose the session mode. Cooper handles voice meetings; Codex runs durable coding tasks; Computer Use controls browser and desktop actions with approvals.</p>
         <div className="workspace-choice-grid">
           <button className="workspace-choice-card" onClick={() => onSelectWorkspace("cooper")}>
             <span className="choice-icon"><Radio size={20} /></span>
             <strong>Cooper</strong>
             <span>Realtime voice chief of staff for meetings, project context, documents, and call artifacts.</span>
           </button>
-          <button className="workspace-choice-card" onClick={() => onSelectWorkspace("operator")}>
+          <button className="workspace-choice-card" onClick={() => onSelectWorkspace("codex")}>
             <span className="choice-icon"><Monitor size={20} /></span>
-            <strong>Operator</strong>
-            <span>Local-first supervised browser and Codex task runner with approvals, budgets, and replayable work.</span>
+            <strong>Codex</strong>
+            <span>Voice-orchestrated, durable Codex sessions with live task updates, approvals, and restart-safe reconnect.</span>
           </button>
           <button className="workspace-choice-card" onClick={() => onSelectWorkspace("computer")}>
             <span className="choice-icon"><MonitorSmartphone size={20} /></span>
@@ -3192,7 +3448,7 @@ function Splash({ onSelectWorkspace }) {
 }
 
 function OperatorWorkspace({
-  variant = "operator",
+  variant = "codex",
   state,
   selectedTask,
   events,
@@ -3221,15 +3477,19 @@ function OperatorWorkspace({
   onLogout
 }) {
   const isComputer = variant === "computer";
+  const isCodex = variant === "codex";
   const allPresets = state.presets?.length ? state.presets : [];
   const presets = isComputer
     ? allPresets.filter((preset) => ["computer_use_desktop", "computer_use_browser", "codex_app_server"].includes(preset.id))
-    : allPresets;
-  const firstPreset = isComputer ? "computer_use_desktop" : presets[0]?.id || "sendgrid_sender_auth";
+    : isCodex
+      ? allPresets.filter((preset) => preset.id === "codex_app_server")
+      : allPresets;
+  const firstPreset = isComputer ? "computer_use_desktop" : isCodex ? "codex_app_server" : presets[0]?.id || "sendgrid_sender_auth";
   const [skill, setSkill] = React.useState(firstPreset);
   const selectedPreset = presets.find((preset) => preset.id === skill) || presets[0] || null;
   const [goal, setGoal] = React.useState("");
   const [targetUrl, setTargetUrl] = React.useState(selectedPreset?.targetUrl || "");
+  const [workspacePath, setWorkspacePath] = React.useState(state.runtime?.codexWorkspace || "");
   const [domains, setDomains] = React.useState((selectedPreset?.defaultDomains || state.runtime?.defaultAllowedDomains || []).join(", "));
   const [operatorTab, setOperatorTab] = React.useState("watch");
 
@@ -3265,6 +3525,7 @@ function OperatorWorkspace({
           skill,
           goal: goal.trim() || defaultGoal,
           targetUrl,
+          workspacePath: isCodex ? workspacePath.trim() : "",
           allowedDomains
         });
     setGoal("");
@@ -3317,8 +3578,8 @@ function OperatorWorkspace({
       />
       <section className="operator-session-status" aria-label="Active session capability">
         <div>
-          <span>{isComputer ? "Computer Use" : "Operator"}</span>
-          <strong>{selectedTask?.title || (isComputer ? "Ready for a computer task" : "Ready to delegate work")}</strong>
+          <span>{isComputer ? "Computer Use" : isCodex ? "Codex orchestration" : "Operator"}</span>
+          <strong>{selectedTask?.title || (isComputer ? "Ready for a computer task" : isCodex ? "Ready for a durable Codex task" : "Ready to delegate work")}</strong>
           <small>{selectedTask?.id?.slice(0, 12) || "standby"}</small>
         </div>
         <button className="danger-action" onClick={onStopAll} disabled={!activeCount} type="button">
@@ -3351,7 +3612,7 @@ function OperatorWorkspace({
           <div className={`operator-rail-approval ${pendingApprovals.length ? "on" : ""}`}>
             <p className="eyebrow">Approval pending</p>
             <strong>{pendingApprovals[0]?.title || "No approval needed"}</strong>
-            <span>{pendingApprovals[0]?.description || "Operator will continue when the runner reaches the next checkpoint."}</span>
+            <span>{pendingApprovals[0]?.description || (isCodex ? "Codex will continue until it finishes or reaches an approval checkpoint." : "Operator will continue when the runner reaches the next checkpoint.")}</span>
           </div>
         </aside>
 
@@ -3420,7 +3681,7 @@ function OperatorWorkspace({
               <section className="operator-browser-panel">
                 <div className="operator-browser-chrome">
                   <span className="operator-dots"><i /><i /><i /></span>
-                  <span className="operator-address">{selectedTask?.targetUrl || state.runtime?.codexWorkspace || "local operator workspace"}</span>
+                  <span className="operator-address">{selectedTask?.runtime?.threadId || selectedTask?.workspacePath || selectedTask?.targetUrl || state.runtime?.codexWorkspace || "local operator workspace"}</span>
                   <span className="operator-live-flag">{selectedTask ? statusLabel(selectedTask.status) : "Idle"}</span>
                 </div>
                 <div className="operator-browser-body">
@@ -3433,8 +3694,8 @@ function OperatorWorkspace({
               <form className="operator-compose panel operator-tab-card" onSubmit={submitTask}>
                 <div className="panel-head">
                   <div>
-                    <p className="eyebrow">{isComputer ? "Computer command" : "Delegate work"}</p>
-                    <h2>{isComputer ? "Start supervised desktop or browser control" : "Start supervised documents, apps, pages, or browser work"}</h2>
+                    <p className="eyebrow">{isComputer ? "Computer command" : isCodex ? "Codex task" : "Delegate work"}</p>
+                    <h2>{isComputer ? "Start supervised desktop or browser control" : isCodex ? "Start a restart-safe local Codex session" : "Start supervised documents, apps, pages, or browser work"}</h2>
                   </div>
                   <button className="primary-action" type="submit">
                     <Send size={18} />
@@ -3464,6 +3725,12 @@ function OperatorWorkspace({
                     <span>Target URL</span>
                     <input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} placeholder="https://app.example.com" />
                   </label>
+                  {isCodex && (
+                    <label className="operator-wide-field">
+                      <span>Local workspace</span>
+                      <input value={workspacePath} onChange={(event) => setWorkspacePath(event.target.value)} placeholder="/Users/you/code/project" />
+                    </label>
+                  )}
                   <label className="operator-wide-field">
                     <span>Allowed domains</span>
                     <input value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="github.com, app.sendgrid.com" />
@@ -3496,7 +3763,7 @@ function OperatorWorkspace({
 }
 
 function OperatorOrchestratorPanel({
-  variant = "operator",
+  variant = "codex",
   connected,
   connecting,
   status,
@@ -3517,17 +3784,20 @@ function OperatorOrchestratorPanel({
   const live = connected || connecting;
   const stateLabel = connecting ? "Starting" : connected ? status : "Idle";
   const isComputer = variant === "computer";
+  const isCodex = variant === "codex";
 
   return (
     <section className="panel operator-orchestrator-panel">
       <div className="operator-orchestrator-head">
         <div>
-          <p className="eyebrow">{isComputer ? "Computer Use voice" : "Voice orchestrator"}</p>
-          <h2>{isComputer ? "What should Cooper control?" : "What should Cooper run?"}</h2>
+          <p className="eyebrow">{isComputer ? "Computer Use voice" : isCodex ? "Codex voice orchestration" : "Voice orchestrator"}</p>
+          <h2>{isComputer ? "What should Cooper control?" : isCodex ? "What should Codex work on?" : "What should Cooper run?"}</h2>
           <p className="muted">
             {isComputer
               ? "Start the Computer Use call, then ask Cooper to open apps, browse, download, inspect UI, work in Claude Code, or stop all control."
-              : "Start the orchestrator call, then ask for Codex work, browser work, repo debugging, or stop all active tasks."}
+              : isCodex
+                ? "Start the call, describe the coding outcome, approve the durable local session, and watch Codex continue through live checkpoints."
+                : "Start the orchestrator call, then ask for Codex work, browser work, repo debugging, or stop all active tasks."}
           </p>
         </div>
         <span className={`status-badge ${connected ? "good" : connecting ? "waiting" : ""}`}>
@@ -3538,7 +3808,7 @@ function OperatorOrchestratorPanel({
       <div className="operator-call-controls">
         <button className="primary-action" onClick={onStartCall} disabled={live}>
           <Mic size={18} />
-          <span>{connecting ? "Starting" : connected ? "Live" : isComputer ? "Start Computer Use call" : "Start Operator call"}</span>
+          <span>{connecting ? "Starting" : connected ? "Live" : isComputer ? "Start Computer Use call" : isCodex ? "Start Codex call" : "Start Operator call"}</span>
         </button>
         <button className="ghost-action" onClick={onStopCall} disabled={!live}>
           <PhoneOff size={18} />
@@ -3561,7 +3831,7 @@ function OperatorOrchestratorPanel({
           onChange={(event) => onSelectTask(event.target.value)}
           disabled={!tasks.length}
         >
-          {!tasks.length && <option value="">No Operator tasks yet</option>}
+          {!tasks.length && <option value="">{isCodex ? "No Codex tasks yet" : "No Operator tasks yet"}</option>}
           {tasks.map((task) => (
             <option key={task.id} value={task.id}>
               {task.title} - {statusLabel(task.status)} - {task.progress || 0}%
@@ -3592,7 +3862,7 @@ function OperatorOrchestratorPanel({
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
           disabled={!connected}
-          placeholder={connected ? isComputer ? "Ask Cooper to open, download, or control..." : "Ask Cooper Operator to start a task..." : isComputer ? "Start Computer Use to chat" : "Start Operator to chat"}
+          placeholder={connected ? isComputer ? "Ask Cooper to open, download, or control..." : isCodex ? "Ask Cooper to start or check a Codex task..." : "Ask Cooper Operator to start a task..." : isComputer ? "Start Computer Use to chat" : isCodex ? "Start Codex voice to chat" : "Start Operator to chat"}
         />
         <button className="primary-action" disabled={!connected || !prompt.trim()}>
           <Send size={18} />
@@ -3611,7 +3881,9 @@ function OperatorOrchestratorPanel({
           <p className="muted">
             {isComputer
               ? "Try: “Cooper, open Spotify” or “Cooper, open Claude Code and help me work this task.”"
-              : "Try: “Cooper, build a landing page and a mini app from what we discussed, then let me watch the work.”"}
+              : isCodex
+                ? "Try: “Cooper, start a Codex task in this repo to implement the approved action item, then keep me updated.”"
+                : "Try: “Cooper, build a landing page and a mini app from what we discussed, then let me watch the work.”"}
           </p>
         )}
       </div>
@@ -3640,6 +3912,36 @@ function OperatorTaskDetail({ task, onApproveTask, onCancelTask, pendingApproval
         <span className={`status-badge ${statusClass(task.status)}`}>{statusLabel(task.status)}</span>
       </div>
       <p>{task.goal}</p>
+      {task.skill === "codex_app_server" && (
+        <div className="codex-runtime-card" aria-label="Durable Codex runtime">
+          <div>
+            <span>Connection</span>
+            <strong>{statusLabel(task.runtime?.connectionStatus || "disconnected")}</strong>
+          </div>
+          <div>
+            <span>Transport</span>
+            <strong>{["daemon-proxy", "detached-socket"].includes(task.runtime?.transportMode) ? "Persistent local server" : task.runtime?.transportMode || "Pending"}</strong>
+          </div>
+          <div>
+            <span>Thread</span>
+            <strong title={task.runtime?.threadId || ""}>{task.runtime?.threadId ? task.runtime.threadId.slice(0, 16) : "Not started"}</strong>
+          </div>
+          <div>
+            <span>Turn</span>
+            <strong title={task.runtime?.turnId || ""}>{task.runtime?.turnId ? task.runtime.turnId.slice(0, 16) : "Not started"}</strong>
+          </div>
+          <div className="wide">
+            <span>Workspace</span>
+            <strong>{task.workspacePath || task.runtime?.cwd || "Configured default"}</strong>
+          </div>
+          {task.runtime?.lastReconciledAt && (
+            <div className="wide">
+              <span>Last reconnected</span>
+              <strong>{formatDate(task.runtime.lastReconciledAt)}</strong>
+            </div>
+          )}
+        </div>
+      )}
       <div className="operator-progress">
         <span style={{ width: `${task.progress}%` }} />
       </div>
@@ -4503,7 +4805,7 @@ function SettingsView({ arcade, arcadeDiscovery, pushToTalk, onRefreshDiscovery,
         <div className="panel-head">
           <div>
             <h2>Connected in Arcade</h2>
-            <p className="muted">These cards reflect providers Arcade reports for this Cooper user. If you connect a service in Arcade, press Refresh here.</p>
+            <p className="muted">These connections reflect providers Arcade reports for this Cooper user. If you connect a service in Arcade, press Refresh here.</p>
           </div>
           <span className="settings-user">{connectedServices.length} active</span>
         </div>
@@ -4769,34 +5071,35 @@ function HomeView({
   const sessions = feed.sessions || [];
   const itemCount = meetings.length + tasks.length + projects.length + sessions.length;
   const dateLabel = todayDateLabel();
+  const focusedItem = selectedItem || meetings[0] || tasks[0] || projects[0] || sessions[0] || null;
   const sections = [
     {
       id: "meetings",
-      label: "meetings",
+      label: "Up next",
       source: feed.sources?.calendar?.label || "Google Calendar",
-      items: meetings,
-      render: (item) => <TodayMeetingRow key={item.id} item={item} onOpen={onOpenItem} />
+      items: filter === "all" ? meetings.slice(0, 1) : meetings,
+      render: (item) => <TodayMeetingRow active={focusedItem?.id === item.id} key={item.id} item={item} onOpen={onOpenItem} />
     },
     {
       id: "tasks",
-      label: "sprint tasks",
+      label: "Priority work",
       source: feed.sprint?.title || feed.sources?.notion?.label || "Notion",
-      items: tasks,
-      render: (item) => <TodayTaskRow key={item.id} item={item} onOpen={onOpenItem} />
+      items: filter === "all" ? tasks.slice(0, 3) : tasks,
+      render: (item) => <TodayTaskRow active={focusedItem?.id === item.id} key={item.id} item={item} onOpen={onOpenItem} />
     },
     {
       id: "projects",
-      label: "projects",
+      label: "Projects",
       source: "Cooper workspace",
       items: projects,
-      render: (item) => <TodayResourceRow key={item.id} item={item} icon={FolderKanban} onOpen={onOpenItem} />
+      render: (item) => <TodayResourceRow active={focusedItem?.id === item.id} key={item.id} item={item} icon={FolderKanban} onOpen={onOpenItem} />
     },
     {
       id: "sessions",
-      label: "past sessions",
+      label: "Past sessions",
       source: "Session memory",
       items: sessions,
-      render: (item) => <TodayResourceRow key={item.id} item={item} icon={Clock} onOpen={onOpenItem} />
+      render: (item) => <TodayResourceRow active={focusedItem?.id === item.id} key={item.id} item={item} icon={Clock} onOpen={onOpenItem} />
     }
   ];
 
@@ -4810,77 +5113,92 @@ function HomeView({
         onOpenComputer={onSwitchComputer}
         onLogout={onLogout}
       />
-      <section className="today-page" aria-label="Today">
-        <div className="today-hero">
-          <div className="today-hero-copy">
+      <section className="today-page today-workspace" aria-label="Today">
+        <div className="today-main-column">
+          <div className="today-utility-line">
             <span>{dateLabel}</span>
-            <h1>{dayGreeting()}, Michael.</h1>
-            <p>{meetings.length} meetings and {tasks.length} active sprint tasks. Open anything here, or start a new session with Cooper.</p>
+            <button className="today-refresh" disabled={loading} onClick={onRefresh} title="Refresh Calendar and Notion" type="button">
+              <RefreshCw className={loading ? "spin" : ""} size={15} />
+              <span>{loading ? "Syncing" : "Refresh"}</span>
+            </button>
           </div>
-          <button className="daily-brief-launch" disabled={dailyBriefLoading && !dailyBrief} onClick={onOpenDailyBrief} type="button">
-            <Play size={16} fill="currentColor" />
-            <span>{dailyBriefLoading && !dailyBrief ? "Preparing brief" : "Daily Catch Up"}</span>
-          </button>
-        </div>
 
-        {(dailyBrief || dailyBriefError) && (
-          <DailyBriefSummaryCard
-            brief={dailyBrief}
-            error={dailyBriefError}
-            loading={dailyBriefLoading}
-            onOpen={onOpenDailyBrief}
-            onRefresh={onRefreshDailyBrief}
-          />
-        )}
+          <div className="today-hero">
+            <div className="today-hero-copy">
+              <h1>{dayGreeting()}, Michael.</h1>
+              <p>{meetings.length} sessions and {tasks.length} priority tasks are ready.</p>
+            </div>
+            <button className="daily-brief-launch" disabled={dailyBriefLoading && !dailyBrief} onClick={onOpenDailyBrief} type="button">
+              <Play size={15} fill="currentColor" />
+              <span>{dailyBriefLoading && !dailyBrief ? "Preparing brief" : "Daily Catch Up"}</span>
+            </button>
+          </div>
 
-        <div className="today-filter-line">
-          <div className="today-filter-tabs" role="tablist" aria-label="Today filters">
-            {[
-              ["all", "All"],
-              ["meetings", "Meetings"],
-              ["tasks", "Sprint tasks"],
-              ["projects", "Projects"],
-              ["sessions", "Past sessions"]
-            ].map(([id, label]) => (
-              <button
-                aria-selected={filter === id}
-                className={filter === id ? "active" : ""}
-                key={id}
-                onClick={() => onFilterChange(id)}
-                role="tab"
-                type="button"
+          {(dailyBrief || dailyBriefError) && (
+            <DailyBriefSummaryCard
+              brief={dailyBrief}
+              error={dailyBriefError}
+              loading={dailyBriefLoading}
+              onOpen={onOpenDailyBrief}
+              onRefresh={onRefreshDailyBrief}
+            />
+          )}
+
+          <div className="today-filter-line">
+            <div className="today-filter-tabs" role="tablist" aria-label="Today filters">
+              {[
+                ["all", "All"],
+                ["meetings", "Meetings"],
+                ["tasks", "Tasks"],
+                ["projects", "Projects"],
+                ["sessions", "Past sessions"]
+              ].map(([id, label]) => (
+                <button
+                  aria-selected={filter === id}
+                  className={filter === id ? "active" : ""}
+                  key={id}
+                  onClick={() => onFilterChange(id)}
+                  role="tab"
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <TodaySourceStatus feed={feed} loading={loading} error={error} />
+
+          {sections
+            .filter((section) => filter === section.id || (filter === "all" && section.items.length > 0))
+            .map((section) => (
+              <TodaySection
+                emptyMessage={feed.sources?.[section.id === "meetings" ? "calendar" : section.id === "tasks" ? "notion" : section.id]?.message}
+                key={section.id}
+                label={section.label}
+                source={section.source}
               >
-                {label}
-              </button>
+                {section.items.map(section.render)}
+              </TodaySection>
             ))}
-          </div>
-          <button className="today-refresh" disabled={loading} onClick={onRefresh} title="Refresh Calendar and Notion" type="button">
-            <RefreshCw className={loading ? "spin" : ""} size={15} />
-            <span>{loading ? "Syncing" : "Refresh"}</span>
-          </button>
+
+          {!loading && !error && itemCount === 0 && (
+            <div className="today-empty-state">
+              <CalendarDays size={22} />
+              <h2>Your day is clear.</h2>
+              <p>Connect Calendar and Notion in Settings, or start a fresh Cooper session.</p>
+            </div>
+          )}
         </div>
 
-        <TodaySourceStatus feed={feed} loading={loading} error={error} />
-
-        {sections
-          .filter((section) => filter === section.id || (filter === "all" && section.items.length > 0))
-          .map((section) => (
-            <TodaySection
-              emptyMessage={feed.sources?.[section.id === "meetings" ? "calendar" : section.id === "tasks" ? "notion" : section.id]?.message}
-              key={section.id}
-              label={section.label}
-              source={section.source}
-            >
-              {section.items.map(section.render)}
-            </TodaySection>
-          ))}
-
-        {!loading && !error && itemCount === 0 && (
-          <div className="today-empty-state">
-            <CalendarDays size={22} />
-            <h2>Your day is clear.</h2>
-            <p>Connect Calendar and Notion in Settings, or start a fresh Cooper session.</p>
-          </div>
+        {focusedItem && (
+          <TodayDetailRail
+            item={focusedItem}
+            open={Boolean(selectedItem)}
+            onClose={onBack}
+            onOpenSource={onOpenSource}
+            onStartItem={onStartItem}
+          />
         )}
       </section>
     </main>
@@ -5031,53 +5349,121 @@ function TodaySection({ label, source, emptyMessage = "Nothing here yet.", child
   );
 }
 
-function TodayMeetingRow({ item, onOpen }) {
+function TodayMeetingRow({ item, onOpen, active = false }) {
   const zoomDetails = zoomMeetingDetailsFromItem(item);
   return (
-    <button className="today-row meeting" onClick={() => onOpen(item.id)} type="button">
-      <span className="today-time">
-        <strong>{item.time}</strong>
-        <small>{item.duration}</small>
-      </span>
-      <i className="today-divider" />
-      <span className="today-row-main">
-        <span>
-          <strong>{item.title}</strong>
-          {item.status && <em>{item.status}</em>}
-          {zoomDetails.isZoom && <em className="zoom-chip">Zoom</em>}
-        </span>
-        <small>{item.subtitle}</small>
-      </span>
-      <ChevronRight size={18} />
-    </button>
-  );
-}
-
-function TodayTaskRow({ item, onOpen }) {
-  return (
-    <button className="today-row task" onClick={() => onOpen(item.id)} type="button">
-      <span className={item.priority === "active" ? "today-dot active" : "today-dot"} />
+    <button className={`today-row meeting${active ? " active" : ""}`} onClick={() => onOpen(item.id)} type="button" aria-pressed={active}>
+      <span className="today-resource-icon"><CalendarDays size={18} /></span>
       <span className="today-row-main">
         <strong>{item.title}</strong>
-        <small>{item.subtitle}</small>
+        <small>{item.time}–{meetingEndTime(item.time, item.duration)} · {feedSourceLabel(item, "Google Calendar")}</small>
       </span>
-      <em className={/in progress|qa|ready/i.test(item.status) ? "today-status active" : "today-status"}>{item.status}</em>
+      <span className="today-row-people" aria-label={item.subtitle || "Meeting participants"}>
+        {participantInitials(item.subtitle).map((initials) => <i key={initials}>{initials}</i>)}
+      </span>
+      <span className="today-row-kind">
+        <span><i />Meeting</span>
+        <small>{zoomDetails.isZoom ? "Zoom" : item.eyebrow?.split("·")[0]?.trim() || "Cooper"}</small>
+      </span>
       <ChevronRight size={18} />
     </button>
   );
 }
 
-function TodayResourceRow({ item, icon: Icon, onOpen }) {
+function TodayTaskRow({ item, onOpen, active = false }) {
   return (
-    <button className="today-row resource" onClick={() => onOpen(item.id)} type="button">
+    <button className={`today-row task${active ? " active" : ""}`} onClick={() => onOpen(item.id)} type="button" aria-pressed={active}>
+      <span className="today-resource-icon"><ListChecks size={18} /></span>
+      <span className="today-row-main">
+        <strong>{item.title}</strong>
+        <small>{item.status || "Ready"} · {item.subtitle || "Cooper workspace"}</small>
+      </span>
+      <span className="today-row-kind">
+        <span><i />Task</span>
+        <small>{item.eyebrow?.split("·")[0]?.trim() || "Rep velocity"}</small>
+      </span>
+      <ChevronRight size={18} />
+    </button>
+  );
+}
+
+function TodayResourceRow({ item, icon: Icon, onOpen, active = false }) {
+  return (
+    <button className={`today-row resource${active ? " active" : ""}`} onClick={() => onOpen(item.id)} type="button" aria-pressed={active}>
       <span className="today-resource-icon"><Icon size={17} /></span>
       <span className="today-row-main">
         <strong>{item.title}</strong>
         <small>{item.subtitle}</small>
       </span>
-      <em className={item.priority === "active" ? "today-status active" : "today-status"}>{item.status}</em>
+      <span className="today-row-kind">
+        <span><i />{item.type === "project" ? "Project" : "Session"}</span>
+        <small>{item.status}</small>
+      </span>
       <ChevronRight size={18} />
     </button>
+  );
+}
+
+function TodayDetailRail({ item, open = false, onClose, onStartItem, onOpenSource }) {
+  const sourceLabel = {
+    meeting: "Open in Calendar",
+    task: "Open in Notion",
+    project: "Open project",
+    session: "Open saved session"
+  }[item.type] || "Open source";
+  const points = item.points || [];
+  const docs = item.docs || [];
+  const people = participantInitials(item.subtitle);
+
+  return (
+    <>
+      <button className={`today-detail-scrim${open ? " is-open" : ""}`} onClick={onClose} type="button" aria-label="Close item details" tabIndex={open ? 0 : -1} />
+      <aside className={`today-detail-rail${open ? " is-open" : ""}`} aria-label={`${item.title} details`}>
+        <button className="today-detail-close" onClick={onClose} type="button" aria-label="Close item details"><X size={19} /></button>
+        <p className="today-detail-type"><span />{item.type === "meeting" ? "Meeting" : item.type}</p>
+        <h2>{item.title}</h2>
+        <p className="today-detail-time"><Clock size={16} />{item.type === "meeting" ? `${item.time}–${meetingEndTime(item.time, item.duration)} · ${item.duration}` : item.status}</p>
+
+        <section className="today-detail-section">
+          <h3>{item.type === "meeting" ? "People" : "Owner"}</h3>
+          {!!people.length && <div className="today-detail-avatars">{people.map((initials) => <span key={initials}>{initials}</span>)}</div>}
+          <p>{item.subtitle || "Cooper workspace"}</p>
+        </section>
+
+        <section className="today-detail-section">
+          <h3>Purpose</h3>
+          <p>{concisePurpose(item.description || points[0] || "Open this item with Cooper to review the available context and next action.")}</p>
+        </section>
+
+        {!!points.length && (
+          <section className="today-detail-section today-detail-points">
+            <h3>Cooper will track</h3>
+            <ul>{points.slice(0, 3).map((point) => <li key={point}>{point}</li>)}</ul>
+          </section>
+        )}
+
+        <section className="today-detail-section today-detail-sources">
+          <h3>Context sources</h3>
+          <div>
+            {(docs.length ? docs : [feedSourceLabel(item, item.type === "meeting" ? "Google Calendar" : "Cooper workspace")]).slice(0, 3).map((doc, index) => (
+              <button key={`${doc}-${index}`} onClick={() => onOpenSource(item)} type="button">
+                <span><FileText size={17} /></span>
+                <span><strong>{doc}</strong><small>{item.type === "meeting" ? "Updated recently" : item.subtitle}</small></span>
+                <ExternalLink size={14} />
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <div className="today-detail-rail-actions">
+          <button className="today-primary-action" onClick={() => onStartItem(item)} type="button">
+            <Sparkles size={17} />
+            <span>{item.actionLabel || (item.type === "session" ? "Resume session" : "Prepare session")}</span>
+          </button>
+          <button className="today-secondary-action" onClick={() => onOpenSource(item)} type="button">{sourceLabel}</button>
+        </div>
+      </aside>
+    </>
   );
 }
 
@@ -5478,7 +5864,7 @@ function CallCanvas({
     const callArtifacts = artifacts.filter((artifact) => artifact.callId === callId);
     const callJobs = jobs.filter((job) => job.callId === callId);
     const pendingCanvasJobs = canvasJobsForCall(jobs, artifacts, callId);
-    const activeJobCount = callJobs.filter((job) => ["queued", "running"].includes(job.status)).length;
+    const activeJobCount = callJobs.filter((job) => ["queued", "running", "pausing", "canceling"].includes(job.status)).length;
     const visibleArtifact = selectedArtifact?.callId === callId ? selectedArtifact : callArtifacts[0] || null;
     const visibleContent = visibleArtifact?.id === selectedArtifact?.id ? artifactContent : "";
     const selectedExample = examples.find((example) => example.id === selectedExampleId) || examples[0] || null;
@@ -5786,6 +6172,7 @@ function CallCanvas({
         <div className="call-canvas-tools" role="tablist" aria-label="Canvas tools">
           <button className={activeTab === "presentation" ? "active" : ""} onClick={() => setActiveTab("presentation")} type="button">Presentation</button>
           {hasPreparedOverview && <button className={activeTab === "overview" ? "active" : ""} onClick={() => setActiveTab("overview")} type="button">Overview</button>}
+          <button className={activeTab === "write" ? "active" : ""} onClick={() => setActiveTab("write")} type="button">Write</button>
           <button className={activeTab === "preview" ? "active" : ""} onClick={() => setActiveTab("preview")} type="button">Preview</button>
           {canvasToolTabs.map(([id, label]) => (
             <button className={activeTab === id ? "active" : ""} key={id} onClick={() => setActiveTab(id)} type="button">
@@ -5821,6 +6208,14 @@ function CallCanvas({
             onPrepareAgain={onPrepareSession}
           />
         </div>
+      )}
+
+      {activeTab === "write" && (
+        <SessionKnowledgeCanvas
+          callId={callId}
+          sessionTitle={sessionFocus?.title || activeCall?.title || "Session"}
+          onAttachContext={onAddContext}
+        />
       )}
 
       {activeTab === "preview" && (
@@ -6690,8 +7085,10 @@ function LibraryView({ calls, artifacts, jobs, selectedCall, onSelectCall, onRes
   );
 }
 
-function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactContent, onSelectArtifact, onGenerate, onRefresh, onRetryJob }) {
+function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactContent, onSelectArtifact, onGenerate, onRefresh, onRetryJob, onReviseArtifact }) {
   const [artifactMode, setArtifactMode] = React.useState("rendered");
+  const [revisionInstruction, setRevisionInstruction] = React.useState("");
+  const [revisionBusy, setRevisionBusy] = React.useState(false);
   const latestCall = calls.find((call) => call.status === "ended") || calls[0] || null;
   const isHtmlArtifact = selectedArtifact?.outputType === "html";
   const isMcpAppArtifact = selectedArtifact?.outputType === "mcp_app";
@@ -6714,7 +7111,16 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
 
   React.useEffect(() => {
     setArtifactMode(isHtmlArtifact || isPdfArtifact ? "preview" : isMcpAppArtifact ? "app" : isOfficeArtifact ? "download" : "rendered");
+    setRevisionInstruction("");
   }, [isHtmlArtifact, isMcpAppArtifact, isPdfArtifact, isOfficeArtifact, selectedArtifact?.id]);
+
+  async function queueRevision() {
+    if (!selectedArtifact || !revisionInstruction.trim() || !onReviseArtifact) return;
+    setRevisionBusy(true);
+    const queued = await onReviseArtifact(selectedArtifact.id, revisionInstruction.trim());
+    if (queued) setRevisionInstruction("");
+    setRevisionBusy(false);
+  }
 
   function prototypeFromArtifact() {
     if (!selectedArtifact) return;
@@ -6854,6 +7260,12 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
               <dd>{selectedCall?.title || "Unknown call"}</dd>
               <dt>Output</dt>
               <dd>{isHtmlArtifact ? "HTML preview" : isMcpAppArtifact ? "MCP app" : isPdfArtifact ? "Host-generated PDF" : isOfficeArtifact ? officeConfig.description : "Markdown + rendered read view"}</dd>
+              <dt>Version</dt>
+              <dd>v{Number(selectedArtifact.version || 1)}</dd>
+              <dt>Quality</dt>
+              <dd>{selectedArtifact.quality?.status === "passed" ? `${selectedArtifact.quality.score}% passed` : selectedArtifact.quality?.summary || "Not scored"}</dd>
+              <dt>Sources</dt>
+              <dd>{Number(selectedArtifact.sourceManifest?.contextSourceCount || 0)} connected · {Number(selectedArtifact.sourceManifest?.transcriptTurnCount || 0)} transcript turns</dd>
             </dl>
             <div className="tag-row">
               <span>{artifactLabel(selectedArtifact.kind).toLowerCase()}</span>
@@ -6864,6 +7276,21 @@ function ArtifactView({ artifacts, jobs, calls, selectedArtifact, artifactConten
               <strong>Queue</strong>
               <JobList jobs={jobs.slice(0, 3)} onRetry={onRetryJob} onOpenArtifact={onSelectArtifact} selectedArtifactId={selectedArtifact?.id} />
             </section>
+            {onReviseArtifact && (
+              <section className="artifact-revision-panel">
+                <strong>Revise in background</strong>
+                <textarea
+                  value={revisionInstruction}
+                  onChange={(event) => setRevisionInstruction(event.target.value)}
+                  placeholder="Describe what Cooper should improve, add, remove, or reframe."
+                  rows={4}
+                />
+                <button className="primary-action" disabled={revisionBusy || !revisionInstruction.trim()} onClick={queueRevision} type="button">
+                  <RotateCcw size={16} />
+                  <span>{revisionBusy ? "Queuing..." : "Create next version"}</span>
+                </button>
+              </section>
+            )}
           </>
         ) : (
           <p className="muted">Select an artifact to inspect source and status.</p>
@@ -7353,9 +7780,22 @@ function CallLibraryRow({ call, artifactCount, jobCount, active, onSelect }) {
 }
 
 function JobList({ jobs, onRetry, onOpenArtifact, selectedArtifactId }) {
-  const hasActiveJobs = jobs.some((job) => ["queued", "running"].includes(job.status));
+  const [controlBusy, setControlBusy] = React.useState("");
+  const hasActiveJobs = jobs.some((job) => ["queued", "running", "pausing", "canceling"].includes(job.status));
   const now = useNow(hasActiveJobs);
   if (!jobs.length) return <p className="muted">Queue is clear.</p>;
+
+  async function controlJob(jobId, action) {
+    setControlBusy(`${jobId}:${action}`);
+    try {
+      await fetch(`/api/jobs/${jobId}/${action}`, {
+        method: "POST",
+        credentials: "same-origin"
+      });
+    } finally {
+      setControlBusy("");
+    }
+  }
 
   return (
     <div className="job-list">
@@ -7382,10 +7822,52 @@ function JobList({ jobs, onRetry, onOpenArtifact, selectedArtifactId }) {
                 <span style={{ width: `${progressPercent(job)}%` }} />
               </div>
               {job.progress && <small>{job.progress}</small>}
+              {job.pipelineStage && <small className="job-pipeline-stage">Pipeline: {String(job.pipelineStage).replace(/_/g, " ")}</small>}
               {job.activeStepSummary && <small>Step: {job.activeStepSummary}</small>}
               {jobApiLine(job, now) && <small>{jobApiLine(job, now)}</small>}
               {job.draftCharCount ? <small>Draft: {Number(job.draftCharCount).toLocaleString()} chars captured.</small> : null}
+              {job.quality?.status && job.quality.status !== "pending" && (
+                <small className={`job-quality ${job.quality.status}`}>
+                  Quality: {job.quality.status === "passed" ? `${job.quality.score}% passed` : job.quality.summary || "Needs review"}
+                </small>
+              )}
               {job.error && <small>{job.error}</small>}
+              {["queued", "running", "pausing"].includes(job.status) && (
+                <div className="job-controls" aria-label={`${job.title} controls`}>
+                  {!['pausing'].includes(job.status) && (
+                    <button
+                      className="inline-action"
+                      disabled={Boolean(controlBusy)}
+                      onClick={() => controlJob(job.id, "pause")}
+                      type="button"
+                    >
+                      <Pause size={14} />
+                      <span>Pause</span>
+                    </button>
+                  )}
+                  <button
+                    className="inline-action danger"
+                    disabled={Boolean(controlBusy)}
+                    onClick={() => controlJob(job.id, "cancel")}
+                    type="button"
+                  >
+                    <X size={14} />
+                    <span>Cancel</span>
+                  </button>
+                </div>
+              )}
+              {job.status === "paused" && (
+                <div className="job-controls" aria-label={`${job.title} controls`}>
+                  <button className="inline-action" disabled={Boolean(controlBusy)} onClick={() => controlJob(job.id, "resume")} type="button">
+                    <Play size={14} />
+                    <span>Resume</span>
+                  </button>
+                  <button className="inline-action danger" disabled={Boolean(controlBusy)} onClick={() => controlJob(job.id, "cancel")} type="button">
+                    <X size={14} />
+                    <span>Cancel</span>
+                  </button>
+                </div>
+              )}
               {job.status === "failed" && onRetry && (
                 <button className="inline-action" onClick={() => onRetry(job.id)}>
                   <RotateCcw size={16} />
@@ -7495,6 +7977,10 @@ function artifactLabel(kind) {
     mcp_app: "MCP App",
     aires_requirements: "AIRES scoped requirements",
     product_requirements: "PRD",
+    architecture_decision_record: "Architecture decision record",
+    sprint_recap: "Sprint recap",
+    decision_log: "Decision log",
+    release_brief: "Release brief",
     execution_plan: "Execution plan",
     post_call_kit: "Post-call kit",
     follow_up: "Follow-up summary",
@@ -7808,6 +8294,7 @@ function toolLabel(name) {
     create_followup_action: "Follow-up actions",
     check_calendar: "Calendar check",
     create_canvas_artifact: "Canvas artifact",
+    create_document_artifact: "Document pipeline",
     render_mcp_app: "MCP App canvas",
     present_aires_example: "AIRES example canvas",
     generate_aires_template_artifact: "AIRES template generator",
@@ -7911,6 +8398,8 @@ function operatorTaskSnapshot(task, { includeLogs = true, includeArtifacts = tru
     skill: task.skill,
     riskLevel: task.riskLevel,
     goal: task.goal,
+    workspacePath: task.workspacePath,
+    runtime: task.runtime,
     currentStep: task.steps[Math.min(task.stepIndex, task.steps.length - 1)] || "",
     pendingApprovals: task.approvals.filter((approval) => approval.status === "pending"),
     approvals: task.approvals,
@@ -7927,7 +8416,7 @@ function operatorTaskStatusMessage(task) {
   if (!task) return "No Operator task exists yet.";
   const pending = task.approvals.find((approval) => approval.status === "pending");
   const artifact = task.generatedArtifacts?.[0] || task.artifacts[task.artifacts.length - 1];
-  const activeJobs = (task.generatedJobs || []).filter((job) => ["queued", "running"].includes(job.status));
+  const activeJobs = (task.generatedJobs || []).filter((job) => ["queued", "running", "pausing", "canceling"].includes(job.status));
   const latest = task.logs[task.logs.length - 1];
   if (pending) return `${task.title} is waiting for approval: ${pending.title}. ${pending.description}`;
   if (activeJobs.length) return `${task.title} is running ${activeJobs.length} Cooper work job${activeJobs.length === 1 ? "" : "s"}. Latest checkpoint: ${latest?.title || "none yet"}. ${latest?.detail || ""}`.trim();
@@ -7951,6 +8440,10 @@ function statusLabel(status) {
     active: "Active",
     queued: "Queued",
     running: "Running",
+    pausing: "Pausing",
+    paused: "Paused",
+    canceling: "Canceling",
+    canceled: "Canceled",
     waiting_approval: "Needs approval",
     stopped: "Stopped",
     cancelled: "Cancelled",
@@ -7967,8 +8460,8 @@ function statusLabel(status) {
 
 function statusClass(status) {
   if (["completed", "ended", "executed"].includes(status)) return "good";
-  if (["active", "pending", "pending_approval", "not_started", "queued", "running", "waiting_approval"].includes(status)) return "waiting";
-  if (["missing_api_key", "missing_mapping", "failed", "error", "stopped", "cancelled"].includes(status)) return "bad";
+  if (["active", "pending", "pending_approval", "not_started", "queued", "running", "pausing", "paused", "canceling", "waiting_approval"].includes(status)) return "waiting";
+  if (["missing_api_key", "missing_mapping", "failed", "error", "stopped", "cancelled", "canceled"].includes(status)) return "bad";
   return "";
 }
 
@@ -7980,6 +8473,44 @@ function formatDate(value) {
 function formatTime(value) {
   if (!value) return "";
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+}
+
+function meetingEndTime(start = "", duration = "") {
+  const match = String(start).match(/^(\d{1,2}):(\d{2})$/);
+  const durationMinutes = Number(String(duration).match(/\d+/)?.[0] || 0);
+  if (!match || !durationMinutes) return String(duration || "").replace(/\s*min$/i, "") || "—";
+  const date = new Date(2000, 0, 1, Number(match[1]), Number(match[2]) + durationMinutes);
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function participantInitials(value = "") {
+  const tokens = String(value)
+    .split(/[,·]/)
+    .map((token) => token.trim())
+    .filter((token) => token && !/^\+?\d+$/.test(token) && !/\bteam\b/i.test(token))
+    .slice(0, 3);
+  return tokens
+    .map((token) => token.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase())
+    .filter(Boolean);
+}
+
+function feedSourceLabel(item, fallback = "Cooper") {
+  const source = String(item?.source || "").trim();
+  if (!source) return fallback;
+  return source
+    .split(/[_-]/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function concisePurpose(value = "") {
+  const cleaned = String(value)
+    .split(/(?:─{3,}|-{3,}|\b(?:join zoom meeting|view meeting insights|meeting id:|one tap mobile|dial by your location)\b)/i)[0]
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "Open this item with Cooper to review the available context and next action.";
+  return cleaned.length > 280 ? `${cleaned.slice(0, 277).trimEnd()}…` : cleaned;
 }
 
 function todayDateLabel() {

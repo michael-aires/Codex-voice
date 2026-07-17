@@ -1,0 +1,1322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cooper — Minimal Sessions Prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --white: #ffffff;
+      --neutral-200: #f8f7f4;
+      --neutral-300: #efeeea;
+      --neutral-400: #e4e3df;
+      --neutral-500: #d7d6d2;
+      --neutral-700: #8a8985;
+      --neutral-800: #62615e;
+      --black: #2d2c2d;
+      --yellow: #f0de4a;
+      --yellow-strong: #d5c22f;
+      --yellow-soft: #fffbed;
+      --green: #13845f;
+      --blue: #2563eb;
+      --danger: #ad3f36;
+      --focus: #2774d8;
+      --sidebar: 240px;
+      --archive: 300px;
+      --radius: 7px;
+      --ease: 180ms ease;
+      color-scheme: light;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-width: 320px;
+      min-height: 100%;
+      margin: 0;
+      background: var(--white);
+      color: var(--black);
+    }
+
+    body {
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button,
+    select {
+      color: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    svg {
+      display: block;
+    }
+
+    .app-shell {
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr);
+      width: 100%;
+      height: 100vh;
+      background: var(--white);
+    }
+
+    .app-sidebar {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      padding: 24px 16px 18px;
+      border-right: 1px solid var(--neutral-400);
+      background: var(--white);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      height: 42px;
+      margin-bottom: 25px;
+      padding: 0 7px;
+      color: var(--black);
+      font-size: 21px;
+      font-weight: 600;
+      letter-spacing: .08em;
+    }
+
+    .brand-mark {
+      position: relative;
+      width: 28px;
+      height: 28px;
+      flex: 0 0 28px;
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      position: absolute;
+      inset: 3px 13px;
+      background: var(--yellow-strong);
+      content: "";
+    }
+
+    .brand-mark::after {
+      transform: rotate(90deg);
+    }
+
+    .brand-mark span,
+    .brand-mark span::before {
+      position: absolute;
+      inset: 3px 13px;
+      background: var(--yellow-strong);
+      content: "";
+      transform: rotate(45deg);
+    }
+
+    .brand-mark span::before {
+      inset: 0;
+      transform: rotate(90deg);
+    }
+
+    .product {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 7px 28px;
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    .product-avatar {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 50%;
+      background: #111111;
+      color: var(--yellow);
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .nav-group {
+      display: grid;
+      gap: 5px;
+    }
+
+    .nav-label {
+      margin: 28px 10px 11px;
+      color: var(--neutral-800);
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 48px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--black);
+      font-size: 14px;
+      text-align: left;
+    }
+
+    .nav-item svg {
+      width: 21px;
+      height: 21px;
+      flex: 0 0 21px;
+      stroke-width: 1.6;
+    }
+
+    .nav-item:hover {
+      background: var(--neutral-200);
+    }
+
+    .nav-item.active {
+      background: var(--black);
+      color: var(--white);
+    }
+
+    .sidebar-bottom {
+      display: grid;
+      gap: 18px;
+      margin-top: auto;
+    }
+
+    .profile {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr) 18px;
+      align-items: center;
+      gap: 10px;
+      padding: 18px 7px 2px;
+      border-top: 1px solid var(--neutral-400);
+      font-size: 13px;
+    }
+
+    .profile-avatar {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 50%;
+      background: #979793;
+      color: var(--white);
+      font-size: 12px;
+    }
+
+    .workspace {
+      display: grid;
+      min-width: 0;
+      grid-template-columns: var(--archive) minmax(0, 1fr);
+      height: 100vh;
+    }
+
+    .session-archive {
+      min-width: 0;
+      overflow: hidden;
+      border-right: 1px solid var(--neutral-400);
+      background: var(--white);
+    }
+
+    .archive-head {
+      display: grid;
+      gap: 12px;
+      min-height: 130px;
+      padding: 35px 24px 22px 30px;
+      border-bottom: 1px solid var(--neutral-400);
+    }
+
+    .archive-head h1 {
+      margin: 0;
+      font-size: 23px;
+      font-weight: 600;
+      letter-spacing: -.025em;
+    }
+
+    .archive-filter {
+      position: relative;
+      width: fit-content;
+    }
+
+    .archive-filter select {
+      min-height: 32px;
+      padding: 0 26px 0 0;
+      border: 0;
+      appearance: none;
+      background: transparent;
+      color: var(--neutral-800);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .archive-filter svg {
+      position: absolute;
+      top: 10px;
+      right: 4px;
+      width: 13px;
+      height: 13px;
+      pointer-events: none;
+    }
+
+    .session-list {
+      height: calc(100vh - 130px);
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--neutral-500) transparent;
+    }
+
+    .session-row {
+      position: relative;
+      display: grid;
+      width: 100%;
+      gap: 7px;
+      padding: 20px 24px 20px 30px;
+      border: 0;
+      border-bottom: 1px solid var(--neutral-400);
+      background: var(--white);
+      text-align: left;
+      transition: background var(--ease);
+    }
+
+    .session-row::before {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 3px;
+      background: transparent;
+      content: "";
+    }
+
+    .session-row:hover {
+      background: var(--neutral-200);
+    }
+
+    .session-row.active {
+      background: var(--yellow-soft);
+    }
+
+    .session-row.active::before {
+      background: var(--yellow);
+    }
+
+    .session-row-title {
+      display: -webkit-box;
+      overflow: hidden;
+      color: var(--black);
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.4;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .session-row-meta {
+      color: var(--neutral-800);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .session-row-status {
+      color: var(--neutral-700);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .session-row-status.live {
+      color: var(--green);
+      font-weight: 500;
+    }
+
+    .session-detail {
+      position: relative;
+      min-width: 0;
+      overflow-y: auto;
+      background: var(--white);
+    }
+
+    .mobile-detail-back {
+      display: none;
+    }
+
+    .detail-inner {
+      width: min(100%, 1060px);
+      margin: 0 auto;
+      padding: 42px 48px 80px;
+    }
+
+    .detail-head {
+      padding-bottom: 30px;
+    }
+
+    .detail-head-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 36px;
+    }
+
+    .detail-copy {
+      min-width: 0;
+    }
+
+    .detail-copy h2 {
+      max-width: 700px;
+      margin: 0;
+      color: var(--black);
+      font-size: clamp(30px, 3vw, 42px);
+      font-weight: 600;
+      line-height: 1.08;
+      letter-spacing: -.045em;
+    }
+
+    .session-date {
+      margin: 11px 0 0;
+      color: var(--neutral-800);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .session-summary {
+      max-width: 680px;
+      margin: 20px 0 0;
+      color: var(--black);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+
+    .session-technical {
+      margin: 21px 0 0;
+      color: var(--neutral-800);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .detail-actions {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex: 0 0 auto;
+      gap: 9px;
+    }
+
+    .primary-action,
+    .more-action {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .primary-action {
+      gap: 9px;
+      padding: 0 18px;
+      border: 1px solid var(--yellow-strong);
+      background: var(--yellow);
+      color: var(--black);
+    }
+
+    .primary-action:hover {
+      background: #e8d63d;
+    }
+
+    .primary-action svg {
+      width: 17px;
+      height: 17px;
+    }
+
+    .more-action {
+      width: 44px;
+      padding: 0;
+      border: 1px solid var(--neutral-500);
+      background: var(--white);
+    }
+
+    .more-action:hover,
+    .more-action[aria-expanded="true"] {
+      border-color: var(--neutral-800);
+      background: var(--neutral-200);
+    }
+
+    .more-menu {
+      position: absolute;
+      z-index: 8;
+      top: 52px;
+      right: 0;
+      display: none;
+      width: 196px;
+      padding: 6px;
+      border: 1px solid var(--neutral-500);
+      border-radius: 7px;
+      background: var(--white);
+      box-shadow: 0 12px 30px rgb(45 44 45 / 10%);
+    }
+
+    .more-menu.open {
+      display: grid;
+    }
+
+    .more-menu button {
+      min-height: 38px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      font-size: 12px;
+      text-align: left;
+    }
+
+    .more-menu button:hover {
+      background: var(--neutral-200);
+    }
+
+    .content-nav {
+      position: sticky;
+      z-index: 5;
+      top: 0;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      padding-top: 4px;
+      border-bottom: 1px solid var(--neutral-500);
+      background: rgb(255 255 255 / 96%);
+      backdrop-filter: blur(10px);
+    }
+
+    .tabs {
+      display: flex;
+      align-items: center;
+      gap: 30px;
+    }
+
+    .tab {
+      position: relative;
+      min-height: 52px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--neutral-800);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .tab::after {
+      position: absolute;
+      right: 0;
+      bottom: -1px;
+      left: 0;
+      height: 2px;
+      background: transparent;
+      content: "";
+    }
+
+    .tab[aria-selected="true"] {
+      color: var(--black);
+      font-weight: 600;
+    }
+
+    .tab[aria-selected="true"]::after {
+      background: var(--yellow);
+    }
+
+    .transcript-search {
+      position: relative;
+      width: min(280px, 36%);
+      margin-bottom: 8px;
+    }
+
+    .transcript-search svg {
+      position: absolute;
+      top: 11px;
+      left: 12px;
+      width: 15px;
+      height: 15px;
+      color: var(--neutral-800);
+      pointer-events: none;
+    }
+
+    .transcript-search input {
+      width: 100%;
+      min-height: 38px;
+      padding: 0 12px 0 36px;
+      border: 1px solid var(--neutral-500);
+      border-radius: 6px;
+      background: var(--white);
+      color: var(--black);
+      font-size: 12px;
+    }
+
+    .transcript-search input::placeholder {
+      color: var(--neutral-700);
+    }
+
+    .panel {
+      padding-top: 20px;
+    }
+
+    .panel[hidden] {
+      display: none;
+    }
+
+    .transcript {
+      display: grid;
+      gap: 0;
+      max-width: 900px;
+    }
+
+    .transcript-entry {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 20px;
+      padding: 0 0 28px;
+    }
+
+    .entry-time {
+      padding-top: 2px;
+      color: var(--neutral-800);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+
+    .entry-body {
+      min-width: 0;
+      padding-left: 0;
+    }
+
+    .transcript-entry.cooper .entry-body {
+      padding-left: 16px;
+      border-left: 3px solid var(--yellow);
+    }
+
+    .entry-body strong {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .entry-body p {
+      max-width: 760px;
+      margin: 0;
+      color: #393839;
+      font-size: 14px;
+      line-height: 1.62;
+    }
+
+    .empty-search {
+      display: none;
+      padding: 70px 0;
+      color: var(--neutral-800);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .artifacts-panel {
+      max-width: 760px;
+      padding-top: 38px;
+    }
+
+    .artifacts-panel h3 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -.025em;
+    }
+
+    .artifacts-panel > p {
+      margin: 9px 0 32px;
+      color: var(--neutral-800);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .artifact-list {
+      border-top: 1px solid var(--neutral-400);
+    }
+
+    .artifact-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      padding: 19px 0;
+      border-bottom: 1px solid var(--neutral-400);
+    }
+
+    .artifact-row strong,
+    .artifact-row small {
+      display: block;
+    }
+
+    .artifact-row strong {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .artifact-row small {
+      margin-top: 5px;
+      color: var(--neutral-800);
+      font-size: 11px;
+    }
+
+    .artifact-row button {
+      align-self: center;
+      min-height: 34px;
+      padding: 0 11px;
+      border: 1px solid var(--neutral-500);
+      border-radius: 6px;
+      background: var(--white);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .artifact-empty {
+      padding: 76px 20px;
+      border-top: 1px solid var(--neutral-400);
+      color: var(--neutral-800);
+      font-size: 13px;
+      line-height: 1.6;
+      text-align: center;
+    }
+
+    .toast {
+      position: fixed;
+      z-index: 20;
+      right: 24px;
+      bottom: 24px;
+      max-width: 320px;
+      padding: 12px 15px;
+      border: 1px solid var(--neutral-500);
+      border-radius: 7px;
+      background: var(--black);
+      color: var(--white);
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+      transition: opacity var(--ease), transform var(--ease);
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1180px) {
+      :root {
+        --sidebar: 210px;
+        --archive: 280px;
+      }
+
+      .detail-inner {
+        padding-right: 30px;
+        padding-left: 30px;
+      }
+
+      .detail-head-row {
+        gap: 24px;
+      }
+
+      .primary-action span {
+        display: none;
+      }
+
+      .primary-action {
+        width: 44px;
+        padding: 0;
+      }
+    }
+
+    @media (max-width: 920px) {
+      body {
+        overflow: auto;
+      }
+
+      .app-shell {
+        display: block;
+        height: auto;
+      }
+
+      .app-sidebar {
+        display: none;
+      }
+
+      .workspace {
+        grid-template-columns: 300px minmax(0, 1fr);
+        height: 100dvh;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .workspace {
+        display: block;
+      }
+
+      .session-archive,
+      .session-detail {
+        width: 100%;
+        height: 100dvh;
+      }
+
+      .session-archive {
+        border-right: 0;
+      }
+
+      .archive-head {
+        min-height: 114px;
+        padding: 23px 20px 18px;
+      }
+
+      .session-list {
+        height: calc(100dvh - 114px);
+      }
+
+      .session-row {
+        padding: 19px 20px;
+      }
+
+      .session-detail {
+        display: none;
+      }
+
+      .workspace.detail-open .session-archive {
+        display: none;
+      }
+
+      .workspace.detail-open .session-detail {
+        display: block;
+      }
+
+      .mobile-detail-back {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        margin: 18px 18px 0;
+        padding: 8px 0;
+        border: 0;
+        background: transparent;
+        color: var(--neutral-800);
+        font-size: 12px;
+      }
+
+      .detail-inner {
+        padding: 22px 20px 60px;
+      }
+
+      .detail-head {
+        padding-bottom: 22px;
+      }
+
+      .detail-head-row {
+        display: grid;
+        gap: 24px;
+      }
+
+      .detail-copy h2 {
+        font-size: 31px;
+      }
+
+      .detail-actions {
+        grid-row: 2;
+      }
+
+      .primary-action {
+        width: auto;
+        flex: 1;
+        padding: 0 16px;
+      }
+
+      .primary-action span {
+        display: inline;
+      }
+
+      .content-nav {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 0;
+        padding-top: 0;
+      }
+
+      .tabs {
+        order: 2;
+      }
+
+      .transcript-search {
+        width: 100%;
+        margin: 0 0 8px;
+      }
+
+      .transcript-entry {
+        grid-template-columns: 1fr;
+        gap: 6px;
+        padding-bottom: 26px;
+      }
+
+      .entry-time {
+        font-size: 11px;
+      }
+
+      .entry-body p {
+        font-size: 13px;
+      }
+
+      .toast {
+        right: 16px;
+        bottom: 16px;
+        left: 16px;
+        max-width: none;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="app-sidebar" aria-label="Cooper workspace navigation">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><span></span></span>AIRES</div>
+      <div class="product"><span class="product-avatar">C</span><span>Cooper</span></div>
+
+      <nav class="nav-group" aria-label="Primary navigation">
+        <button class="nav-item" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 3v3M18 3v3M4 8h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z"/></svg>
+          Today
+        </button>
+        <button class="nav-item active" type="button" aria-current="page">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+          Sessions
+        </button>
+        <button class="nav-item" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h7l2 2h9v11H3Z"/></svg>
+          Projects
+        </button>
+        <button class="nav-item" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 3h5v18H4zM10 3h5v18h-5zM16 3h4v18h-4z"/></svg>
+          Library
+        </button>
+      </nav>
+
+      <p class="nav-label">Workspace</p>
+      <nav class="nav-group" aria-label="Workspace shortcuts">
+        <button class="nav-item" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m3 17 5-5 4 3 7-9M14 6h5v5"/></svg>
+          Rep velocity
+        </button>
+        <button class="nav-item" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h2M12 8h5M7 12h2M12 12h5M7 16h2M12 16h5"/></svg>
+          Listings
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <button class="nav-item" type="button">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>
+          Settings
+        </button>
+        <div class="profile"><span class="profile-avatar">MM</span><span>Michael Moll</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m7 10 5 5 5-5"/></svg></div>
+      </div>
+    </aside>
+
+    <main class="workspace" id="workspace">
+      <section class="session-archive" aria-labelledby="sessions-title">
+        <header class="archive-head">
+          <h1 id="sessions-title">Sessions</h1>
+          <label class="archive-filter">
+            <span class="sr-only" hidden>Filter sessions</span>
+            <select id="sessionFilter" aria-label="Filter sessions">
+              <option value="all">All sessions</option>
+              <option value="active">Active session</option>
+              <option value="prepared">Prepared</option>
+            </select>
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m7 10 5 5 5-5"/></svg>
+          </label>
+        </header>
+        <div class="session-list" id="sessionList" aria-label="Saved sessions"></div>
+      </section>
+
+      <article class="session-detail" aria-labelledby="detailTitle">
+        <button class="mobile-detail-back" id="mobileBack" type="button">
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m15 18-6-6 6-6"/></svg>
+          All sessions
+        </button>
+
+        <div class="detail-inner">
+          <header class="detail-head">
+            <div class="detail-head-row">
+              <div class="detail-copy">
+                <h2 id="detailTitle">Cooper session: Daily Catch Up</h2>
+                <p class="session-date" id="detailDate">Jul 15, 2:49 PM · 0:00</p>
+                <p class="session-summary" id="detailSummary">I'm standing by, but I can't speak unless woken.</p>
+                <p class="session-technical" id="detailTechnical">gpt-realtime-2 · ~3.3k est. tokens · ~$0.16 est. cost</p>
+              </div>
+
+              <div class="detail-actions">
+                <button class="primary-action" id="resumeAction" type="button">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6M4 4v4.6h4.6"/></svg>
+                  <span>Resume with Cooper</span>
+                </button>
+                <button class="more-action" id="moreAction" type="button" aria-label="More session actions" aria-expanded="false" aria-controls="moreMenu">
+                  <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+                </button>
+                <div class="more-menu" id="moreMenu" role="menu">
+                  <button type="button" role="menuitem" data-action="Share session">Share session</button>
+                  <button type="button" role="menuitem" data-action="Export transcript">Export transcript</button>
+                  <button type="button" role="menuitem" data-action="Session settings">Session settings</button>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <div class="content-nav">
+            <div class="tabs" role="tablist" aria-label="Session content">
+              <button class="tab" id="transcriptTab" type="button" role="tab" aria-selected="true" aria-controls="transcriptPanel">Transcript</button>
+              <button class="tab" id="artifactsTab" type="button" role="tab" aria-selected="false" aria-controls="artifactsPanel">Artifacts</button>
+            </div>
+            <label class="transcript-search" id="searchWrap">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+              <input id="transcriptSearch" type="search" placeholder="Search transcript" autocomplete="off" />
+            </label>
+          </div>
+
+          <section class="panel" id="transcriptPanel" role="tabpanel" aria-labelledby="transcriptTab">
+            <div class="transcript" id="transcript"></div>
+            <p class="empty-search" id="emptySearch">No transcript entries match this search.</p>
+          </section>
+
+          <section class="panel artifacts-panel" id="artifactsPanel" role="tabpanel" aria-labelledby="artifactsTab" hidden>
+            <h3>Artifacts</h3>
+            <p id="artifactIntro">Work created during this session stays together here.</p>
+            <div id="artifactContent"></div>
+          </section>
+        </div>
+      </article>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const sessions = [
+      {
+        id: "daily-catch-up",
+        title: "Cooper session: Daily Catch Up",
+        date: "Jul 15, 2:49 PM",
+        duration: "0:00",
+        status: "Active session",
+        type: "active",
+        summary: "I'm standing by, but I can't speak unless woken.",
+        technical: "gpt-realtime-2 · ~3.3k est. tokens · ~$0.16 est. cost",
+        artifacts: [],
+        transcript: [
+          { time: "2:49 PM", speaker: "Michael", text: "Present my Daily Catch Up as a crisp, upbeat spoken update. Say these four lines in order, using the wording as written and only a brief natural breath between lines. Do not add an introduction, headings, filler, or a recap. The opening and transition cues keep the presentation slides synchronized. 1. Good morning. Here's your daily update. Today has 4 meetings, with Daily Team Stand Up next and 13 open tickets in Jun 29th – Jul 12th 2026. 4 need date attention. 2. On your calendar: 4 meetings. Next up is 09:30, Daily Team Stand Up. 3. In the sprint: 13 open tickets. 4 need date attention. 4. Your focus for today: Resolve Feature Request: Intracorp Lease reporting, then Advance AWS: Review EC2 CPU/RAM utilization & rightsize per customer. What do you want to tackle first?" },
+          { time: "2:49 PM", speaker: "Cooper", text: "I'm standing by, but I can't speak unless woken." },
+          { time: "2:49 PM", speaker: "Cooper", text: "I'm here, but I can't jump in unless someone says “Cooper.”" },
+          { time: "2:49 PM", speaker: "Michael", text: "Cooper" },
+          { time: "2:49 PM", speaker: "Cooper", text: "Good morning. Here's your daily update. Today has 4 meetings, with Daily Team Stand Up next and 13 open tickets in Jun 29th – Jul 12th 2026. 4 need date attention. On your calendar: 4 meetings. Next up is 09:30, Daily Team Stand Up. In the sprint: 13 open tickets. 4 need date attention. Your focus for today: Resolve Feature Request: Intracorp Lease reporting, then Advance AWS: Review EC2 CPU/RAM utilization & rightsize per customer. What do you want to tackle first?" }
+        ]
+      },
+      {
+        id: "peterson",
+        title: "Prepared session: Peterson customer readiness",
+        date: "Jul 14, 11:28 AM",
+        duration: "0:00",
+        status: "Prepared",
+        type: "prepared",
+        summary: "Context is prepared for the Peterson customer-readiness review.",
+        technical: "gpt-realtime-2 · ~2.1k est. tokens · ~$0.11 est. cost",
+        artifacts: [
+          { title: "Peterson readiness brief", meta: "Shared context brief · Updated Jul 14" },
+          { title: "Customer verification checklist", meta: "QA checklist · Updated Jul 14" }
+        ],
+        transcript: [
+          { time: "11:28 AM", speaker: "Cooper", text: "The Peterson context packet is prepared. We can review the customer-visible issues, evidence still needed, and the final release gates." }
+        ]
+      },
+      {
+        id: "collaboration",
+        title: "Prepared session: Cooper collaboration",
+        date: "Jul 14, 10:53 AM",
+        duration: "0:00",
+        status: "Prepared",
+        type: "prepared",
+        summary: "A focused workspace for the next Cooper collaboration review.",
+        technical: "gpt-realtime-2 · ~1.8k est. tokens · ~$0.09 est. cost",
+        artifacts: [
+          { title: "Collaboration decision map", meta: "Decision map · Updated Jul 14" }
+        ],
+        transcript: [
+          { time: "10:53 AM", speaker: "Michael", text: "Let's make the handoff between live sessions and asynchronous work feel continuous." },
+          { time: "10:54 AM", speaker: "Cooper", text: "I'll keep the current decisions, open questions, and active work visible as one bounded session context." }
+        ]
+      },
+      {
+        id: "catch-up-previous",
+        title: "Cooper session: Daily Catch Up",
+        date: "Jul 14, 11:26 AM",
+        duration: "0:00",
+        status: "Prepared",
+        type: "prepared",
+        summary: "Yesterday's daily briefing remains ready to revisit.",
+        technical: "gpt-realtime-2 · ~2.9k est. tokens · ~$0.14 est. cost",
+        artifacts: [],
+        transcript: [
+          { time: "11:26 AM", speaker: "Cooper", text: "Yesterday's briefing covered the active sprint, today's meetings, and work that needed date attention." }
+        ]
+      },
+      {
+        id: "creo-parking",
+        title: "Prepared session: CREO — Plan Parking Operations",
+        date: "Jul 14, 10:47 AM",
+        duration: "0:00",
+        status: "Prepared",
+        type: "prepared",
+        summary: "The CREO parking-operations plan is organized for review.",
+        technical: "gpt-realtime-2 · ~4.2k est. tokens · ~$0.20 est. cost",
+        artifacts: [
+          { title: "CREO operations requirements", meta: "Requirements first pass · Updated Jul 14" },
+          { title: "Parking workflow decision map", meta: "Decision map · Updated Jul 14" },
+          { title: "Operations acceptance checklist", meta: "QA checklist · Updated Jul 14" }
+        ],
+        transcript: [
+          { time: "10:47 AM", speaker: "Michael", text: "Review the parking operations workflow and surface the decisions that still block implementation." },
+          { time: "10:48 AM", speaker: "Cooper", text: "The main decision gates are organized by arrival, allocation, payment, exception handling, and closeout." }
+        ]
+      },
+      {
+        id: "collaboration-previous",
+        title: "Prepared session: Cooper collaboration",
+        date: "Jul 14, 10:48 AM",
+        duration: "0:00",
+        status: "Prepared",
+        type: "prepared",
+        summary: "A previous Cooper collaboration session.",
+        technical: "gpt-realtime-2 · ~1.6k est. tokens · ~$0.08 est. cost",
+        artifacts: [],
+        transcript: [
+          { time: "10:48 AM", speaker: "Cooper", text: "The workspace is ready whenever you want to continue." }
+        ]
+      }
+    ];
+
+    const state = {
+      activeId: sessions[0].id,
+      filter: "all",
+      tab: "transcript",
+      search: ""
+    };
+
+    const elements = {
+      workspace: document.querySelector("#workspace"),
+      list: document.querySelector("#sessionList"),
+      filter: document.querySelector("#sessionFilter"),
+      title: document.querySelector("#detailTitle"),
+      date: document.querySelector("#detailDate"),
+      summary: document.querySelector("#detailSummary"),
+      technical: document.querySelector("#detailTechnical"),
+      transcript: document.querySelector("#transcript"),
+      transcriptPanel: document.querySelector("#transcriptPanel"),
+      artifactsPanel: document.querySelector("#artifactsPanel"),
+      artifactContent: document.querySelector("#artifactContent"),
+      artifactIntro: document.querySelector("#artifactIntro"),
+      transcriptTab: document.querySelector("#transcriptTab"),
+      artifactsTab: document.querySelector("#artifactsTab"),
+      searchWrap: document.querySelector("#searchWrap"),
+      search: document.querySelector("#transcriptSearch"),
+      emptySearch: document.querySelector("#emptySearch"),
+      moreAction: document.querySelector("#moreAction"),
+      moreMenu: document.querySelector("#moreMenu"),
+      resumeAction: document.querySelector("#resumeAction"),
+      mobileBack: document.querySelector("#mobileBack"),
+      toast: document.querySelector("#toast")
+    };
+
+    function activeSession() {
+      return sessions.find((session) => session.id === state.activeId) || sessions[0];
+    }
+
+    function escapeHtml(value) {
+      return value.replace(/[&<>'"]/g, (character) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "'": "&#39;",
+        '"': "&quot;"
+      })[character]);
+    }
+
+    function showToast(message) {
+      elements.toast.textContent = message;
+      elements.toast.classList.add("show");
+      window.clearTimeout(showToast.timeout);
+      showToast.timeout = window.setTimeout(() => elements.toast.classList.remove("show"), 2200);
+    }
+
+    function renderList() {
+      const visible = sessions.filter((session) => state.filter === "all" || session.type === state.filter);
+      elements.list.innerHTML = visible.map((session) => `
+        <button class="session-row ${session.id === state.activeId ? "active" : ""}" type="button" data-session-id="${session.id}" aria-pressed="${session.id === state.activeId}">
+          <span class="session-row-title">${escapeHtml(session.title)}</span>
+          <span class="session-row-meta">${escapeHtml(session.date)} · ${escapeHtml(session.duration)}</span>
+          <span class="session-row-status ${session.type === "active" ? "live" : ""}">${escapeHtml(session.status)}</span>
+        </button>
+      `).join("");
+    }
+
+    function renderTranscript() {
+      const session = activeSession();
+      const search = state.search.trim().toLowerCase();
+      const visible = session.transcript.filter((entry) => `${entry.speaker} ${entry.text}`.toLowerCase().includes(search));
+
+      elements.transcript.innerHTML = visible.map((entry) => `
+        <article class="transcript-entry ${entry.speaker === "Cooper" ? "cooper" : ""}">
+          <time class="entry-time">${escapeHtml(entry.time)}</time>
+          <div class="entry-body">
+            <strong>${escapeHtml(entry.speaker)}</strong>
+            <p>${escapeHtml(entry.text)}</p>
+          </div>
+        </article>
+      `).join("");
+      elements.emptySearch.style.display = visible.length ? "none" : "block";
+    }
+
+    function renderArtifacts() {
+      const session = activeSession();
+      elements.artifactIntro.textContent = session.artifacts.length
+        ? `${session.artifacts.length} ${session.artifacts.length === 1 ? "artifact" : "artifacts"} created during this session.`
+        : "Work created during this session stays together here.";
+
+      elements.artifactContent.innerHTML = session.artifacts.length
+        ? `<div class="artifact-list">${session.artifacts.map((artifact) => `
+            <article class="artifact-row">
+              <div><strong>${escapeHtml(artifact.title)}</strong><small>${escapeHtml(artifact.meta)}</small></div>
+              <button type="button" data-open-artifact="${escapeHtml(artifact.title)}">Open</button>
+            </article>
+          `).join("")}</div>`
+        : `<div class="artifact-empty">No artifacts yet.<br />Anything Cooper creates in this session will appear here.</div>`;
+    }
+
+    function renderSession() {
+      const session = activeSession();
+      elements.title.textContent = session.title;
+      elements.date.textContent = `${session.date} · ${session.duration}`;
+      elements.summary.textContent = session.summary;
+      elements.technical.textContent = session.technical;
+      elements.search.value = "";
+      state.search = "";
+      renderTranscript();
+      renderArtifacts();
+    }
+
+    function setTab(tab) {
+      state.tab = tab;
+      const transcriptActive = tab === "transcript";
+      elements.transcriptTab.setAttribute("aria-selected", String(transcriptActive));
+      elements.artifactsTab.setAttribute("aria-selected", String(!transcriptActive));
+      elements.transcriptPanel.hidden = !transcriptActive;
+      elements.artifactsPanel.hidden = transcriptActive;
+      elements.searchWrap.hidden = !transcriptActive;
+      if (transcriptActive) renderTranscript();
+      else renderArtifacts();
+    }
+
+    function selectSession(id) {
+      state.activeId = id;
+      setTab("transcript");
+      renderList();
+      renderSession();
+      elements.workspace.classList.add("detail-open");
+    }
+
+    elements.list.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-session-id]");
+      if (row) selectSession(row.dataset.sessionId);
+    });
+
+    elements.filter.addEventListener("change", () => {
+      state.filter = elements.filter.value;
+      const visible = sessions.filter((session) => state.filter === "all" || session.type === state.filter);
+      if (!visible.some((session) => session.id === state.activeId) && visible.length) state.activeId = visible[0].id;
+      renderList();
+      renderSession();
+    });
+
+    elements.transcriptTab.addEventListener("click", () => setTab("transcript"));
+    elements.artifactsTab.addEventListener("click", () => setTab("artifacts"));
+
+    elements.search.addEventListener("input", () => {
+      state.search = elements.search.value;
+      renderTranscript();
+    });
+
+    elements.moreAction.addEventListener("click", () => {
+      const open = !elements.moreMenu.classList.contains("open");
+      elements.moreMenu.classList.toggle("open", open);
+      elements.moreAction.setAttribute("aria-expanded", String(open));
+    });
+
+    elements.moreMenu.addEventListener("click", (event) => {
+      const action = event.target.closest("[data-action]");
+      if (!action) return;
+      showToast(`${action.dataset.action} selected in prototype`);
+      elements.moreMenu.classList.remove("open");
+      elements.moreAction.setAttribute("aria-expanded", "false");
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".detail-actions")) {
+        elements.moreMenu.classList.remove("open");
+        elements.moreAction.setAttribute("aria-expanded", "false");
+      }
+    });
+
+    elements.resumeAction.addEventListener("click", () => showToast("Session ready to resume with Cooper"));
+    elements.mobileBack.addEventListener("click", () => elements.workspace.classList.remove("detail-open"));
+
+    elements.artifactContent.addEventListener("click", (event) => {
+      const artifact = event.target.closest("[data-open-artifact]");
+      if (artifact) showToast(`Opening ${artifact.dataset.openArtifact}`);
+    });
+
+    renderList();
+    renderSession();
+    setTab("transcript");
+  </script>
+</body>
+</html>

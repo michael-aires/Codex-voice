@@ -2,7 +2,7 @@ export const SESSION_NAV_ITEMS = Object.freeze([
   { id: "today", label: "Today", legacyView: "home" },
   { id: "sessions", label: "Sessions", legacyView: "library" },
   { id: "projects", label: "Projects", legacyView: "projects" },
-  { id: "library", label: "Library", legacyView: "artifacts" },
+  { id: "docs", label: "Docs", legacyView: "docs" },
   { id: "settings", label: "Settings", legacyView: "settings" }
 ]);
 

@@ -102,8 +102,16 @@ export function markdownPdfBlocks(value = "") {
   return blocks;
 }
 
-export async function renderArtifactPdf({ title = "Cooper brief", content = "", createdAt = new Date().toISOString() } = {}) {
+export async function renderArtifactPdf({
+  title = "Cooper brief",
+  content = "",
+  createdAt = new Date().toISOString(),
+  label = "SESSION ARTIFACT",
+  subject = "Generated session artifact"
+} = {}) {
   const safeTitle = inlineText(title) || "Cooper brief";
+  const safeLabel = (inlineText(label) || "SESSION ARTIFACT").toUpperCase().slice(0, 48);
+  const safeSubject = inlineText(subject) || "Generated session artifact";
   const blocks = markdownPdfBlocks(content);
   const doc = new PDFDocument({
     size: "LETTER",
@@ -112,7 +120,7 @@ export async function renderArtifactPdf({ title = "Cooper brief", content = "", 
     info: {
       Title: safeTitle,
       Author: "Cooper by AIRES",
-      Subject: "Generated session artifact",
+      Subject: safeSubject,
       Creator: "Cooper artifact worker"
     }
   });
@@ -123,7 +131,7 @@ export async function renderArtifactPdf({ title = "Cooper brief", content = "", 
     doc.on("error", reject);
   });
 
-  renderHeader(doc, safeTitle, createdAt);
+  renderHeader(doc, safeTitle, createdAt, safeLabel);
   if (!blocks.length) {
     renderParagraph(doc, "No source content was available for this brief.");
   } else {
@@ -134,7 +142,7 @@ export async function renderArtifactPdf({ title = "Cooper brief", content = "", 
   return completion;
 }
 
-function renderHeader(doc, title, createdAt) {
+function renderHeader(doc, title, createdAt, label) {
   const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   doc.save();
   doc.roundedRect(doc.page.margins.left, doc.page.margins.top, width, 118, 8).fill(COLORS.ink);
@@ -154,7 +162,7 @@ function renderHeader(doc, title, createdAt) {
   doc.restore();
   doc.y = doc.page.margins.top + 138;
   doc.fillColor(COLORS.muted).font("Helvetica").fontSize(8).text(
-    `GENERATED ${formatPdfDate(createdAt)}  |  SESSION ARTIFACT`,
+    `GENERATED ${formatPdfDate(createdAt)}  |  ${label}`,
     { characterSpacing: 0.65 }
   );
   doc.moveDown(1.8);

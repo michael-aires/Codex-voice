@@ -1,0 +1,1206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <meta name="description" content="A docs-grounded architecture for controlling local Codex sessions and supervised computer actions through Cooper voice." />
+  <title>Cooper × Codex — Voice-controlled local agents</title>
+  <style>
+    :root {
+      --ink: #12151b;
+      --muted: #5d6470;
+      --quiet: #858c97;
+      --line: #dce1e8;
+      --line-strong: #c4cbd6;
+      --blue: #1456f0;
+      --blue-deep: #0d3eb7;
+      --blue-soft: #edf4ff;
+      --blue-wash: #f7faff;
+      --coral: #f25045;
+      --coral-soft: #fff1ef;
+      --green: #16794c;
+      --green-soft: #eef9f3;
+      --violet: #7852d6;
+      --violet-soft: #f6f1ff;
+      --amber: #a76400;
+      --amber-soft: #fff7e8;
+      --white: #ffffff;
+      --shadow: 0 18px 56px rgba(22, 35, 63, 0.1);
+      --max: 1240px;
+      --radius: 16px;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background: var(--white);
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; }
+
+    button, a { -webkit-tap-highlight-color: transparent; }
+
+    button { font: inherit; }
+
+    :focus-visible {
+      outline: 3px solid rgba(20, 86, 240, 0.28);
+      outline-offset: 3px;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      border-bottom: 1px solid rgba(220, 225, 232, 0.9);
+      background: rgba(255, 255, 255, 0.93);
+      backdrop-filter: blur(16px);
+    }
+
+    .header-inner {
+      width: min(calc(100% - 40px), var(--max));
+      height: 72px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 32px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      font-size: 18px;
+      font-weight: 760;
+      letter-spacing: -0.04em;
+      white-space: nowrap;
+    }
+
+    .brand-x { color: var(--blue); font-weight: 500; }
+
+    .nav {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .nav a {
+      padding: 8px 0;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+      text-decoration: none;
+    }
+
+    .nav a:hover { color: var(--blue); }
+
+    .local-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .local-status::before {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: var(--blue);
+      box-shadow: 0 0 0 5px var(--blue-soft);
+      content: "";
+    }
+
+    main { overflow: hidden; }
+
+    .section {
+      width: min(calc(100% - 40px), var(--max));
+      margin: 0 auto;
+      padding: 96px 0;
+    }
+
+    .section + .section { border-top: 1px solid var(--line); }
+
+    .hero {
+      width: min(calc(100% - 40px), var(--max));
+      min-height: 650px;
+      margin: 0 auto;
+      padding: 88px 0 68px;
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(600px, 1.05fr);
+      align-items: center;
+      gap: 48px;
+    }
+
+    .hero h1 {
+      max-width: 650px;
+      margin: 0;
+      font-size: clamp(48px, 5.2vw, 72px);
+      line-height: 0.99;
+      letter-spacing: -0.072em;
+      font-weight: 790;
+    }
+
+    .hero-copy > p {
+      max-width: 590px;
+      margin: 30px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.7;
+    }
+
+    .hero-actions {
+      margin-top: 34px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .button {
+      min-height: 48px;
+      padding: 0 20px;
+      border: 1px solid var(--line-strong);
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      background: var(--white);
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 720;
+      text-decoration: none;
+      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+    }
+
+    .button:hover { transform: translateY(-1px); border-color: var(--blue); }
+
+    .button.primary {
+      border-color: var(--blue);
+      background: var(--blue);
+      color: var(--white);
+      box-shadow: 0 10px 24px rgba(20, 86, 240, 0.22);
+    }
+
+    .button.primary:hover { box-shadow: 0 13px 30px rgba(20, 86, 240, 0.28); }
+
+    .hero-demo {
+      position: relative;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--blue-wash);
+      box-shadow: var(--shadow);
+    }
+
+    .demo-topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 26px;
+    }
+
+    .demo-topline strong { font-size: 13px; }
+
+    .demo-live {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 760;
+    }
+
+    .demo-live::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 99px;
+      background: currentColor;
+      content: "";
+      animation: breathe 1.9s infinite;
+    }
+
+    @keyframes breathe { 50% { opacity: 0.32; transform: scale(0.7); } }
+
+    .demo-flow {
+      display: grid;
+      grid-template-columns: 0.82fr 16px 0.82fr 16px 0.92fr 16px 0.92fr;
+      align-items: stretch;
+      gap: 10px;
+    }
+
+    .demo-arrow {
+      align-self: center;
+      color: var(--quiet);
+      font-size: 22px;
+      text-align: center;
+    }
+
+    .demo-card {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      background: var(--white);
+    }
+
+    .demo-card.approval { border-color: var(--coral); box-shadow: 0 0 0 3px var(--coral-soft); }
+    .demo-card.running { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+
+    .demo-label {
+      margin-bottom: 16px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 760;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .demo-card.approval .demo-label { color: var(--coral); }
+    .demo-card.running .demo-label { color: var(--blue); }
+
+    .demo-card strong { display: block; font-size: 13px; line-height: 1.35; }
+    .demo-card p { min-height: 56px; margin: 8px 0 16px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+    .wave {
+      height: 24px;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .wave i {
+      width: 2px;
+      height: var(--h);
+      border-radius: 4px;
+      display: block;
+      background: var(--coral);
+      animation: wave 1.15s ease-in-out infinite alternate;
+      animation-delay: var(--d);
+    }
+
+    @keyframes wave { to { height: calc(var(--h) * 0.42); opacity: 0.55; } }
+
+    .mini-actions { display: flex; gap: 6px; }
+    .mini-action { padding: 6px 7px; border-radius: 6px; background: var(--blue); color: white; font-size: 9px; font-weight: 750; }
+    .mini-action.quiet { background: #eef0f4; color: var(--muted); }
+
+    .progress {
+      height: 5px;
+      margin-top: 12px;
+      overflow: hidden;
+      border-radius: 99px;
+      background: #e6e9ef;
+    }
+
+    .progress span { width: 61%; height: 100%; display: block; background: var(--blue); }
+
+    .hero-foot {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .scenario-wrap {
+      width: min(calc(100% - 40px), var(--max));
+      margin: 0 auto 30px;
+      padding: 28px 0 48px;
+      border-top: 1px solid var(--line);
+    }
+
+    .scenario-intro {
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      gap: 40px;
+      align-items: start;
+    }
+
+    .scenario-intro h2 { margin: 0; font-size: 17px; letter-spacing: -0.03em; }
+    .scenario-intro p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+
+    .scenario-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 2px;
+    }
+
+    .scenario-tab {
+      min-height: 70px;
+      padding: 14px;
+      border: 1px solid transparent;
+      border-left-color: var(--line);
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .scenario-tab:first-child { border-left-color: transparent; }
+    .scenario-tab:hover { color: var(--blue); }
+
+    .scenario-tab[aria-selected="true"] {
+      border-color: var(--blue);
+      border-radius: 10px;
+      background: var(--blue-soft);
+      color: var(--blue-deep);
+    }
+
+    .scenario-panel {
+      margin-top: 28px;
+      padding: 26px 28px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      display: grid;
+      grid-template-columns: 0.9fr 1.3fr;
+      gap: 42px;
+      background: #fbfcfe;
+    }
+
+    .scenario-panel h3 { margin: 0; font-size: 22px; letter-spacing: -0.04em; }
+    .scenario-panel p { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+
+    .scenario-steps {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      counter-reset: step;
+    }
+
+    .scenario-step {
+      position: relative;
+      min-height: 86px;
+      padding: 16px 12px 12px;
+      border-top: 2px solid var(--blue);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .scenario-step::before {
+      counter-increment: step;
+      content: counter(step, decimal-leading-zero);
+      display: block;
+      margin-bottom: 8px;
+      color: var(--blue);
+      font: 700 10px/1 var(--mono);
+    }
+
+    .section-heading {
+      max-width: 760px;
+      margin-bottom: 44px;
+    }
+
+    .section-heading h2 {
+      margin: 0;
+      font-size: clamp(34px, 4vw, 54px);
+      line-height: 1.06;
+      letter-spacing: -0.055em;
+    }
+
+    .section-heading p { max-width: 680px; margin: 16px 0 0; color: var(--muted); font-size: 16px; }
+
+    .architecture-band {
+      position: relative;
+      padding: 36px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--blue-wash);
+    }
+
+    .architecture-map {
+      display: grid;
+      grid-template-columns: minmax(135px, 0.76fr) 28px minmax(170px, 1fr) 28px minmax(170px, 0.92fr) 28px minmax(260px, 1.45fr) 28px minmax(160px, 0.88fr);
+      align-items: center;
+      gap: 8px;
+    }
+
+    .map-arrow { color: var(--quiet); font-size: 24px; text-align: center; }
+
+    .node {
+      padding: 18px;
+      border: 1px solid var(--line-strong);
+      border-radius: 13px;
+      background: var(--white);
+    }
+
+    .node.primary { border-color: var(--blue); }
+    .node.approval { border-style: dashed; border-color: var(--coral); background: var(--coral-soft); }
+
+    .node-head { display: flex; align-items: center; gap: 9px; }
+    .node-index { color: var(--blue); font: 760 10px/1 var(--mono); }
+    .node.approval .node-index { color: var(--coral); }
+    .node h3 { margin: 0; font-size: 13px; }
+    .node > p { margin: 9px 0 0; color: var(--muted); font-size: 11px; }
+
+    .node ul { margin: 14px 0 0; padding: 0; list-style: none; }
+    .node li { position: relative; padding: 4px 0 4px 12px; color: var(--muted); font-size: 10px; }
+    .node li::before { position: absolute; left: 0; top: 10px; width: 4px; height: 4px; border-radius: 99px; background: var(--blue); content: ""; }
+    .node.approval li::before { background: var(--coral); }
+
+    .execution-lanes { display: grid; gap: 9px; }
+
+    .lane {
+      padding: 14px;
+      border: 1px solid var(--line-strong);
+      border-radius: 11px;
+      display: grid;
+      grid-template-columns: 30px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      background: var(--white);
+    }
+
+    .lane.recommended { border-color: var(--blue); }
+    .lane.deterministic { border-color: #52a57b; }
+    .lane.visual { border-color: #a686e9; }
+
+    .lane-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font: 760 10px/1 var(--mono);
+    }
+
+    .lane.deterministic .lane-mark { background: var(--green-soft); color: var(--green); }
+    .lane.visual .lane-mark { background: var(--violet-soft); color: var(--violet); }
+    .lane strong { display: block; font-size: 11px; }
+    .lane small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; line-height: 1.35; }
+
+    .maturity {
+      white-space: nowrap;
+      color: var(--muted);
+      font: 700 8px/1 var(--mono);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .map-outputs { display: grid; gap: 9px; }
+
+    .architecture-note {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-left: 3px solid var(--blue);
+      background: var(--white);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .architecture-note strong { color: var(--ink); }
+
+    .status-strip {
+      margin-top: 30px;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .status-item { padding: 18px 16px; border-right: 1px solid var(--line); }
+    .status-item:last-child { border-right: 0; }
+    .status-item small { display: block; color: var(--quiet); font: 700 9px/1 var(--mono); text-transform: uppercase; }
+    .status-item strong { display: block; margin-top: 8px; font-size: 12px; }
+    .status-item span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+    .status-item.built small { color: var(--green); }
+    .status-item.scaffold small { color: var(--amber); }
+    .status-item.next small { color: var(--blue); }
+
+    .simple-hands {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 26px;
+    }
+
+    .hand-lane {
+      padding: 30px;
+      border: 1px solid var(--line-strong);
+      border-radius: 18px;
+    }
+
+    .hand-lane.deterministic { border-color: #83bca0; background: #fbfefc; }
+    .hand-lane.computer { border-color: #b7a3e8; background: #fdfbff; }
+    .hand-lane h3 { margin: 0; font-size: 21px; letter-spacing: -0.04em; }
+    .hand-lane > p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+
+    .hand-flow {
+      margin-top: 28px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .hand-step { position: relative; min-height: 108px; padding-top: 14px; border-top: 2px solid currentColor; }
+    .hand-step strong { display: block; font-size: 11px; }
+    .hand-step span { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; }
+    .deterministic .hand-step { color: var(--green); }
+    .computer .hand-step { color: var(--violet); }
+
+    .hand-best {
+      margin-top: 18px;
+      padding: 15px;
+      border: 1px solid currentColor;
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .hand-best strong { color: var(--ink); }
+
+    .rule-banner {
+      margin-top: 22px;
+      padding: 17px 20px;
+      border: 1px solid var(--blue);
+      border-radius: 11px;
+      background: var(--blue-soft);
+      color: var(--blue-deep);
+      font-size: 13px;
+      font-weight: 650;
+      text-align: center;
+    }
+
+    .surface-shell {
+      display: grid;
+      grid-template-columns: 230px minmax(0, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+    }
+
+    .surface-tabs { padding: 18px; background: #f7f8fa; border-right: 1px solid var(--line); }
+    .surface-tab {
+      width: 100%;
+      padding: 13px 12px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-align: left;
+      cursor: pointer;
+    }
+    .surface-tab:hover { color: var(--blue); }
+    .surface-tab[aria-selected="true"] { background: var(--white); color: var(--blue-deep); box-shadow: 0 3px 12px rgba(24, 36, 63, 0.08); }
+
+    .surface-panel { min-height: 310px; padding: 34px; }
+    .surface-panel h3 { margin: 0; font-size: 26px; letter-spacing: -0.045em; }
+    .surface-panel > p { max-width: 720px; margin: 12px 0 0; color: var(--muted); font-size: 14px; }
+
+    .surface-grid { margin-top: 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+    .surface-detail { padding-top: 14px; border-top: 1px solid var(--line); }
+    .surface-detail strong { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .surface-detail span { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .surface-warning { margin-top: 22px; padding: 12px 14px; border-left: 3px solid var(--coral); background: var(--coral-soft); color: #7d322c; font-size: 11px; }
+
+    .flows {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 74px;
+    }
+
+    .flow h3 { margin: 0; font-size: 22px; letter-spacing: -0.04em; }
+    .flow.live h3 { color: var(--blue); }
+    .flow.after h3 { color: var(--coral); }
+
+    .timeline { position: relative; margin-top: 28px; }
+    .timeline::before { position: absolute; left: 8px; top: 7px; bottom: 7px; width: 2px; background: var(--line); content: ""; }
+    .flow.live .timeline::before { background: var(--blue); }
+    .flow.after .timeline::before { background: var(--coral); }
+
+    .timeline-item { position: relative; padding: 0 0 28px 42px; }
+    .timeline-item:last-child { padding-bottom: 0; }
+    .timeline-item::before { position: absolute; left: 2px; top: 5px; width: 14px; height: 14px; border: 3px solid var(--white); border-radius: 99px; background: var(--blue); box-shadow: 0 0 0 1px var(--blue); content: ""; }
+    .flow.after .timeline-item::before { background: var(--coral); box-shadow: 0 0 0 1px var(--coral); }
+    .timeline-item strong { display: block; font-size: 13px; }
+    .timeline-item p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+    .timeline-item code { margin-top: 8px; padding: 4px 7px; border-radius: 5px; display: inline-block; background: #f1f3f6; color: #3e4652; font: 10px/1.3 var(--mono); }
+
+    .approval-model {
+      margin-top: 48px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .approval-tier { padding: 24px; border-right: 1px solid var(--line); }
+    .approval-tier:last-child { border-right: 0; }
+    .approval-tier .tier-id { color: var(--blue); font: 750 10px/1 var(--mono); }
+    .approval-tier h4 { margin: 10px 0 0; font-size: 15px; }
+    .approval-tier p { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+    .approval-tier:nth-child(2) .tier-id { color: var(--amber); }
+    .approval-tier:nth-child(3) .tier-id { color: var(--coral); }
+
+    .roadmap {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 28px;
+    }
+
+    .roadmap::before { position: absolute; left: 0; right: 0; top: 10px; height: 2px; background: var(--line-strong); content: ""; }
+
+    .phase { position: relative; padding-top: 38px; }
+    .phase::before { position: absolute; z-index: 2; top: 3px; left: 0; width: 16px; height: 16px; border: 4px solid var(--white); border-radius: 99px; background: var(--phase); box-shadow: 0 0 0 1px var(--phase); content: ""; }
+    .phase small { color: var(--phase); font: 760 10px/1 var(--mono); text-transform: uppercase; }
+    .phase h3 { margin: 10px 0 0; font-size: 18px; letter-spacing: -0.035em; }
+    .phase p { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+    .phase ul { margin: 18px 0 0; padding: 0; list-style: none; }
+    .phase li { position: relative; padding: 5px 0 5px 17px; color: var(--muted); font-size: 11px; }
+    .phase li::before { position: absolute; left: 0; top: 11px; width: 6px; height: 6px; border-radius: 2px; background: var(--phase); content: ""; }
+
+    .phase-1 { --phase: var(--blue); }
+    .phase-2 { --phase: var(--green); }
+    .phase-3 { --phase: var(--violet); }
+    .phase-4 { --phase: var(--coral); }
+
+    .plan-link {
+      margin-top: 40px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      background: #fafbfd;
+    }
+
+    .plan-link strong { display: block; font-size: 14px; }
+    .plan-link span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px 26px;
+    }
+
+    .source {
+      padding: 20px 0;
+      border-top: 1px solid var(--line);
+      text-decoration: none;
+    }
+
+    .source:hover strong { color: var(--blue); }
+    .source small { color: var(--blue); font: 700 9px/1 var(--mono); text-transform: uppercase; }
+    .source strong { display: block; margin-top: 8px; font-size: 13px; }
+    .source span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+
+    .source-note {
+      margin-top: 30px;
+      padding: 18px 20px;
+      border-left: 3px solid var(--line-strong);
+      background: #fafbfd;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .site-footer {
+      width: min(calc(100% - 40px), var(--max));
+      margin: 0 auto;
+      padding: 28px 0 42px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .desktop-only { display: inline; }
+
+    @media (max-width: 1080px) {
+      .hero { grid-template-columns: 1fr; gap: 50px; }
+      .hero-copy { max-width: 760px; }
+      .hero-demo { max-width: 820px; }
+      .architecture-map { grid-template-columns: 1fr; align-items: stretch; }
+      .map-arrow { transform: rotate(90deg); }
+      .execution-lanes { grid-template-columns: 1fr 1fr 1fr; }
+      .map-outputs { grid-template-columns: 1fr 1fr; }
+      .status-strip { grid-template-columns: repeat(3, 1fr); }
+      .status-item:nth-child(3) { border-right: 0; }
+      .status-item:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+    }
+
+    @media (max-width: 820px) {
+      .header-inner { height: 64px; }
+      .nav { display: none; }
+      .local-status { margin-left: auto; }
+      .hero { min-height: auto; padding-top: 64px; }
+      .hero h1 { font-size: clamp(46px, 12vw, 66px); }
+      .demo-flow { grid-template-columns: 1fr; }
+      .demo-arrow { transform: rotate(90deg); }
+      .scenario-intro { grid-template-columns: 1fr; gap: 22px; }
+      .scenario-tabs { grid-template-columns: 1fr 1fr; }
+      .scenario-tab { border: 1px solid var(--line); }
+      .scenario-panel { grid-template-columns: 1fr; }
+      .simple-hands, .flows { grid-template-columns: 1fr; }
+      .surface-shell { grid-template-columns: 1fr; }
+      .surface-tabs { display: grid; grid-template-columns: 1fr 1fr; border-right: 0; border-bottom: 1px solid var(--line); }
+      .surface-grid { grid-template-columns: 1fr; }
+      .roadmap { grid-template-columns: 1fr 1fr; }
+      .roadmap::before { display: none; }
+      .source-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 560px) {
+      .header-inner, .hero, .section, .scenario-wrap, .site-footer { width: min(calc(100% - 28px), var(--max)); }
+      .brand { font-size: 16px; }
+      .local-status { font-size: 10px; }
+      .hero { padding: 48px 0 52px; }
+      .hero h1 { font-size: 46px; }
+      .hero-copy > p { font-size: 16px; }
+      .hero-actions .button { width: 100%; }
+      .hero-demo { padding: 18px; }
+      .hero-foot { align-items: flex-start; flex-direction: column; }
+      .scenario-tabs, .scenario-steps, .execution-lanes, .map-outputs, .status-strip, .hand-flow, .approval-model, .roadmap, .source-grid { grid-template-columns: 1fr; }
+      .scenario-panel, .architecture-band, .hand-lane, .surface-panel { padding: 22px; }
+      .status-item, .status-item:nth-child(3) { border-right: 0; border-bottom: 1px solid var(--line); }
+      .status-item:last-child { border-bottom: 0; }
+      .approval-tier { border-right: 0; border-bottom: 1px solid var(--line); }
+      .approval-tier:last-child { border-bottom: 0; }
+      .surface-tabs { grid-template-columns: 1fr; }
+      .plan-link, .site-footer { align-items: flex-start; flex-direction: column; }
+      .desktop-only { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="#top" aria-label="Cooper and Codex architecture home">
+        <span>Cooper</span><span class="brand-x">×</span><span>Codex</span>
+      </a>
+      <nav class="nav" aria-label="Page navigation">
+        <a href="#architecture">Architecture</a>
+        <a href="#flows">User flows</a>
+        <a href="#plan">Build plan</a>
+        <a href="#sources">Sources</a>
+      </nav>
+      <span class="local-status">Local-first</span>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <h1 id="hero-title">Your voice becomes visible, approved work.</h1>
+        <p>Cooper turns a spoken intention into a reviewable task, routes it to the simplest capable local worker, and keeps the result on your visual canvas. Codex handles software work. Deterministic tools handle known Mac actions. Computer Use handles the UI-only long tail.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#architecture">Explore the architecture <span aria-hidden="true">↓</span></a>
+        </div>
+      </div>
+
+      <div class="hero-demo" aria-label="Example voice to Codex flow">
+        <div class="demo-topline">
+          <strong>Live delegation</strong>
+          <span class="demo-live">Cooper listening</span>
+        </div>
+        <div class="demo-flow">
+          <article class="demo-card">
+            <div class="demo-label">You say</div>
+            <strong>“Refactor the API client and add tests.”</strong>
+            <p>Cooper captures the outcome, repository, and constraints.</p>
+            <div class="wave" aria-label="Voice waveform">
+              <i style="--h:9px;--d:-.2s"></i><i style="--h:17px;--d:-.7s"></i><i style="--h:12px;--d:-.4s"></i><i style="--h:22px;--d:-.9s"></i><i style="--h:14px;--d:-.1s"></i><i style="--h:20px;--d:-.6s"></i><i style="--h:10px;--d:-.3s"></i><i style="--h:16px;--d:-.8s"></i>
+            </div>
+          </article>
+          <div class="demo-arrow" aria-hidden="true">→</div>
+          <article class="demo-card">
+            <div class="demo-label">Cooper prepares</div>
+            <strong>Scoped proposal</strong>
+            <p>Workspace, checks, prohibited actions, and budget.</p>
+          </article>
+          <div class="demo-arrow" aria-hidden="true">→</div>
+          <article class="demo-card approval">
+            <div class="demo-label">You approve</div>
+            <strong>API client refactor</strong>
+            <p>Scope: 4 files · run unit tests · no commit or push.</p>
+            <div class="mini-actions"><span class="mini-action quiet">Edit</span><span class="mini-action">Approve</span></div>
+          </article>
+          <div class="demo-arrow" aria-hidden="true">→</div>
+          <article class="demo-card running">
+            <div class="demo-label">Codex runs</div>
+            <strong>Thread active</strong>
+            <p>Editing files · streaming commands, diffs, and status.</p>
+            <div class="progress" aria-label="Task progress"><span></span></div>
+          </article>
+        </div>
+        <div class="hero-foot">
+          <span>Cooper remains the interface. Codex remains the coding runtime.</span>
+          <span>Every state change is replayable.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="scenario-wrap" aria-labelledby="scenario-title">
+      <div class="scenario-intro">
+        <div>
+          <h2 id="scenario-title">Explore scenarios</h2>
+          <p>Choose the way you want Cooper to help.</p>
+        </div>
+        <div>
+          <div class="scenario-tabs" role="tablist" aria-label="Cooper scenarios">
+            <button class="scenario-tab" id="scenario-tab-codex" type="button" role="tab" aria-selected="true" aria-controls="scenario-panel" data-scenario="codex">Start a Codex task</button>
+            <button class="scenario-tab" id="scenario-tab-after" type="button" role="tab" aria-selected="false" aria-controls="scenario-panel" data-scenario="after">Approve post-call actions</button>
+            <button class="scenario-tab" id="scenario-tab-routine" type="button" role="tab" aria-selected="false" aria-controls="scenario-panel" data-scenario="routine">Quick-launch my day</button>
+            <button class="scenario-tab" id="scenario-tab-ui" type="button" role="tab" aria-selected="false" aria-controls="scenario-panel" data-scenario="ui">Operate a UI</button>
+          </div>
+          <div class="scenario-panel" id="scenario-panel" role="tabpanel" aria-live="polite" aria-labelledby="scenario-tab-codex">
+            <div>
+              <h3 id="scenario-heading">Delegate software work without opening Codex</h3>
+              <p id="scenario-description">Cooper creates a scoped Codex thread, shows you the proposal, and only starts the turn after approval.</p>
+            </div>
+            <div class="scenario-steps" id="scenario-steps">
+              <div class="scenario-step">Speak the desired outcome</div>
+              <div class="scenario-step">Review workspace and scope</div>
+              <div class="scenario-step">Approve the initial turn</div>
+              <div class="scenario-step">Watch events on the canvas</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="architecture" aria-labelledby="architecture-title">
+      <div class="section-heading">
+        <h2 id="architecture-title">One voice surface. Three execution lanes.</h2>
+        <p>The Realtime voice session should decide intent and call local tools. It should not impersonate every downstream agent. A local broker owns policy, persistence, approvals, and the adapters to Codex or macOS.</p>
+      </div>
+
+      <div class="architecture-band">
+        <div class="architecture-map" aria-label="Cooper voice and agent architecture">
+          <article class="node primary">
+            <div class="node-head"><span class="node-index">01</span><h3>Voice client</h3></div>
+            <p>Browser or native shell</p>
+            <ul><li>WebRTC audio</li><li>Transcript + VAD</li><li>Tool events</li></ul>
+          </article>
+          <div class="map-arrow" aria-hidden="true">→</div>
+          <article class="node primary">
+            <div class="node-head"><span class="node-index">02</span><h3>Cooper orchestrator</h3></div>
+            <p>Intent and task composition</p>
+            <ul><li>Select the lane</li><li>Build a typed proposal</li><li>Monitor the result</li></ul>
+          </article>
+          <div class="map-arrow" aria-hidden="true">→</div>
+          <article class="node approval">
+            <div class="node-head"><span class="node-index">03</span><h3>Policy boundary</h3></div>
+            <p>The user stays in control</p>
+            <ul><li>Show scope</li><li>Require the right approval</li><li>Fail closed</li></ul>
+          </article>
+          <div class="map-arrow" aria-hidden="true">→</div>
+          <div class="execution-lanes" aria-label="Execution lanes">
+            <article class="lane recommended">
+              <span class="lane-mark">CX</span><span><strong>Codex app-server</strong><small>Threads, turns, streamed items, diffs, approvals</small></span><span class="maturity">rich bridge</span>
+            </article>
+            <article class="lane deterministic">
+              <span class="lane-mark">OS</span><span><strong>Deterministic Mac tools</strong><small>Open apps, URLs, Finder, Terminal, routines</small></span><span class="maturity">fast path</span>
+            </article>
+            <article class="lane visual">
+              <span class="lane-mark">UI</span><span><strong>Computer Use harness</strong><small>Screenshot → action → execute → screenshot</small></span><span class="maturity">long tail</span>
+            </article>
+          </div>
+          <div class="map-arrow" aria-hidden="true">→</div>
+          <div class="map-outputs">
+            <article class="node">
+              <div class="node-head"><span class="node-index">04</span><h3>Local event store</h3></div>
+              <p>Intents, proposals, approvals, thread IDs, events, artifacts.</p>
+            </article>
+            <article class="node primary">
+              <div class="node-head"><span class="node-index">05</span><h3>Visual canvas</h3></div>
+              <p>Action queue, live progress, results, history, and controls.</p>
+            </article>
+          </div>
+        </div>
+        <div class="architecture-note"><strong>Recommended control loop:</strong> Realtime function call → local broker validates and creates a proposal → user approves → adapter starts or resumes work → adapter streams normalized events → Cooper speaks the concise result while the canvas keeps the full trace.</div>
+      </div>
+
+      <div class="status-strip" aria-label="Current Cooper implementation status">
+        <div class="status-item built"><small>Built</small><strong>Realtime voice</strong><span>WebRTC, VAD, transcripts</span></div>
+        <div class="status-item built"><small>Built</small><strong>Tool dispatch</strong><span>Client + server execution</span></div>
+        <div class="status-item built"><small>Built</small><strong>Approval UI</strong><span>Tasks, checkpoints, canvas</span></div>
+        <div class="status-item scaffold"><small>Scaffold</small><strong>Codex lane</strong><span>UI exists; worker missing</span></div>
+        <div class="status-item scaffold"><small>Scaffold</small><strong>Computer Use</strong><span>Contract exists; loop missing</span></div>
+        <div class="status-item next"><small>Build next</small><strong>Routines</strong><span>Named, pre-authorized launches</span></div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="hands-title">
+      <div class="section-heading">
+        <h2 id="hands-title">Use the simplest hands.</h2>
+        <p>Opening Safari is not a Computer Use problem. It is a deterministic tool call. Reserve visual reasoning for workflows that truly require perception and adaptive UI interaction.</p>
+      </div>
+
+      <div class="simple-hands">
+        <article class="hand-lane deterministic">
+          <h3>Deterministic action</h3>
+          <p>Fast, explainable, and reliable for known targets.</p>
+          <div class="hand-flow">
+            <div class="hand-step"><strong>Resolve intent</strong><span>“I’m ready to work.”</span></div>
+            <div class="hand-step"><strong>Load routine</strong><span>Five allow-listed apps</span></div>
+            <div class="hand-step"><strong>Execute</strong><span><code>open -a</code>, URL, Shortcut</span></div>
+            <div class="hand-step"><strong>Confirm</strong><span>Report opened / failed</span></div>
+          </div>
+          <div class="hand-best"><strong>Best for:</strong> opening apps and URLs, arranging known workspaces, running a trusted Shortcut, or calling a stable API.</div>
+        </article>
+
+        <article class="hand-lane computer">
+          <h3>Model-driven Computer Use</h3>
+          <p>Flexible and situational for interfaces without a better control surface.</p>
+          <div class="hand-flow">
+            <div class="hand-step"><strong>Perceive</strong><span>Capture screenshot + state</span></div>
+            <div class="hand-step"><strong>Plan</strong><span>Receive typed UI actions</span></div>
+            <div class="hand-step"><strong>Act</strong><span>Click, type, scroll</span></div>
+            <div class="hand-step"><strong>Verify</strong><span>Return a fresh screenshot</span></div>
+          </div>
+          <div class="hand-best"><strong>Best for:</strong> complex or changing visual interfaces where APIs, structured browser control, and deterministic tools are unavailable.</div>
+        </article>
+      </div>
+      <div class="rule-banner">The routing order is: direct API or connector → deterministic local tool → structured browser automation → Computer Use.</div>
+    </section>
+
+    <section class="section" aria-labelledby="surface-title">
+      <div class="section-heading">
+        <h2 id="surface-title">Control Codex through a supported programmatic surface.</h2>
+        <p>Do not make Cooper click around inside Codex Desktop. Use a local adapter so task IDs, events, approvals, and cancellation remain first-class product state.</p>
+      </div>
+
+      <div class="surface-shell">
+        <div class="surface-tabs" role="tablist" aria-label="Codex integration surfaces">
+          <button class="surface-tab" type="button" role="tab" aria-selected="true" aria-controls="surface-panel" data-surface="appserver">App-server</button>
+          <button class="surface-tab" type="button" role="tab" aria-selected="false" aria-controls="surface-panel" data-surface="exec">codex exec</button>
+          <button class="surface-tab" type="button" role="tab" aria-selected="false" aria-controls="surface-panel" data-surface="sdk">Codex SDK</button>
+          <button class="surface-tab" type="button" role="tab" aria-selected="false" aria-controls="surface-panel" data-surface="mcp">MCP server</button>
+        </div>
+        <div class="surface-panel" id="surface-panel" role="tabpanel" aria-live="polite">
+          <h3 id="surface-heading">App-server is the best fit for Cooper’s local UI</h3>
+          <p id="surface-description">It exposes the exact primitives Cooper needs: create, resume, fork, list, name, steer, interrupt, and archive threads; start turns; stream item lifecycle; and answer command or file-change approvals.</p>
+          <div class="surface-grid">
+            <div class="surface-detail"><strong id="surface-use-label">Use it for</strong><span id="surface-use">Persistent tasks with live progress, approval cards, diffs, and a full activity timeline.</span></div>
+            <div class="surface-detail"><strong id="surface-tradeoff-label">Design response</strong><span id="surface-tradeoff">Wrap the protocol in a versioned adapter and pin the Codex CLI version because app-server is documented as experimental.</span></div>
+          </div>
+          <div class="surface-warning" id="surface-warning">Recommended primary path. Keep <code>codex exec --json</code> as a simpler fallback for one-shot jobs and bridge recovery.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="flows" aria-labelledby="flows-title">
+      <div class="section-heading">
+        <h2 id="flows-title">Two user flows, one approval model.</h2>
+        <p>Cooper can propose work during the conversation or after the call. In both cases, execution begins from the same typed proposal and produces the same event trail.</p>
+      </div>
+
+      <div class="flows">
+        <article class="flow live">
+          <h3>Live voice delegation</h3>
+          <div class="timeline">
+            <div class="timeline-item"><strong>You state an outcome</strong><p>“Cooper, have Codex add offline retry to this project.”</p><code>voice.intent.captured</code></div>
+            <div class="timeline-item"><strong>Cooper prepares a proposal</strong><p>Workspace, task brief, allowed actions, acceptance checks, and budget.</p><code>proposal.created</code></div>
+            <div class="timeline-item"><strong>You approve or edit</strong><p>The canvas shows exactly what will start. Voice approval is optional; the visible button is authoritative.</p><code>approval.granted</code></div>
+            <div class="timeline-item"><strong>Codex starts a thread and turn</strong><p>The local bridge stores the thread ID and normalizes streamed app-server events.</p><code>codex.thread.started</code></div>
+            <div class="timeline-item"><strong>You see and hear the result</strong><p>Cooper gives the concise summary. The canvas retains commands, diffs, tests, and next actions.</p><code>task.completed</code></div>
+          </div>
+        </article>
+
+        <article class="flow after">
+          <h3>Post-call approval</h3>
+          <div class="timeline">
+            <div class="timeline-item"><strong>The call ends</strong><p>Cooper extracts candidate actions from the existing transcript and canvas state.</p><code>call.completed</code></div>
+            <div class="timeline-item"><strong>Suggestions become proposals</strong><p>Items are not executable yet. Each has a lane, scope, risk, and expected result.</p><code>proposal.pending</code></div>
+            <div class="timeline-item"><strong>You pick, edit, or approve</strong><p>Approve one, approve selected, or request changes without reopening the conversation.</p><code>approval.selected</code></div>
+            <div class="timeline-item"><strong>Cooper routes each item</strong><p>Codex receives code work; deterministic tools receive known Mac actions; Computer Use receives only UI work.</p><code>task.dispatched</code></div>
+            <div class="timeline-item"><strong>The audit trail closes the loop</strong><p>The action item links to its task, result, artifact, and any additional approval request.</p><code>action.resolved</code></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="approval-model" aria-label="Approval tiers">
+        <article class="approval-tier"><span class="tier-id">TIER 0</span><h4>Pre-authorized open actions</h4><p>Named routines may open allow-listed apps and URLs immediately. No typing, sending, scripts, or settings changes.</p></article>
+        <article class="approval-tier"><span class="tier-id">TIER 1</span><h4>Approve task start</h4><p>Start a scoped Codex turn or supervised Computer Use run. Later Codex permission prompts still surface separately.</p></article>
+        <article class="approval-tier"><span class="tier-id">TIER 2</span><h4>Approve consequential action</h4><p>External communication, login, purchase, deletion, commit, push, production write, expanded permissions, or sensitive data use.</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="plan" aria-labelledby="plan-title">
+      <div class="section-heading">
+        <h2 id="plan-title">Build the narrow vertical slice first.</h2>
+        <p>The highest-value first release is voice → visible proposal → approval → real Codex thread → live canvas events. The morning routine is a small deterministic feature in the same release.</p>
+      </div>
+
+      <div class="roadmap">
+        <article class="phase phase-1">
+          <small>Phase 1 · 3–5 days</small>
+          <h3>Codex bridge spike</h3>
+          <p>Prove the protocol with one repository and one running task.</p>
+          <ul><li>Process manager + health check</li><li><code>thread/start</code> and <code>turn/start</code></li><li>Event normalization</li><li>Interrupt and reconnect</li></ul>
+        </article>
+        <article class="phase phase-2">
+          <small>Phase 2 · 4–6 days</small>
+          <h3>Approvals + canvas</h3>
+          <p>Connect real Codex state to the UI Cooper already has.</p>
+          <ul><li>Task proposal schema</li><li>Command/file approvals</li><li>Diff, test, and result views</li><li>Post-call dispatch</li></ul>
+        </article>
+        <article class="phase phase-3">
+          <small>Phase 3 · 2–3 days</small>
+          <h3>Personal routines</h3>
+          <p>Turn “I’m ready to work” into a safe, immediate launch.</p>
+          <ul><li>Named routine config</li><li>App + URL allow-list</li><li>Parallel deterministic launch</li><li>Visible success/failure receipt</li></ul>
+        </article>
+        <article class="phase phase-4">
+          <small>Phase 4 · 1–2 weeks</small>
+          <h3>Computer Use loop</h3>
+          <p>Add perception only after the deterministic routes are solid.</p>
+          <ul><li>Isolated harness</li><li>Screenshot/action cycle</li><li>Domain + app policy</li><li>Replay and injection defenses</li></ul>
+        </article>
+      </div>
+
+      <div class="plan-link">
+        <div><strong>Implementation-ready details live in the companion plan.</strong><span>Includes schemas, endpoints, event mappings, file-level work, test contracts, and acceptance criteria.</span></div>
+        <a class="button primary" href="18-cooper-codex-voice-build-plan.md">Open the Markdown plan</a>
+      </div>
+    </section>
+
+    <section class="section" id="sources" aria-labelledby="sources-title">
+      <div class="section-heading">
+        <h2 id="sources-title">Grounded in official OpenAI documentation.</h2>
+        <p>The recommendation uses public, documented surfaces available as of July 16, 2026. Product maturity matters: the Codex app-server is richer but experimental; <code>codex exec</code> and <code>codex mcp-server</code> are documented as stable.</p>
+      </div>
+
+      <div class="source-grid">
+        <a class="source" href="https://developers.openai.com/api/docs/guides/realtime-webrtc" target="_blank" rel="noreferrer"><small>Realtime API</small><strong>Connect with WebRTC</strong><span>Browser audio, ephemeral client secrets, data-channel events.</span></a>
+        <a class="source" href="https://developers.openai.com/api/docs/guides/realtime-mcp" target="_blank" rel="noreferrer"><small>Realtime API</small><strong>Realtime with tools</strong><span>Function tools, remote MCP tools, and connector execution.</span></a>
+        <a class="source" href="https://developers.openai.com/api/docs/guides/realtime-conversations#provide-the-results-of-a-function-call-to-the-model" target="_blank" rel="noreferrer"><small>Realtime API</small><strong>Function-call outputs</strong><span>Application execution and returning structured results to the voice model.</span></a>
+        <a class="source" href="https://learn.chatgpt.com/docs/app-server" target="_blank" rel="noreferrer"><small>Codex</small><strong>Codex app-server</strong><span>Threads, turns, items, approvals, and local JSON-RPC transports.</span></a>
+        <a class="source" href="https://learn.chatgpt.com/docs/codex-sdk" target="_blank" rel="noreferrer"><small>Codex</small><strong>Codex SDK</strong><span>Programmatic TypeScript threads, runs, continuation, and resume.</span></a>
+        <a class="source" href="https://learn.chatgpt.com/docs/non-interactive-mode" target="_blank" rel="noreferrer"><small>Codex</small><strong>Non-interactive mode</strong><span><code>codex exec</code> for scripts, JSONL events, and resumable jobs.</span></a>
+        <a class="source" href="https://learn.chatgpt.com/docs/developer-commands" target="_blank" rel="noreferrer"><small>Codex</small><strong>Developer commands</strong><span>Maturity and CLI surfaces for app-server, exec, and MCP server.</span></a>
+        <a class="source" href="https://developers.openai.com/api/docs/guides/tools-computer-use" target="_blank" rel="noreferrer"><small>Responses API</small><strong>Computer Use</strong><span>Built-in loop, custom harnesses, isolation, confirmation, and untrusted content.</span></a>
+        <a class="source" href="https://developers.openai.com/api/docs/guides/agents" target="_blank" rel="noreferrer"><small>Agents</small><strong>Agents SDK</strong><span>Optional future orchestration for typed tools, handoffs, guardrails, and traces.</span></a>
+      </div>
+
+      <div class="source-note"><strong>Architectural inference:</strong> OpenAI documents the primitives, but it does not prescribe Cooper’s exact broker, proposal schema, routine format, or local event model. Those are product decisions derived from the documented capabilities and the code already present in this repository.</div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span class="brand"><span>Cooper</span><span class="brand-x">×</span><span>Codex</span></span>
+    <span>Local-first. You stay in control.</span>
+    <span>Architecture research · July 16, 2026</span>
+  </footer>
+
+  <script>
+    const scenarioData = {
+      codex: {
+        heading: "Delegate software work without opening Codex",
+        description: "Cooper creates a scoped Codex thread, shows you the proposal, and only starts the turn after approval.",
+        steps: ["Speak the desired outcome", "Review workspace and scope", "Approve the initial turn", "Watch events on the canvas"]
+      },
+      after: {
+        heading: "Turn call follow-ups into executable proposals",
+        description: "At the end of a call, action items remain inert until you select and approve the ones Cooper should dispatch.",
+        steps: ["Cooper extracts actions", "Review lane, scope, and risk", "Approve selected items", "Receive linked results"]
+      },
+      routine: {
+        heading: "Launch the day with a pre-authorized routine",
+        description: "A phrase like “Cooper, I’m ready to work” can immediately open five allow-listed apps and URLs through deterministic Mac tools.",
+        steps: ["Match the wake phrase", "Load the saved routine", "Open targets in parallel", "Show a launch receipt"]
+      },
+      ui: {
+        heading: "Use visual reasoning only for the UI-only long tail",
+        description: "Cooper creates a supervised Computer Use run when the task needs screenshots and adaptive clicks rather than a stable API or script.",
+        steps: ["Confirm target and policy", "Capture the current screen", "Execute typed actions", "Pause and verify"]
+      }
+    };
+
+    const scenarioTabs = [...document.querySelectorAll(".scenario-tab")];
+    const scenarioPanel = document.getElementById("scenario-panel");
+    const scenarioHeading = document.getElementById("scenario-heading");
+    const scenarioDescription = document.getElementById("scenario-description");
+    const scenarioSteps = document.getElementById("scenario-steps");
+
+    scenarioTabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const data = scenarioData[tab.dataset.scenario];
+        scenarioTabs.forEach((item) => item.setAttribute("aria-selected", String(item === tab)));
+        scenarioPanel.setAttribute("aria-labelledby", tab.id);
+        scenarioHeading.textContent = data.heading;
+        scenarioDescription.textContent = data.description;
+        scenarioSteps.innerHTML = data.steps.map((step) => `<div class="scenario-step">${step}</div>`).join("");
+      });
+    });
+
+    const surfaceData = {
+      appserver: {
+        heading: "App-server is the best fit for Cooper’s local UI",
+        description: "It exposes the exact primitives Cooper needs: create, resume, fork, list, name, steer, interrupt, and archive threads; start turns; stream item lifecycle; and answer command or file-change approvals.",
+        use: "Persistent tasks with live progress, approval cards, diffs, and a full activity timeline.",
+        tradeoff: "Wrap the protocol in a versioned adapter and pin the Codex CLI version because app-server is documented as experimental.",
+        warning: "Recommended primary path. Keep codex exec --json as a simpler fallback for one-shot jobs and bridge recovery."
+      },
+      exec: {
+        heading: "codex exec is the stable one-shot fallback",
+        description: "Run Codex non-interactively from a child process, consume JSONL events, and optionally resume a saved session. This is operationally simple and a good first spike.",
+        use: "Short jobs, scheduled work, CI-like tasks, recovery mode, and proving the end-to-end bridge quickly.",
+        tradeoff: "It provides less direct control over a rich, persistent client experience than the app-server thread and approval protocol.",
+        warning: "Use as the Phase 1 fallback, not as a reason to parse terminal prose. Consume structured JSONL only."
+      },
+      sdk: {
+        heading: "The Codex SDK is a clean typed integration option",
+        description: "The TypeScript SDK can start a thread, run a prompt, continue the same thread, or resume one by ID inside application code.",
+        use: "Server-owned Codex workflows where a typed library is more useful than mirroring the full app-server client protocol.",
+        tradeoff: "Confirm that its event and approval surface covers every canvas interaction Cooper needs before replacing the richer app-server adapter.",
+        warning: "Treat this as an evaluation lane after the first app-server spike, not a second implementation in parallel."
+      },
+      mcp: {
+        heading: "Codex MCP is for agent-to-agent consumption",
+        description: "codex mcp-server exposes Codex itself over stdio so another agent or an Agents SDK workflow can consume Codex as a tool.",
+        use: "Future multi-agent routing, specialist handoffs, or making Codex one worker inside a broader orchestration graph.",
+        tradeoff: "It adds an orchestration layer that the first single-user vertical slice does not need.",
+        warning: "Defer until one Cooper → one Codex worker is reliable, observable, cancellable, and safe."
+      }
+    };
+
+    const surfaceTabs = [...document.querySelectorAll(".surface-tab")];
+    surfaceTabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const data = surfaceData[tab.dataset.surface];
+        surfaceTabs.forEach((item) => item.setAttribute("aria-selected", String(item === tab)));
+        document.getElementById("surface-heading").textContent = data.heading;
+        document.getElementById("surface-description").textContent = data.description;
+        document.getElementById("surface-use").textContent = data.use;
+        document.getElementById("surface-tradeoff").textContent = data.tradeoff;
+        document.getElementById("surface-warning").textContent = data.warning;
+      });
+    });
+  </script>
+</body>
+</html>

@@ -216,6 +216,55 @@ export const cooperToolDefinitions = [
   },
   {
     type: "function",
+    name: "create_document_artifact",
+    description: "Queue a durable background document from the live session while the conversation continues. Use this for executive briefs, PRDs, execution plans, QA plans, ADRs, sprint recaps, decision logs, release briefs, Office files, or reports. Returns immediately with a job id and visible pipeline status.",
+    parameters: {
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          enum: [
+            "post_call_kit",
+            "execution_plan",
+            "qa_checklist",
+            "follow_up",
+            "code_sketch",
+            "product_requirements",
+            "architecture_decision_record",
+            "sprint_recap",
+            "decision_log",
+            "release_brief",
+            "pdf_brief",
+            "word_brief",
+            "powerpoint_deck",
+            "excel_action_register",
+            "executive_report"
+          ],
+          description: "The document contract Cooper should generate."
+        },
+        title: {
+          type: "string",
+          description: "Optional short document title."
+        },
+        instruction: {
+          type: "string",
+          description: "What the document should accomplish, emphasize, revise, or answer."
+        },
+        context: {
+          type: "string",
+          description: "Optional priority source context from the current conversation or connected workspace."
+        },
+        priority: {
+          type: "string",
+          enum: ["low", "normal", "high", "urgent"],
+          description: "Queue priority. Defaults to normal."
+        }
+      },
+      required: ["kind", "instruction"]
+    }
+  },
+  {
+    type: "function",
     name: "render_mcp_app",
     description: "Render an MCP App or AG-UI visual surface into Cooper's live call canvas. Use this for interactive code previews, diagrams, approval cards, dashboards, forms, or UI resources exposed by MCP tools.",
     parameters: {
@@ -450,6 +499,14 @@ export const operatorToolDefinitions = [
         target_url: {
           type: "string",
           description: "Optional URL the local browser task should open."
+        },
+        workspace_path: {
+          type: "string",
+          description: "Optional absolute local workspace path for Codex. Use the current configured workspace when Michael does not specify one."
+        },
+        codex_model: {
+          type: "string",
+          description: "Optional Codex model override. Omit it to use Michael's configured Codex default."
         },
         allowed_domains: {
           type: "array",

@@ -3,26 +3,60 @@ export const SESSION_PREPARATION_OPTIONS = Object.freeze([
     kind: "executive_report",
     title: "Shared context brief",
     description: "Facts, hypotheses, source citations, and missing context.",
-    instruction: "Create a concise executive context brief that attendees can read in three minutes."
+    instruction: "Create a concise executive context brief that attendees can read in three minutes.",
+    requiredByDefault: true,
+    effort: "Standard"
   },
   {
     kind: "mermaid_diagram",
     title: "Decision map",
     description: "The choices, dependencies, and gates the room needs to resolve.",
-    instruction: "Create a decision map that shows the choices, dependencies, and unresolved gates."
+    instruction: "Create a decision map that shows the choices, dependencies, and unresolved gates.",
+    requiredByDefault: false,
+    effort: "Light"
   },
   {
     kind: "aires_requirements",
     title: "Requirements first pass",
     description: "A scoped draft using the AIRES Requirements Framework.",
-    instruction: "Create a first-pass scoped requirements artifact using the AIRES Requirements Framework."
+    instruction: "Create a first-pass scoped requirements artifact using the AIRES Requirements Framework.",
+    requiredByDefault: true,
+    effort: "Deep"
   },
   {
     kind: "qa_checklist",
     title: "QA checklist",
     description: "Acceptance evidence, regression coverage, and verification checkpoints.",
-    instruction: "Create a practical QA and verification checklist with observable evidence for each check."
+    instruction: "Create a practical QA and verification checklist with observable evidence for each check.",
+    requiredByDefault: false,
+    effort: "Standard"
+  },
+  {
+    kind: "architecture_decision_record",
+    title: "Architecture decision record",
+    description: "Options, tradeoffs, decision drivers, and consequences.",
+    instruction: "Create an architecture decision record that compares viable options, recommends a decision, and makes consequences explicit.",
+    requiredByDefault: false,
+    effort: "Standard"
+  },
+  {
+    kind: "html_prototype",
+    title: "Interactive prototype",
+    description: "A mobile-first standalone HTML concept for the room to review.",
+    instruction: "Create a complete mobile-first standalone HTML prototype with inline CSS and minimal inline JavaScript, grounded only in the supplied evidence.",
+    requiredByDefault: false,
+    effort: "Deep"
   }
+]);
+
+export const SESSION_PREPARATION_STAGES = Object.freeze([
+  { id: "session", label: "Create durable session" },
+  { id: "plan", label: "Confirm document plan" },
+  { id: "queue", label: "Queue background work" },
+  { id: "generate", label: "Generate selected documents" },
+  { id: "validate", label: "Validate quality and lineage" },
+  { id: "present", label: "Assemble opening presentation" },
+  { id: "memory", label: "Load Cooper's session memory" }
 ]);
 
 const OPTION_BY_KIND = new Map(SESSION_PREPARATION_OPTIONS.map((option) => [option.kind, option]));
@@ -34,6 +68,115 @@ export function normalizePreparationKinds(values = []) {
     seen.add(value);
     return true;
   });
+}
+
+export function recommendSessionPreparation({ focus = null, sessionContext = "" } = {}) {
+  const evidence = clean([
+    focus?.title,
+    focus?.description,
+    focus?.prompt,
+    sessionContext
+  ].filter(Boolean).join(" ")).toLowerCase();
+  const kinds = ["executive_report", "aires_requirements"];
+  const reasons = {
+    executive_report: "Gives the room one evidence-backed starting point.",
+    aires_requirements: "Turns the discussion into scoped, testable work."
+  };
+
+  if (/(decision|workflow|flow|dependency|process|journey|architecture|integration)/.test(evidence)) {
+    kinds.push("mermaid_diagram");
+    reasons.mermaid_diagram = "Makes the dependencies and decision points visible while the room talks.";
+  }
+  if (/(bug|qa|regression|acceptance|verify|test|permission|failure|incident)/.test(evidence)) {
+    kinds.push("qa_checklist");
+    reasons.qa_checklist = "Creates observable verification checkpoints for the risk in this context.";
+  }
+  if (/(architecture|integration|api|data model|database|service|technical decision|tradeoff|trade-off)/.test(evidence)) {
+    kinds.push("architecture_decision_record");
+    reasons.architecture_decision_record = "Preserves the technical options, tradeoffs, and decision consequence.";
+  }
+  if (/(prototype|wireframe|interface|screen|mobile|ui|ux|page|dashboard)/.test(evidence)) {
+    kinds.push("html_prototype");
+    reasons.html_prototype = "Gives the room an interactive surface to critique instead of discussing abstractions.";
+  }
+
+  const requested = new Set(normalizePreparationKinds(kinds));
+  const selected = [
+    "executive_report",
+    "aires_requirements",
+    "qa_checklist",
+    "architecture_decision_record",
+    "html_prototype",
+    "mermaid_diagram"
+  ].filter((kind) => requested.has(kind)).slice(0, 5);
+  return {
+    mode: "cooper",
+    kinds: selected,
+    reasons,
+    rationale: "Cooper selected the smallest useful document set for alignment, decision-making, and execution."
+  };
+}
+
+export function createManualPreparationPlan(values = []) {
+  const kinds = normalizePreparationKinds(values);
+  return {
+    mode: "manual",
+    kinds,
+    reasons: Object.fromEntries(kinds.map((kind) => [kind, "Selected by the session host."])),
+    rationale: kinds.length ? "The host chose the documents Cooper should prepare." : "No documents were requested before entry."
+  };
+}
+
+export function deriveSessionPreparationState({ callId = "", kinds = [], jobs = [], artifacts = [], queueError = "" } = {}) {
+  const selectedKinds = normalizePreparationKinds(kinds);
+  const preparationJobs = (Array.isArray(jobs) ? jobs : []).filter((job) => (
+    job.callId === callId && job.workstream === "session_preparation" && selectedKinds.includes(job.kind)
+  ));
+  const outputs = selectedKinds.map((kind) => {
+    const option = OPTION_BY_KIND.get(kind);
+    const job = [...preparationJobs].reverse().find((item) => item.kind === kind) || null;
+    const artifact = (Array.isArray(artifacts) ? artifacts : []).find((item) => (
+      item.callId === callId
+      && item.workstream === "session_preparation"
+      && (item.jobId === job?.id || (!job && item.kind === kind))
+    )) || null;
+    const status = artifact ? "completed" : job?.status || "pending";
+    return {
+      ...option,
+      status,
+      job,
+      artifact,
+      required: Boolean(option?.requiredByDefault),
+      quality: artifact?.quality || job?.quality || null
+    };
+  });
+  const terminal = new Set(["completed", "failed", "canceled"]);
+  const required = outputs.filter((output) => output.required);
+  const requiredReady = required.every((output) => terminal.has(output.status));
+  const queuedAll = selectedKinds.every((kind) => preparationJobs.some((job) => job.kind === kind));
+  const validating = outputs.some((output) => ["validating", "repairing"].includes(output.job?.apiStatus));
+  const completedCount = outputs.filter((output) => output.status === "completed").length;
+  const failedCount = outputs.filter((output) => ["failed", "canceled"].includes(output.status)).length;
+  let stageIndex = 0;
+  if (callId) stageIndex = 1;
+  if (selectedKinds.length || callId) stageIndex = 2;
+  if (queuedAll || !selectedKinds.length) stageIndex = 3;
+  if (validating) stageIndex = 4;
+  if (requiredReady || !selectedKinds.length) stageIndex = 5;
+  if ((requiredReady || !selectedKinds.length) && callId) stageIndex = 6;
+  const ready = Boolean(callId) && (requiredReady || !selectedKinds.length) && !queueError;
+
+  return {
+    ready,
+    degraded: ready && failedCount > 0,
+    stageIndex,
+    stage: SESSION_PREPARATION_STAGES[stageIndex],
+    outputs,
+    completedCount,
+    failedCount,
+    totalCount: outputs.length,
+    progress: outputs.length ? Math.round(((completedCount + failedCount) / outputs.length) * 100) : (callId ? 100 : 0)
+  };
 }
 
 export function buildSessionPreparationPrompt(kind, { focus = null, sessionContext = "" } = {}) {

@@ -11,9 +11,14 @@ import {
   Search,
   Sparkles,
   Upload,
+  Users,
   X
 } from "lucide-react";
-import { SESSION_PREPARATION_OPTIONS } from "./sessionPreparation.js";
+import {
+  createManualPreparationPlan,
+  recommendSessionPreparation,
+  SESSION_PREPARATION_OPTIONS
+} from "./sessionPreparation.js";
 import { contextSourcesFromSessionSeed } from "./sessionContextSeed.js";
 
 const NOTION_ALL_PAGES = "__all_pages__";
@@ -84,19 +89,21 @@ export function SessionContextCheckpoint({
   const [pasteContent, setPasteContent] = React.useState("");
   const [launchError, setLaunchError] = React.useState("");
   const [launching, setLaunching] = React.useState(false);
+  const [preparationMode, setPreparationMode] = React.useState("cooper");
   const [preparationKinds, setPreparationKinds] = React.useState(() => SESSION_PREPARATION_OPTIONS.map((option) => option.kind));
   const fileInputRef = React.useRef(null);
 
   React.useEffect(() => {
     if (!open) return;
     setMeetingId(seedMeeting?.id || "");
-    setIntent(seedMeeting?.description || seedMeeting?.prompt || "");
+    setIntent(checkpointIntent(seedMeeting?.description || seedMeeting?.prompt || ""));
     setSources(contextSourcesFromSessionSeed(seedMeeting));
     setPendingFiles([]);
     setSourceMenuOpen(false);
     setProvider("");
     setLaunchError("");
     setLaunching(false);
+    setPreparationMode("cooper");
     setPreparationKinds(SESSION_PREPARATION_OPTIONS.map((option) => option.kind));
   }, [open, seedMeeting]);
 
@@ -108,6 +115,13 @@ export function SessionContextCheckpoint({
   }, [meetings, seedMeeting]);
   const selectedMeeting = sessionMeetings.find((meeting) => meeting.id === meetingId) || freshSession;
   const totalSources = sources.length + pendingFiles.length;
+  const cooperPreparationPlan = React.useMemo(() => recommendSessionPreparation({
+    focus: selectedMeeting,
+    sessionContext: [intent, ...sources.map((source) => `${source.title || ""} ${source.meta || ""}`)].join("\n")
+  }), [intent, selectedMeeting, sources]);
+  const activePreparationPlan = preparationMode === "manual"
+    ? createManualPreparationPlan(preparationKinds)
+    : cooperPreparationPlan;
 
   if (!open) return null;
 
@@ -246,7 +260,7 @@ export function SessionContextCheckpoint({
       : [...current, kind]);
   }
 
-  async function startSession(selectedPreparationKinds = preparationKinds) {
+  async function startSession(plan = activePreparationPlan) {
     setLaunchError("");
     setLaunching(true);
     try {
@@ -287,7 +301,8 @@ export function SessionContextCheckpoint({
         meeting: selectedMeeting.id ? selectedMeeting : null,
         packet: payload.packet,
         sessionContext: payload.sessionContext,
-        preparationKinds: selectedPreparationKinds
+        preparationKinds: plan.kinds,
+        preparationPlan: plan
       });
     } catch (error) {
       setLaunchError(error.message || "Could not start the session.");
@@ -312,9 +327,17 @@ export function SessionContextCheckpoint({
     <div className="context-checkpoint-backdrop" role="presentation">
       <section className="context-checkpoint" role="dialog" aria-modal="true" aria-labelledby="context-checkpoint-title">
         <header className="context-checkpoint-head">
-          <CheckpointStep number="01" title="Choose a session" detail={selectedMeeting.id ? selectedMeeting.title : "Fresh conversation"} complete />
-          <CheckpointStep number="02" title="Load context" detail={`${totalSources} source${totalSources === 1 ? "" : "s"} selected`} active />
-          <CheckpointStep number="03" title="Start with Cooper" detail="Review and launch" />
+          <div className="context-dialog-title">
+            <div>
+              <h2 id="context-checkpoint-title">Prepare session</h2>
+              <p>{selectedMeeting.title}{selectedMeeting.time ? ` · ${selectedMeeting.time}${selectedMeeting.duration ? ` (${selectedMeeting.duration})` : ""}` : ""}</p>
+            </div>
+          </div>
+          <div className="context-dialog-steps" aria-label="Preparation progress">
+            <CheckpointStep number="1" title="Meeting" detail={selectedMeeting.id ? "Selected" : "Fresh session"} complete />
+            <CheckpointStep number="2" title="Sources" detail={`${totalSources} selected`} active />
+            <CheckpointStep number="3" title="Review" detail="Ready to launch" />
+          </div>
           <button className="context-icon-button context-close" onClick={onClose} type="button" aria-label="Close context checkpoint">
             <X size={18} />
           </button>
@@ -322,40 +345,34 @@ export function SessionContextCheckpoint({
 
         <div className="context-checkpoint-body">
           <aside className="context-meeting-picker">
-            <p className="context-eyebrow">Session</p>
-            <h2>What are we working on?</h2>
-            <div className="context-meeting-list">
-              {sessionMeetings.map((meeting) => (
-                <button
-                  className={meeting.id === meetingId ? "context-meeting-row selected" : "context-meeting-row"}
-                  key={meeting.id || "fresh"}
-                  onClick={() => setMeetingId(meeting.id)}
-                  type="button"
-                >
-                  <span>{meeting.time || "Now"}</span>
-                  <span>
-                    <strong>{meeting.title}</strong>
-                    <small>{meeting.subtitle || meeting.duration || ""}</small>
-                  </span>
-                  <ChevronRight size={16} />
-                </button>
-              ))}
-            </div>
-          </aside>
-
-          <main className="context-workspace">
-            <p className="context-eyebrow">Context checkpoint</p>
-            <h1 id="context-checkpoint-title">Bring the right context into the room</h1>
-            <p className="context-intro">Search connected systems, select only what matters, and give Cooper a clean evidence packet before the conversation starts.</p>
-
+            <p className="context-eyebrow">Session intent</p>
+            <h2>What should this session accomplish?</h2>
+            <label className="context-meeting-select">
+              <span>Meeting</span>
+              <select value={meetingId} onChange={(event) => setMeetingId(event.target.value)}>
+                {sessionMeetings.map((meeting) => (
+                  <option key={meeting.id || "fresh"} value={meeting.id}>{meeting.time ? `${meeting.time} · ` : ""}{meeting.title}</option>
+                ))}
+              </select>
+            </label>
             <label className="context-intent-field">
-              <span>What should this session accomplish?</span>
+              <span>Session intent</span>
               <textarea
                 value={intent}
                 onChange={(event) => setIntent(event.target.value)}
                 placeholder="Capture the decision, question, or output you want from this session."
               />
             </label>
+            <section className="context-session-people">
+              <p className="context-eyebrow">People</p>
+              <div><Users size={17} /><span>{selectedMeeting.subtitle || "Michael Moll"}</span></div>
+            </section>
+          </aside>
+
+          <main className="context-workspace">
+            <p className="context-eyebrow">Sources</p>
+            <h1>Bring the room into context</h1>
+            <p className="context-intro">Select the sources Cooper will reference.</p>
 
             <section className="context-sources-section">
               <div className="context-section-heading">
@@ -409,22 +426,21 @@ export function SessionContextCheckpoint({
 
             <div className="context-compact-launch">
               {launchError && <p className="context-error" role="alert">{launchError}</p>}
-              <button aria-label="Start session with prepared context" className="context-primary-button" disabled={busy || launching} onClick={() => startSession(preparationKinds)} type="button">
+              <button aria-label="Start session with prepared context" className="context-primary-button" disabled={busy || launching} onClick={() => startSession(activePreparationPlan)} title="Create and prepare session" type="button">
                 <Sparkles size={16} />
-                <span>{busy || launching ? "Preparing context" : "Create and prepare session"}</span>
+                <span>{busy || launching ? "Preparing context" : "Start session"}</span>
               </button>
-              <button className="context-secondary-button context-enter-direct" disabled={busy || launching} onClick={() => startSession([])} type="button">Enter without prep</button>
+              <button className="context-secondary-button context-enter-direct" disabled={busy || launching} onClick={() => startSession(createManualPreparationPlan([]))} type="button">Enter without prep</button>
             </div>
           </main>
 
           <aside className="context-summary">
             <p className="context-eyebrow">Review</p>
-            <h2>Ready to enter</h2>
+            <h2>What Cooper will know</h2>
             <dl>
-              <div><dt>Session</dt><dd>{selectedMeeting.title}</dd></div>
-              <div><dt>Sources</dt><dd>{totalSources}</dd></div>
-              <div><dt>Resolution</dt><dd>Server-side</dd></div>
-              <div><dt>Access</dt><dd>Read-only context</dd></div>
+              <div><dt>Sources</dt><dd>{totalSources} selected</dd></div>
+              <div><dt>Freshness</dt><dd>{totalSources ? "Current" : "Fresh session"}</dd></div>
+              <div><dt>People</dt><dd>{selectedMeeting.subtitle || "Michael Moll"}</dd></div>
             </dl>
             <div className="context-packet-note">
               <Check size={16} />
@@ -433,21 +449,32 @@ export function SessionContextCheckpoint({
             <section className="context-preparation-options">
               <div>
                 <p className="context-eyebrow">Prepare before entering</p>
-                <span>Queue working drafts in the background while the room opens.</span>
+                <span>Queue durable, quality-checked drafts before the room opens.</span>
               </div>
-              {SESSION_PREPARATION_OPTIONS.map((option) => (
-                <label key={option.kind}>
-                  <input type="checkbox" checked={preparationKinds.includes(option.kind)} onChange={() => togglePreparationKind(option.kind)} />
-                  <span><strong>{option.title}</strong><small>{option.description}</small></span>
-                </label>
-              ))}
+              <div className="context-preparation-mode" role="tablist" aria-label="Document planning mode">
+                <button aria-selected={preparationMode === "cooper"} className={preparationMode === "cooper" ? "selected" : ""} onClick={() => setPreparationMode("cooper")} role="tab" type="button">Let Cooper decide</button>
+                <button aria-selected={preparationMode === "manual"} className={preparationMode === "manual" ? "selected" : ""} onClick={() => setPreparationMode("manual")} role="tab" type="button">Choose documents</button>
+              </div>
+              {preparationMode === "cooper" && (
+                <div className="context-cooper-plan">
+                  <strong>{cooperPreparationPlan.kinds.length} recommended documents</strong>
+                  <p>{cooperPreparationPlan.rationale}</p>
+                  <ul>{cooperPreparationPlan.kinds.map((kind) => <li key={kind}>{SESSION_PREPARATION_OPTIONS.find((option) => option.kind === kind)?.title}</li>)}</ul>
+                </div>
+              )}
+              {preparationMode === "manual" && SESSION_PREPARATION_OPTIONS.map((option) => (
+                  <label key={option.kind}>
+                    <input type="checkbox" checked={preparationKinds.includes(option.kind)} onChange={() => togglePreparationKind(option.kind)} />
+                    <span><strong>{option.title}</strong><small>{option.description} · {option.effort}</small></span>
+                  </label>
+                ))}
             </section>
             {launchError && <p className="context-error" role="alert">{launchError}</p>}
-            <button aria-label="Start session with prepared context" className="context-primary-button" disabled={busy || launching} onClick={() => startSession(preparationKinds)} type="button">
+            <button aria-label="Start session with prepared context" className="context-primary-button" disabled={busy || launching} onClick={() => startSession(activePreparationPlan)} title="Create and prepare session" type="button">
               <Sparkles size={16} />
-              <span>{busy || launching ? "Preparing context" : "Create and prepare session"}</span>
+              <span>{busy || launching ? "Preparing context" : "Start session"}</span>
             </button>
-            <button className="context-secondary-button context-enter-direct" disabled={busy || launching} onClick={() => startSession([])} type="button">Enter without prep</button>
+            <button className="context-secondary-button context-enter-direct" disabled={busy || launching} onClick={() => startSession(createManualPreparationPlan([]))} type="button">Enter without prep</button>
             <button className="context-quiet-button" onClick={onClose} type="button">Cancel</button>
           </aside>
         </div>
@@ -663,4 +690,14 @@ function formatBytes(bytes) {
 function shortDate(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function checkpointIntent(value = "") {
+  const cleaned = String(value)
+    .split(/(?:─{3,}|-{3,}|\b(?:join zoom meeting|view meeting insights|meeting id:|one tap mobile|dial by your location)\b)/i)[0]
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "";
+  return cleaned.length > 420 ? `${cleaned.slice(0, 417).trimEnd()}…` : cleaned;
 }
